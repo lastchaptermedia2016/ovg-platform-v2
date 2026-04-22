@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+:root {
+  --primary-gold: #d4af37;
+  --deep-blue: #0097b2;
+  --background: #050a14;
+  --foreground: #ffffff;
+  --glow-color: rgba(212, 175, 55, 0.4);
+  --glass-bg: rgba(0, 26, 44, 0.8);
+}
+
+@keyframes pulse-gold {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(212, 175, 55, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 20px 10px rgba(212, 175, 55, 0.2);
+  }
+}
+
+@keyframes pod-breath {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-8px) scale(1.02);
+  }
+}
+
+@keyframes reactor-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes reactor-spin-fast {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.reactor-core.animate-reactor-spin-fast {
+  animation-duration: 1s;
+}
+
+@keyframes core-pulse {
+  0% {
+    box-shadow: 0 0 0 0 var(--glow-color);
+  }
+  70% {
+    box-shadow: 0 0 20px 10px rgba(212, 175, 55, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(212, 175, 55, 0);
+  }
+}
+
+@keyframes gold-heartbeat {
+  0% {
+    box-shadow: 0 0 0 0 rgba(212, 175, 55, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 20px 15px rgba(212, 175, 55, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(212, 175, 55, 0);
+  }
+}
