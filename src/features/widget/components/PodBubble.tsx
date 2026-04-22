@@ -3,12 +3,16 @@
 import { useState } from "react";
 import PodPanel from "@/features/widget/components/PodPanel";
 
-export default function PodBubble() {
+export interface PodBubbleProps {
+  tenantId: string;
+}
+
+export default function PodBubble({ tenantId }: PodBubbleProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
     <>
-      <PodPanel isOpen={isOpen} onClose={() => setIsOpen(false)} />
+      <PodPanel isOpen={isOpen} onClose={() => setIsOpen(false)} tenantId={tenantId} />
 
       {/* Pod Bubble */}
       <div className="fixed bottom-10 right-10 z-[10001] animate-pod-breath group">

@@ -1,18 +1,24 @@
-export interface Tenant {
-  id: string;
-  tenant_id: string;
-  name: string;
-  system_prompt: string | null;
-  preferred_voice: string;
-  created_at?: string;
-  updated_at?: string;
-  branding?: {
-    primaryColor?: string;
-    logoUrl?: string;
-    accentColor?: string;
-    aiName?: string;
-  };
-}
+import { z } from "zod";
+
+export const TenantSchema = z.object({
+  id: z.string(),
+  tenant_id: z.string(),
+  name: z.string(),
+  system_prompt: z.string().nullable(),
+  preferred_voice: z.string(),
+  created_at: z.string().optional(),
+  updated_at: z.string().optional(),
+  branding: z
+    .object({
+      primaryColor: z.string().optional(),
+      logoUrl: z.string().optional(),
+      accentColor: z.string().optional(),
+      aiName: z.string().optional(),
+    })
+    .optional(),
+});
+
+export type Tenant = z.infer<typeof TenantSchema>;
 
 export interface TenantConfig {
   id: string;
