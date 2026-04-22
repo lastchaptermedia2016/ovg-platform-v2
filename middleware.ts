@@ -1,28 +1,34 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-export function middleware(_request: NextRequest) {
-  const url = _request.nextUrl;
+export function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
 
-  // Rewrite logic for the /widget path
-  // This allows the embed script to hit /widget/demo internally
-  if (url.pathname.startsWith("/widget")) {
-    const tenantId = url.pathname.split("/")[2];
+  // 1. Surgical Strike: Only process paths starting with /widget
+  if (pathname.startsWith("/widget/")) {
+    const parts = pathname.split("/");
+    const tenantId = parts[2];
+
+    // If no tenantId is found, just continue without crashing
     if (!tenantId) return NextResponse.next();
 
-    // We can inject headers here that our Server Components can read
     const response = NextResponse.next();
+    
+    // 2. Inject the Tenant ID into headers for Server Components
+    // This allows your database queries to know "who" is calling
     response.headers.set("x-tenant-id", tenantId);
     return response;
   }
 
+  // 3. Fallback: For all other matched routes, just pass through
   return NextResponse.next();
 }
 
+// 4. Strict Scoping: Middleware ONLY runs on these paths
+// This prevents 500 errors on the home page or static assets
 export const config = {
   matcher: [
     "/widget/:path*",
     "/api/chat/:path*",
-    "/((?!_next/static|_next/image|favicon.ico).*)",
   ],
 };
