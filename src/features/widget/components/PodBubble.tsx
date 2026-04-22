@@ -15,9 +15,9 @@ export default function PodBubble({ tenantId }: PodBubbleProps) {
       <PodPanel isOpen={isOpen} onClose={() => setIsOpen(false)} tenantId={tenantId} />
 
       {/* Pod Bubble */}
-      <div className="fixed bottom-10 right-10 z-[10001] animate-pod-breath group">
+      <div className="fixed bottom-4 right-4 z-50 animate-pod-breath group">
         <button
-          className="pod-bubble w-16 h-16 rounded-[22px] flex items-center justify-center cursor-pointer overflow-hidden shadow-xl bg-[rgba(0,26,44,0.85)] backdrop-blur-md border border-[var(--primary-gold)]/30 transition-all duration-400 ease-[cubic-bezier(0.175,0.885,0.32,1.275)] animate-gold-heartbeat [animation-duration:3s] hover:border-[var(--primary-gold)] hover:scale-110 hover:-translate-y-1 hover:shadow-[0_10px_25px_-5px_rgba(0,0,0,0.3),0_0_30px_rgba(212,175,55,0.5)] hover:[animation-duration:1.5s] active:scale-95"
+          className="pod-bubble w-16 h-16 rounded-[22px] flex items-center justify-center cursor-pointer overflow-hidden shadow-xl bg-[#0097b2] backdrop-blur-md border border-[#D4AF37]/30 transition-all duration-400 ease-[cubic-bezier(0.175,0.885,0.32,1.275)] animate-gold-heartbeat [animation-duration:3s] hover:border-[#D4AF37] hover:scale-110 hover:-translate-y-1 hover:shadow-[0_10px_25px_-5px_rgba(0,0,0,0.3),0_0_30px_rgba(212,175,55,0.5)] hover:[animation-duration:1.5s] active:scale-95"
           onClick={() => setIsOpen(!isOpen)}
           aria-label={isOpen ? "Close Chat" : "Open Chat"}
         >
@@ -25,7 +25,7 @@ export default function PodBubble({ tenantId }: PodBubbleProps) {
           <div className="reactor-core absolute inset-0 opacity-20 pointer-events-none animate-reactor-spin">
             <svg
               viewBox="0 0 100 100"
-              className="w-full h-full stroke-[var(--primary-gold)] fill-none"
+              className="w-full h-full stroke-[#D4AF37] fill-none"
             >
               <circle cx="50" cy="50" r="40" strokeDasharray="20 10" />
             </svg>
@@ -40,7 +40,7 @@ export default function PodBubble({ tenantId }: PodBubbleProps) {
             }`}
           >
             <svg
-              className="w-8 h-8 text-[var(--primary-gold)]"
+              className="w-8 h-8 text-[#D4AF37]"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
