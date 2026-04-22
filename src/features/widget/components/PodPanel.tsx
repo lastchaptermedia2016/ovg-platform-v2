@@ -5,13 +5,17 @@ import { useTenant } from "@/providers/tenant-provider";
 import { dispatchVoice } from "@/lib/audio/dispatcher";
 import { Message } from "@/types";
 
+export interface PodPanelProps {
+  isOpen: boolean;
+  onClose: () => void;
+  tenantId: string;
+}
+
 export default function PodPanel({
   isOpen,
   onClose,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-}) {
+  tenantId,
+}: PodPanelProps) {
   const { tenantData } = useTenant();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -43,7 +47,7 @@ export default function PodPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: userMessage,
-          tenantId: "demo", // This should come from URL or context
+          tenantId: tenantId,
         }),
       });
 

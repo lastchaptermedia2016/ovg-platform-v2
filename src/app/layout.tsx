@@ -1,8 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { TenantProvider } from "@/providers/tenant-provider";
-import PodBubble from "@/features/widget/components/PodBubble";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -29,12 +27,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
-        <TenantProvider>
-          {children}
-          <PodBubble />
-        </TenantProvider>
-      </body>
+      <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
 }
