@@ -14,7 +14,7 @@ const TenantContext = createContext<TenantContextType | undefined>(undefined);
 export function TenantProvider({ children }: { children: ReactNode }) {
   const [tenantData, setTenantData] = useState<Tenant | null>(null);
 
-  useBranding(tenantData?.branding || null);
+  useBranding(tenantData ? { primaryColor: tenantData.branding_color } : null);
 
   return (
     <TenantContext.Provider value={{ tenantData, setTenantData }}>
