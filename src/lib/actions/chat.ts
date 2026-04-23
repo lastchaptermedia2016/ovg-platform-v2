@@ -24,8 +24,8 @@ export async function* processUserMessage(
     // Fetch tenant-specific config using admin client
     const { data: tenant, error } = await supabaseAdmin
       .from("tenants")
-      .select("id, tenant_id, name, system_prompt, preferred_voice")
-      .eq("tenant_id", resolvedTenantId)
+      .select("id, slug, name, system_prompt, voice_id")
+      .eq("slug", resolvedTenantId)
       .single();
 
     if (error || !tenant) {
@@ -63,7 +63,7 @@ export async function* processUserMessage(
       try {
         const audioResponse = await groq.audio.speech.create({
           model: "canopylabs/orpheus-v1-english",
-          voice: tenant.preferred_voice || "hannah",
+          voice: tenant.voice_id || "hannah",
           input: fullText,
           response_format: "wav",
         });

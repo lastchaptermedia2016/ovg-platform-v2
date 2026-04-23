@@ -9,12 +9,16 @@ export interface PodPanelProps {
   isOpen: boolean;
   onClose: () => void;
   tenantId: string;
+  voiceId?: string | null;
+  name?: string;
 }
 
 export default function PodPanel({
   isOpen,
   onClose,
   tenantId,
+  voiceId,
+  name,
 }: PodPanelProps) {
   const { tenantData } = useTenant();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -25,7 +29,7 @@ export default function PodPanel({
   >("ready");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const aiName = tenantData?.branding?.aiName || "Orpheus AI";
+  const aiName = name || "Orpheus AI";
 
   useEffect(() => {
     if (messagesEndRef.current) {

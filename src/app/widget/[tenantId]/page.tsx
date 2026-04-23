@@ -1,6 +1,8 @@
 import { TenantProvider } from "@/providers/tenant-provider";
 import Pod from "@/features/widget/components/Pod";
 import PodBubble from "@/features/widget/components/PodBubble";
+import { getTenantBySlug } from "@/lib/db/tenants";
+import { notFound } from "next/navigation";
 
 export default async function WidgetPage({
   params,
@@ -9,10 +11,22 @@ export default async function WidgetPage({
 }) {
   const { tenantId } = await params;
 
+  // Fetch tenant data from Supabase
+  const tenant = await getTenantBySlug(tenantId);
+
+  if (!tenant) {
+    notFound();
+  }
+
   return (
     <TenantProvider>
       <Pod tenantId={tenantId} />
-      <PodBubble tenantId={tenantId} />
+      <PodBubble
+        tenantId={tenantId}
+        brandingColor={tenant.branding_color}
+        voiceId={tenant.voice_id}
+        name={tenant.name}
+      />
     </TenantProvider>
   );
 }

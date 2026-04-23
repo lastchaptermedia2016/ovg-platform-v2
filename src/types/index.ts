@@ -1,21 +1,14 @@
 import { z } from "zod";
 
 export const TenantSchema = z.object({
-  id: z.string(),
-  tenant_id: z.string(),
+  id: z.string().uuid(),
+  slug: z.string(),
   name: z.string(),
+  branding_color: z.string().default("#0097b2"),
+  voice_id: z.string().nullable(),
   system_prompt: z.string().nullable(),
-  preferred_voice: z.string(),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
-  branding: z
-    .object({
-      primaryColor: z.string().optional(),
-      logoUrl: z.string().optional(),
-      accentColor: z.string().optional(),
-      aiName: z.string().optional(),
-    })
-    .optional(),
 });
 
 export type Tenant = z.infer<typeof TenantSchema>;

@@ -5,19 +5,34 @@ import PodPanel from "@/features/widget/components/PodPanel";
 
 export interface PodBubbleProps {
   tenantId: string;
+  brandingColor?: string;
+  voiceId?: string | null;
+  name?: string;
 }
 
-export default function PodBubble({ tenantId }: PodBubbleProps) {
+export default function PodBubble({
+  tenantId,
+  brandingColor = "#0097b2",
+  voiceId,
+  name,
+}: PodBubbleProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   return (
     <>
-      <PodPanel isOpen={isOpen} onClose={() => setIsOpen(false)} tenantId={tenantId} />
+      <PodPanel
+        isOpen={isOpen}
+        onClose={() => setIsOpen(false)}
+        tenantId={tenantId}
+        voiceId={voiceId}
+        name={name}
+      />
 
       {/* Pod Bubble */}
       <div className="fixed bottom-4 right-4 z-50 animate-pod-breath group">
         <button
-          className="pod-bubble w-16 h-16 rounded-[22px] flex items-center justify-center cursor-pointer overflow-hidden shadow-xl bg-[#0097b2] backdrop-blur-md border border-[#D4AF37]/30 transition-all duration-400 ease-[cubic-bezier(0.175,0.885,0.32,1.275)] animate-gold-heartbeat [animation-duration:3s] hover:border-[#D4AF37] hover:scale-110 hover:-translate-y-1 hover:shadow-[0_10px_25px_-5px_rgba(0,0,0,0.3),0_0_30px_rgba(212,175,55,0.5)] hover:[animation-duration:1.5s] active:scale-95"
+          className="pod-bubble w-16 h-16 rounded-[22px] flex items-center justify-center cursor-pointer overflow-hidden shadow-xl backdrop-blur-md border border-[#D4AF37]/30 transition-all duration-400 ease-[cubic-bezier(0.175,0.885,0.32,1.275)] animate-gold-heartbeat [animation-duration:3s] hover:border-[#D4AF37] hover:scale-110 hover:-translate-y-1 hover:shadow-[0_10px_25px_-5px_rgba(0,0,0,0.3),0_0_30px_rgba(212,175,55,0.5)] hover:[animation-duration:1.5s] active:scale-95"
+          style={{ backgroundColor: brandingColor }}
           onClick={() => setIsOpen(!isOpen)}
           aria-label={isOpen ? "Close Chat" : "Open Chat"}
         >
