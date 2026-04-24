@@ -103,9 +103,9 @@ export function ClientInventoryTable({
                 {/* Client Name */}
                 <td className="px-6 py-4 whitespace-nowrap">
                   <div className="flex items-center">
-                    <div 
+                    <div
                       className="h-8 w-8 rounded-full flex items-center justify-center text-sm font-medium text-white"
-                      style={{ backgroundColor: client.branding_color || primaryColor }}
+                      style={{ backgroundColor: client.branding_colors?.primary || primaryColor }}
                     >
                       {client.name.charAt(0).toUpperCase()}
                     </div>
@@ -163,11 +163,11 @@ export function ClientInventoryTable({
                   <div className="flex items-center gap-2">
                     <div
                       className="w-6 h-6 rounded border border-gray-200 shadow-sm"
-                      style={{ backgroundColor: client.branding_color || primaryColor }}
-                      title={client.branding_color || primaryColor}
+                      style={{ backgroundColor: client.branding_colors?.primary || primaryColor }}
+                      title={client.branding_colors?.primary || primaryColor}
                     />
                     <span className="text-xs text-gray-500 font-mono">
-                      {client.branding_color || primaryColor}
+                      {client.branding_colors?.primary || primaryColor}
                     </span>
                   </div>
                 </td>

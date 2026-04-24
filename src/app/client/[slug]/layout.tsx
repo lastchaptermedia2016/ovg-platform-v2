@@ -6,13 +6,15 @@ import { BrandedFooter } from "@/components/branding/branded-header";
  * URL pattern: /client/[slug]/...
  * Branding is inherited from parent reseller if not explicitly set
  */
-export default function ClientLayout({
+export default async function ClientLayout({
   children,
   params,
 }: {
   children: React.ReactNode;
-  params: { slug: string };
+  params: Promise<{ slug: string }>;
 }) {
+  const { slug } = await params;
+
   return (
     <div className="min-h-screen flex flex-col">
       <BrandedHeader />

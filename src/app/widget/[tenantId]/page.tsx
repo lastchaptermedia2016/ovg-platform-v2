@@ -21,14 +21,14 @@ export default async function WidgetPage({
 
   // Live verification logging
   console.log("✅ LIVE TENANT DATA:", tenant);
-  console.log("🎨 BRANDING COLOR:", tenant.branding_color);
+  console.log("🎨 BRANDING COLOR:", tenant.branding_colors);
 
   return (
     <TenantProvider>
       <Pod tenantId={tenantId} />
       <PodBubble
         tenantId={tenantId}
-        brandingColor={tenant.branding_color}
+        brandingColor={tenant.branding_colors?.primary}
         voiceId={tenant.voice_id}
         name={tenant.name}
       />
