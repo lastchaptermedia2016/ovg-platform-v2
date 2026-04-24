@@ -5,16 +5,16 @@ import { DollarSign, CreditCard, TrendingUp, ArrowRight, CheckCircle } from 'luc
 
 interface PaymentsTabProps {
   isOnboarded: boolean;
-  stripeConnectId: string | null;
+  paystackAccountId: string | null;
   resellerId: string;
-  onConnectStripe?: () => void;
+  onConnectPaystack?: () => void;
 }
 
 export default function PaymentsTab({
   isOnboarded,
-  stripeConnectId,
+  paystackAccountId,
   resellerId,
-  onConnectStripe,
+  onConnectPaystack,
 }: PaymentsTabProps) {
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -25,70 +25,41 @@ export default function PaymentsTab({
     enterprise: 499,
   });
 
-  const handleConnectStripe = async () => {
+  const handleConnectPaystack = async () => {
     setLoading(true);
     try {
-      // Call API to get onboarding link
-      const response = await fetch('/api/stripe/onboarding', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resellerId }),
-      });
-
-      const { url } = await response.json();
-      if (url) {
-        window.location.href = url;
-      }
+      // TODO: Implement Paystack onboarding
+      console.log('Paystack onboarding for reseller:', resellerId);
     } catch (error) {
-      console.error('Failed to connect Stripe:', error);
+      console.error('Failed to connect Paystack:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleManageStripe = async () => {
+  const handleManagePaystack = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/stripe/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stripeConnectId }),
-      });
-
-      const { url } = await response.json();
-      if (url) {
-        window.location.href = url;
-      }
+      // TODO: Implement Paystack dashboard management
+      console.log('Manage Paystack account:', paystackAccountId);
     } catch (error) {
-      console.error('Failed to open Stripe dashboard:', error);
+      console.error('Failed to open Paystack dashboard:', error);
     } finally {
       setLoading(false);
     }
   };
 
   const handleSyncPricing = async () => {
-    if (!stripeConnectId) {
-      console.error('No Stripe Connect ID found');
+    if (!paystackAccountId) {
+      console.error('No Paystack account ID found');
       return;
     }
 
     setSyncing(true);
     try {
-      const response = await fetch('/api/stripe/sync-pricing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          resellerId,
-          stripeConnectId,
-          tierPricing,
-        }),
-      });
-
-      const { success, priceIds } = await response.json();
-      if (success) {
-        console.log('Pricing synced successfully:', priceIds);
-        setShowPricingEditor(false);
-      }
+      // TODO: Implement Paystack pricing sync
+      console.log('Sync pricing to Paystack:', tierPricing);
+      setShowPricingEditor(false);
     } catch (error) {
       console.error('Failed to sync pricing:', error);
     } finally {
@@ -106,11 +77,11 @@ export default function PaymentsTab({
             <h2 className="text-2xl font-bold">Start Earning</h2>
           </div>
           <p className="text-white/90 mb-6 max-w-lg">
-            Connect your Stripe account to start receiving payments from your clients. 
+            Connect your Paystack account to start receiving payments from your clients.
             Set up your bank information and start earning revenue today.
           </p>
           <button
-            onClick={handleConnectStripe}
+            onClick={handleConnectPaystack}
             disabled={loading}
             className="inline-flex items-center gap-2 px-6 py-3 bg-white text-[#0097b2] font-semibold rounded-lg hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -121,7 +92,7 @@ export default function PaymentsTab({
               </>
             ) : (
               <>
-                Connect Stripe
+                Connect Paystack
                 <ArrowRight className="w-4 h-4" />
               </>
             )}
@@ -155,11 +126,11 @@ export default function PaymentsTab({
       <div className="flex justify-between items-center">
         <h2 className="text-lg font-semibold text-gray-900">Payouts Dashboard</h2>
         <button
-          onClick={handleManageStripe}
+          onClick={handleManagePaystack}
           disabled={loading}
           className="px-4 py-2 bg-[#0097b2] text-white rounded-lg font-medium hover:bg-[#007a8f] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {loading ? 'Loading...' : 'Manage Stripe'}
+          {loading ? 'Loading...' : 'Manage Paystack'}
         </button>
       </div>
 
@@ -227,7 +198,7 @@ export default function PaymentsTab({
                     Syncing...
                   </>
                 ) : (
-                  'Sync to Stripe'
+                  'Sync to Paystack'
                 )}
               </button>
             </div>

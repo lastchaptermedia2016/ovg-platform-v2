@@ -13,7 +13,10 @@ interface ResellerData {
   id: string;
   tenant_id: string;
   name: string;
-  branding_color: string;
+  branding_colors: {
+    primary: string;
+    secondary: string;
+  };
   accent_color: string;
   logo_url: string;
 }
@@ -32,7 +35,7 @@ export function ResellerProvider({
         
         const { data, error } = await supabase
           .from("resellers")
-          .select("id, tenant_id, name, branding_color, accent_color, logo_url")
+          .select("id, tenant_id, name, branding_colors, accent_color, logo_url")
           .eq("tenant_id", resellerSlug)
           .eq("is_active", true)
           .single();
@@ -54,7 +57,7 @@ export function ResellerProvider({
         const brandingData: BrandingData = {
           name: reseller.name,
           logoUrl: reseller.logo_url || "/logo-default.svg",
-          primaryColor: reseller.branding_color || "#0097b2",
+          primaryColor: reseller.branding_colors?.primary || "#0097b2",
           accentColor: reseller.accent_color || "#D4AF37",
         };
 

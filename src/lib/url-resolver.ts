@@ -83,6 +83,18 @@ async function fetchResellerBySlug(slug: string): Promise<Reseller | null> {
         metaTitle: "Acme Voice - AI Solutions",
         metaDescription: "Powered by Acme Corp",
       },
+      branding_colors: {
+        primary: "#0097b2",
+        secondary: "#226683",
+      },
+      branding_assets: {
+        header_url: "/header.png",
+        footer_url: "/footer.png",
+      },
+      pricing_tiers: {
+        standard: "price_123",
+        premium: "price_456",
+      },
     };
   }
 

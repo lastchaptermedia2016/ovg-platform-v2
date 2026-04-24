@@ -7,7 +7,7 @@ export async function getTenantData(slug: string): Promise<Tenant | null> {
   try {
     const { data, error } = await supabase
       .from("tenants")
-      .select("id, slug, name, branding_color, voice_id, system_prompt")
+      .select("id, slug, name, branding_colors, voice_id, system_prompt")
       .eq("slug", slug)
       .single();
 

@@ -73,7 +73,7 @@ export interface Reseller {
   };
   pricing_tiers: Record<string, unknown>;
   branding?: BrandingData;
-  stripe_account_id?: string;
+  paystack_account_id?: string;
   is_active: boolean;
 }
 
