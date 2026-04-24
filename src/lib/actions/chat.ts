@@ -24,8 +24,8 @@ export async function* processUserMessage(
     // Fetch tenant-specific config using admin client
     const { data: tenant, error } = await supabaseAdmin
       .from("tenants")
-      .select("id, slug, name, system_prompt, voice_id")
-      .eq("slug", resolvedTenantId)
+      .select("id, tenant_id, name, system_prompt, voice_id")
+      .eq("tenant_id", resolvedTenantId)
       .single();
 
     if (error || !tenant) {

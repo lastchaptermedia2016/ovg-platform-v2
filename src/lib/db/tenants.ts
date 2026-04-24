@@ -6,11 +6,11 @@ export async function getTenantBySlug(slug: string): Promise<Tenant | null> {
     const { data, error } = await supabase
       .from("tenants")
       .select("*")
-      .eq("slug", slug)
+      .eq("tenant_id", slug)
       .single();
 
     if (error) {
-      console.error(`Error fetching tenant by slug "${slug}":`, error);
+      console.error(`Error fetching tenant by tenant_id "${slug}":`, error);
       return null;
     }
 
@@ -22,7 +22,7 @@ export async function getTenantBySlug(slug: string): Promise<Tenant | null> {
     const validatedTenant = TenantSchema.parse(data);
     return validatedTenant;
   } catch (error) {
-    console.error(`Unexpected error fetching tenant by slug "${slug}":`, error);
+    console.error(`Unexpected error fetching tenant by tenant_id "${slug}":`, error);
     return null;
   }
 }

@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+body {
+  background: transparent !important;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
 :root {
   --primary-gold: #d4af37;
   --deep-blue: #0097b2;
@@ -73,4 +78,48 @@
   100% {
     box-shadow: 0 0 0 0 rgba(212, 175, 55, 0);
   }
+}
+
+@keyframes pod-pulse {
+  0%, 100% {
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3), 0 0 20px rgba(0,151,178,0.4), 0 0 0 2px rgba(212,175,55,0.3);
+  }
+  50% {
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3), 0 0 40px rgba(0,151,178,0.6), 0 0 0 3px rgba(212,175,55,0.5);
+  }
+}
+
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes custom-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.05); filter: drop-shadow(0 0 8px #d4af37); }
+}
+
+.animate-pulse-gold {
+  animation: custom-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
 }

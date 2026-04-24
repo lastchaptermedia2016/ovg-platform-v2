@@ -14,9 +14,14 @@ export default async function WidgetPage({
   // Fetch tenant data from Supabase
   const tenant = await getTenantBySlug(tenantId);
 
+  // Return 404 if tenant not found
   if (!tenant) {
     notFound();
   }
+
+  // Live verification logging
+  console.log("✅ LIVE TENANT DATA:", tenant);
+  console.log("🎨 BRANDING COLOR:", tenant.branding_color);
 
   return (
     <TenantProvider>

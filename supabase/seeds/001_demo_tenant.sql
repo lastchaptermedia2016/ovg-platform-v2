@@ -1,5 +1,5 @@
 -- Seed data for demo tenant
-INSERT INTO tenants (slug, name, branding_color, voice_id, system_prompt)
+INSERT INTO tenants (tenant_id, name, branding_color, voice_id, system_prompt)
 VALUES (
   'demo',
   'OVG Platform Demo',
@@ -7,4 +7,4 @@ VALUES (
   'hannah',
   'You are a helpful and friendly AI assistant for the OVG Platform. You help users understand our white-label SaaS voice infrastructure solution.'
 )
-ON CONFLICT (slug) DO NOTHING;
+ON CONFLICT (tenant_id) DO NOTHING;

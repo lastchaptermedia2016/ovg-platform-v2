@@ -2,11 +2,22 @@ import { z } from "zod";
 
 export const TenantSchema = z.object({
   id: z.string().uuid(),
-  slug: z.string(),
+  tenant_id: z.string(),
+  reseller_id: z.string().uuid(),
   name: z.string(),
-  branding_color: z.string().default("#0097b2"),
+  branding_colors: z.object({
+    primary: z.string(),
+    secondary: z.string(),
+  }).optional(),
+  custom_assets: z.object({
+    header_url: z.string().nullable(),
+    footer_url: z.string().nullable(),
+  }).optional(),
+  show_ovg_branding: z.boolean().default(false),
+  pricing_tier_key: z.string().optional(),
   voice_id: z.string().nullable(),
   system_prompt: z.string().nullable(),
+  is_active: z.boolean().default(true),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
 });
@@ -25,20 +36,64 @@ export interface TenantConfig {
   };
 }
 
+export interface BrandingData {
+  name: string;
+  logoUrl: string;
+  primaryColor: string;
+  accentColor: string;
+  favicon?: string;
+  metaTitle?: string;
+  metaDescription?: string;
+}
+
 export interface Client {
   id: string;
+  slug: string;
   name: string;
   email: string;
   reseller_id?: string;
+  reseller_slug?: string;
+  branding?: BrandingData;
   ui_settings?: Record<string, unknown>;
   ai_settings?: Record<string, unknown>;
 }
 
 export interface Reseller {
   id: string;
+  slug: string;
   name: string;
   email: string;
+  branding_colors: {
+    primary: string;
+    secondary: string;
+  };
+  branding_assets: {
+    header_url: string | null;
+    footer_url: string | null;
+  };
+  pricing_tiers: Record<string, unknown>;
+  branding?: BrandingData;
   stripe_account_id?: string;
+  is_active: boolean;
+}
+
+// URL Resolution Types
+export type EntityType = 'reseller' | 'client' | 'master' | null;
+
+export interface RouteContext {
+  entityType: EntityType;
+  slug: string | null;
+  branding: BrandingData | null;
+  parentReseller?: Reseller | null;
+}
+
+// Branding Context State
+export interface BrandingContextState {
+  branding: BrandingData;
+  entityType: EntityType;
+  slug: string | null;
+  isLoading: boolean;
+  error: string | null;
 }
 
 export interface ChatMessage {
