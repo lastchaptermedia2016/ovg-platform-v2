@@ -23,6 +23,7 @@ export default function ResellerLayout({
           alt="Background"
           fill
           priority
+          quality={100}
           className="object-cover"
         />
         <div className="absolute inset-0 bg-black/40" />
