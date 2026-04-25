@@ -1,4 +1,4 @@
-import { KineticState } from "../hooks/useChatWidget";
+import { KineticState } from "@/core/widget/hooks/useChatWidget";
 
 export const Bubble = ({
   status,
