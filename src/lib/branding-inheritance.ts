@@ -30,6 +30,6 @@ export function getEffectiveBranding(
   return {
     header_url: tenantHeaderUrl ?? reseller.branding_assets.header_url,
     footer_url: tenantFooterUrl ?? reseller.branding_assets.footer_url,
-    colors: tenantColors ?? reseller.branding_colors,
+    colors: tenantColors ?? (reseller.branding_colors || null),
   };
 }
