@@ -10,6 +10,7 @@
     "lint:fix": "eslint . --fix"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.103.3",
     "framer-motion": "^11.18.2",
     "groq-sdk": "^1.1.2",

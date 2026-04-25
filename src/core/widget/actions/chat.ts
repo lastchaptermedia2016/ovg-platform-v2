@@ -2,7 +2,7 @@
 
 import { groq } from "@/lib/ai/config";
 import { supabaseAdmin } from "@/lib/supabase/admin";
-import { getTenantId } from "@/lib/tenant";
+import { getTenantId } from "@/core/tenant/tenant";
 
 type StreamChunk =
   | { type: "text"; content: string }

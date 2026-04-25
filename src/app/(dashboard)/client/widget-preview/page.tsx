@@ -1,7 +1,7 @@
 "use client";
 
 import { TenantProvider } from "@/providers/tenant-provider";
-import PodBubble from "@/features/widget/components/PodBubble";
+import PodBubble from "@/components/widget/PodBubble";
 
 export default function WidgetPreviewPage() {
   return (

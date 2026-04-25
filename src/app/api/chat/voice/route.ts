@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { processUserMessage } from "@/lib/actions/chat";
+import { processUserMessage } from "@/core/widget/actions/chat";
 
 export async function POST(request: NextRequest) {
   try {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { supabase } from "@/lib/supabase/client";
+import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -11,6 +11,7 @@ function toast(message: string, type: "success" | "error" = "success") {
 
 export default function AISettingsPage() {
   const [prompt, setPrompt] = useState("");
+  const supabase = createClient();
 
   useEffect(() => {
     async function loadConfig() {

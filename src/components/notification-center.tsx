@@ -227,7 +227,7 @@ export function NotificationCenter({
               <button
                 onClick={() => {
                   setIsOpen(false);
-                  window.open(`/dashboard/reseller/${resellerId}/alerts`, "_blank");
+                  window.open(`/reseller/${resellerId}/alerts`, "_blank");
                 }}
                 className="text-xs text-gray-500 hover:text-gray-700 transition-colors"
               >

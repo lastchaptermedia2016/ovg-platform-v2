@@ -13,12 +13,12 @@ export function BrandedHeader() {
   // Build dashboard link based on entity type
   const getDashboardHref = () => {
     if (entityType === "reseller" && slug) {
-      return `/reseller/${slug}/dashboard`;
+      return `/reseller/${slug}`;
     }
     if (entityType === "client" && slug) {
-      return `/client/${slug}/dashboard`;
+      return `/client/${slug}`;
     }
-    return "/dashboard";
+    return "/";
   };
 
   if (isLoading) {

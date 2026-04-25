@@ -1,7 +1,7 @@
 import { TenantProvider } from "@/providers/tenant-provider";
 import Pod from "@/features/widget/components/Pod";
-import PodBubble from "@/features/widget/components/PodBubble";
-import { getTenantBySlug } from "@/lib/db/tenants";
+import PodBubble from "@/components/widget/PodBubble";
+import { getTenantBySlug } from "@/core/tenant/db";
 import { notFound } from "next/navigation";
 
 export default async function WidgetPage({

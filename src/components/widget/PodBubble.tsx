@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import PodPanel from "@/features/widget/components/PodPanel";
 
@@ -18,6 +18,16 @@ export default function PodBubble({
   name,
 }: PodBubbleProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  // Return null on server to prevent hydration mismatch
+  if (!isMounted) {
+    return null;
+  }
 
   // Production Excellence: Portal the bubble to document.body
   const bubbleContent = (
@@ -132,8 +142,7 @@ export default function PodBubble({
       />
 
       {/* Portal the bubble to document.body */}
-      {typeof document !== "undefined" &&
-        createPortal(bubbleContent, document.body)}
+      {createPortal(bubbleContent, document.body)}
     </>
   );
 }

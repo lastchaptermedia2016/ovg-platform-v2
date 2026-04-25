@@ -2,9 +2,12 @@
 
 interface SidebarProps {
   role: string;
+  slug: string;
 }
 
-export function Sidebar({ role }: SidebarProps) {
+export function Sidebar({ role, slug }: SidebarProps) {
+  const base = role === "reseller" ? `/reseller/${slug}` : `/client/${slug}`;
+
   return (
     <aside className="w-64 bg-[#001A2C] border-r border-[var(--primary-gold)]/30 flex flex-col">
       <div className="p-6 border-b border-[var(--primary-gold)]/20">
@@ -18,32 +21,32 @@ export function Sidebar({ role }: SidebarProps) {
 
       <nav className="flex-1 p-4 space-y-2">
         <a
-          href="/dashboard"
+          href={base}
           className="block px-4 py-2 text-white/80 hover:text-[var(--primary-gold)] hover:bg-white/5 rounded-lg transition-colors"
         >
           Overview
         </a>
         {role === "reseller" && (
           <a
-            href="/dashboard/tenants"
+            href={`${base}/clients`}
             className="block px-4 py-2 text-white/80 hover:text-[var(--primary-gold)] hover:bg-white/5 rounded-lg transition-colors"
           >
-            Tenants
+            Clients
           </a>
         )}
         {role === "client" && (
           <a
-            href="/dashboard/widget"
+            href={`${base}/ai-settings`}
             className="block px-4 py-2 text-white/80 hover:text-[var(--primary-gold)] hover:bg-white/5 rounded-lg transition-colors"
           >
             Widget Settings
           </a>
         )}
         <a
-          href="/dashboard/settings"
+          href={`${base}/billing`}
           className="block px-4 py-2 text-white/80 hover:text-[var(--primary-gold)] hover:bg-white/5 rounded-lg transition-colors"
         >
-          Settings
+          Billing
         </a>
       </nav>
 

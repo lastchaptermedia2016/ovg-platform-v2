@@ -3,12 +3,9 @@ import { z } from "zod";
 export const TenantSchema = z.object({
   id: z.string().uuid(),
   tenant_id: z.string(),
-  reseller_id: z.string().uuid(),
+  reseller_id: z.string().uuid().nullable().optional(),
   name: z.string(),
-  branding_colors: z.object({
-    primary: z.string(),
-    secondary: z.string(),
-  }).optional(),
+  branding_colors: z.record(z.any()).nullable().optional().default({}),
   custom_assets: z.object({
     header_url: z.string().nullable(),
     footer_url: z.string().nullable(),

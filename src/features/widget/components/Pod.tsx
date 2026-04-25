@@ -1,6 +1,6 @@
 "use client";
 
-import PodBubble from "./PodBubble";
+import PodBubble from "@/components/widget/PodBubble";
 
 export interface PodProps {
   tenantId: string;
