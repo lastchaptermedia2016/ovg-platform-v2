@@ -56,7 +56,7 @@ export default function SignInPage() {
           if (signUpError) throw signUpError;
 
           if (signUpData.user) {
-            router.push(`/reseller/acme-corp`);
+            router.push(`/dashboard/reseller/acme-corp`);
             return;
           }
         }
@@ -65,7 +65,7 @@ export default function SignInPage() {
 
       if (data.user) {
         const resellerSlug = data.user.user_metadata?.reseller_slug || "acme-corp";
-        router.push(`/reseller/${resellerSlug}`);
+        router.push(`/dashboard/reseller/${resellerSlug}`);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to sign in");

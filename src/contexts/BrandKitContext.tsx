@@ -1,58 +1,19 @@
 'use client';
 
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, ReactNode, useState } from 'react';
 
-interface BrandKitState {
-  template: 'general' | 'automotive';
-  botPersonality: 'professional' | 'aggressive' | 'informational';
+interface BrandKitContextType {
   headerUrl: string | null;
-  footerUrl: string | null;
-  primaryColor: string;
-  secondaryColor: string;
-  customDirectives: string;
-  setTemplate: (template: 'general' | 'automotive') => void;
-  setBotPersonality: (personality: 'professional' | 'aggressive' | 'informational') => void;
   setHeaderUrl: (url: string | null) => void;
+  footerUrl: string | null;
   setFooterUrl: (url: string | null) => void;
-  setPrimaryColor: (color: string) => void;
-  setSecondaryColor: (color: string) => void;
-  setCustomDirectives: (directives: string) => void;
+  template?: string;
+  botPersonality?: string;
+  primaryColor?: string;
+  secondaryColor?: string;
 }
 
-const BrandKitContext = createContext<BrandKitState | undefined>(undefined);
-
-export function BrandKitProvider({ children }: { children: ReactNode }) {
-  const [template, setTemplate] = useState<'general' | 'automotive'>('general');
-  const [botPersonality, setBotPersonality] = useState<'professional' | 'aggressive' | 'informational'>('professional');
-  const [headerUrl, setHeaderUrl] = useState<string | null>(null);
-  const [footerUrl, setFooterUrl] = useState<string | null>(null);
-  const [primaryColor, setPrimaryColor] = useState('#0097b2');
-  const [secondaryColor, setSecondaryColor] = useState('#226683');
-  const [customDirectives, setCustomDirectives] = useState('');
-
-  return (
-    <BrandKitContext.Provider
-      value={{
-        template,
-        botPersonality,
-        headerUrl,
-        footerUrl,
-        primaryColor,
-        secondaryColor,
-        customDirectives,
-        setTemplate,
-        setBotPersonality,
-        setHeaderUrl,
-        setFooterUrl,
-        setPrimaryColor,
-        setSecondaryColor,
-        setCustomDirectives,
-      }}
-    >
-      {children}
-    </BrandKitContext.Provider>
-  );
-}
+const BrandKitContext = createContext<BrandKitContextType | undefined>(undefined);
 
 export function useBrandKit() {
   const context = useContext(BrandKitContext);
@@ -60,4 +21,34 @@ export function useBrandKit() {
     throw new Error('useBrandKit must be used within a BrandKitProvider');
   }
   return context;
+}
+
+interface BrandKitProviderProps {
+  children: ReactNode;
+}
+
+export function BrandKitProvider({ children }: BrandKitProviderProps) {
+  const [headerUrl, setHeaderUrl] = useState<string | null>(null);
+  const [footerUrl, setFooterUrl] = useState<string | null>(null);
+  const [template, setTemplate] = useState<string>('default');
+  const [botPersonality, setBotPersonality] = useState<string>('informational');
+  const [primaryColor, setPrimaryColor] = useState<string>('#0097b2');
+  const [secondaryColor, setSecondaryColor] = useState<string>('#D4AF37');
+
+  const value: BrandKitContextType = {
+    headerUrl,
+    setHeaderUrl,
+    footerUrl,
+    setFooterUrl,
+    template,
+    botPersonality,
+    primaryColor,
+    secondaryColor
+  };
+
+  return (
+    <BrandKitContext.Provider value={value}>
+      {children}
+    </BrandKitContext.Provider>
+  );
 }

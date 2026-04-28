@@ -1,18 +1,63 @@
 "use client";
 
-import { Sparkles, ArrowRight, Zap, Bot, BarChart3 } from "lucide-react";
+import { Sparkles, ArrowRight, Zap, Bot, BarChart3, AlertCircle } from "lucide-react";
 
 interface EmptyStateProps {
   primaryColor: string;
   accentColor: string;
   resellerSlug: string;
+  type?: "no-clients" | "tenant-not-found";
 }
 
 export function EmptyState({ 
   primaryColor, 
   accentColor,
-  resellerSlug 
+  resellerSlug,
+  type = "no-clients"
 }: EmptyStateProps) {
+  if (type === "tenant-not-found") {
+    return (
+      <div className="min-h-[60vh] flex flex-col items-center justify-center px-4">
+        {/* Icon */}
+        <div className="relative mb-8">
+          <div 
+            className="w-24 h-24 rounded-3xl flex items-center justify-center"
+            style={{ 
+              background: `linear-gradient(135deg, ${primaryColor}20, ${accentColor}20)`,
+              border: `2px solid ${primaryColor}30`
+            }}
+          >
+            <AlertCircle 
+              className="w-12 h-12"
+              style={{ color: primaryColor }}
+            />
+          </div>
+        </div>
+
+        {/* Text Content */}
+        <h2 className="text-3xl font-bold text-gray-900 text-center mb-3">
+          Tenant Not Found
+        </h2>
+        <p className="text-gray-500 text-center max-w-md mb-8 leading-relaxed">
+          The reseller "{resellerSlug}" could not be found or may not be active.
+          Please check the URL and try again.
+        </p>
+
+        {/* Primary CTA */}
+        <a
+          href="/dashboard"
+          className="group inline-flex items-center gap-3 px-8 py-4 rounded-xl font-semibold text-white transition-all duration-300 hover:shadow-xl hover:scale-105 active:scale-95"
+          style={{ 
+            background: `linear-gradient(135deg, ${primaryColor}, ${primaryColor}dd)`
+          }}
+        >
+          <ArrowRight className="w-5 h-5 transition-transform group-hover:translate-x-1" />
+          Return to Dashboard
+        </a>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-[60vh] flex flex-col items-center justify-center px-4">
       {/* Animated Background Elements */}
@@ -81,7 +126,7 @@ export function EmptyState({
 
       {/* Primary CTA */}
       <a
-        href={`/reseller/${resellerSlug}/clients/new`}
+        href={`/dashboard/reseller/${resellerSlug}/clients/new`}
         className="group inline-flex items-center gap-3 px-8 py-4 rounded-xl font-semibold text-white transition-all duration-300 hover:shadow-xl hover:scale-105 active:scale-95"
         style={{ 
           background: `linear-gradient(135deg, ${primaryColor}, ${primaryColor}dd)`

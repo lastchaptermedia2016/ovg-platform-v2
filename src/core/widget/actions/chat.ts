@@ -37,7 +37,7 @@ export async function* processUserMessage(
       tenant.system_prompt || "You are a helpful and friendly assistant.";
 
     // === Step 1: Stream text from Groq LLM ===
-    const completion = await groq.chat.completions.create({
+    const completion = await groq.completions.create({
       model: "llama-3.3-70b-versatile", // Change model as needed
       messages: [
         { role: "system", content: systemPrompt },

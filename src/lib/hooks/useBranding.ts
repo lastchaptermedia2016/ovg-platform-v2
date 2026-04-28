@@ -1,48 +1,20 @@
-"use client";
+import { useEffect, useState } from 'react';
 
-import { useEffect } from "react";
-
-export interface BrandingData {
+export interface BrandingOptions {
   primaryColor?: string;
   secondaryColor?: string;
-  backgroundColor?: string;
-  foregroundColor?: string;
-  [key: string]: string | undefined;
+  accentColor?: string;
+  logoUrl?: string;
 }
 
-export function useBranding(branding: BrandingData | null) {
+export function useBranding(options?: BrandingOptions | null) {
+  const [branding, setBranding] = useState<BrandingOptions | null>(null);
+
   useEffect(() => {
-    if (!branding) return;
+    if (options) {
+      setBranding(options);
+    }
+  }, [options]);
 
-    const root = document.documentElement;
-
-    // Map database colors to CSS variables
-    if (branding.primaryColor) {
-      root.style.setProperty("--primary-gold", branding.primaryColor);
-    }
-    if (branding.secondaryColor) {
-      root.style.setProperty("--deep-blue", branding.secondaryColor);
-    }
-    if (branding.backgroundColor) {
-      root.style.setProperty("--background", branding.backgroundColor);
-    }
-    if (branding.foregroundColor) {
-      root.style.setProperty("--foreground", branding.foregroundColor);
-    }
-
-    // Allow for any additional custom branding properties
-    Object.entries(branding).forEach(([key, value]) => {
-      if (
-        value &&
-        ![
-          "primaryColor",
-          "secondaryColor",
-          "backgroundColor",
-          "foregroundColor",
-        ].includes(key)
-      ) {
-        root.style.setProperty(`--${key}`, value);
-      }
-    });
-  }, [branding]);
+  return { branding, setBranding };
 }

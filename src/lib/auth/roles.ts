@@ -1,23 +1,35 @@
-import { User } from "@supabase/supabase-js";
+// User role management
+// Replace with your actual implementation
 
-export type UserRole = "reseller" | "client" | "admin";
+export type UserRole = "admin" | "reseller" | "client" | "user";
+
+export interface User {
+  id: string;
+  email: string;
+  role?: UserRole;
+  user_metadata?: {
+    role?: UserRole;
+    reseller_id?: string;
+    reseller_slug?: string;
+  };
+}
 
 export async function getUserRole(user: User): Promise<UserRole> {
-  const userMetadata = user.user_metadata;
-  return userMetadata.role || "client";
+  // Check user metadata for role
+  const role = user.user_metadata?.role || user.role || "user";
+  return role as UserRole;
 }
 
-export async function isReseller(user: User): Promise<boolean> {
-  const role = await getUserRole(user);
-  return role === "reseller" || role === "admin";
+export function hasRole(user: User | null, allowedRoles: UserRole[]): boolean {
+  if (!user) return false;
+  const userRole = user.user_metadata?.role || user.role || "user";
+  return allowedRoles.includes(userRole as UserRole);
 }
 
-export async function isClient(user: User): Promise<boolean> {
-  const role = await getUserRole(user);
-  return role === "client";
+export function isAdmin(user: User | null): boolean {
+  return hasRole(user, ["admin"]);
 }
 
-export async function isAdmin(user: User): Promise<boolean> {
-  const role = await getUserRole(user);
-  return role === "admin";
+export function isReseller(user: User | null): boolean {
+  return hasRole(user, ["reseller", "admin"]);
 }

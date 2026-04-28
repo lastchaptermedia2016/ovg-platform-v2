@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initializeTransaction } from '@/lib/paystack';
+import { initializeTransaction } from '@/core/billing/paystack';
 
 export const dynamic = 'force-dynamic';
 

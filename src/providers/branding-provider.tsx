@@ -7,10 +7,9 @@ import {
   useState,
   ReactNode,
 } from "react";
-import { usePathname } from "next/navigation";
-import { BrandingData, BrandingContextState, EntityType } from "@/types";
+import { BrandingData, BrandingContextState } from "@/types";
 
-// Default branding (neutral, no platform-specific names)
+// Production Excellence defaults
 const DEFAULT_BRANDING: BrandingData = {
   name: "Voice Platform",
   logoUrl: "/logo-default.svg",
@@ -21,80 +20,22 @@ const DEFAULT_BRANDING: BrandingData = {
 };
 
 interface BrandingContextType extends BrandingContextState {
-  refreshBranding: () => Promise<void>;
+  refreshBranding?: () => Promise<void>;
 }
 
 const BrandingContext = createContext<BrandingContextType>({
   branding: DEFAULT_BRANDING,
   entityType: null,
   slug: null,
-  isLoading: true,
+  isLoading: false,
   error: null,
-  refreshBranding: async () => {},
 });
 
 export const useBranding = () => useContext(BrandingContext);
 
 interface BrandingProviderProps {
   children: ReactNode;
-  initialBranding?: BrandingData;
-}
-
-/**
- * Parse URL path to determine entity type and slug
- * Handles: /reseller/[slug], /client/[slug], /dashboard (master)
- */
-function parseRouteContext(pathname: string): {
-  entityType: EntityType;
-  slug: string | null;
-} {
-  const cleanPath = pathname.replace(/^\/+|\/+$/g, "");
-  const segments = cleanPath.split("/");
-
-  // Check for reseller routes: /reseller/[slug]
-  if (segments[0] === "reseller" && segments[1]) {
-    return { entityType: "reseller", slug: segments[1] };
-  }
-
-  // Check for client routes: /client/[slug]
-  if (segments[0] === "client" && segments[1]) {
-    return { entityType: "client", slug: segments[1] };
-  }
-
-  // Dashboard routes (master/admin)
-  if (segments[0] === "dashboard" || segments[0] === "admin") {
-    return { entityType: "master", slug: null };
-  }
-
-  return { entityType: null, slug: null };
-}
-
-/**
- * Fetch branding data from API based on entity type and slug
- */
-async function fetchBranding(
-  entityType: EntityType,
-  slug: string | null
-): Promise<BrandingData> {
-  if (!entityType || !slug) {
-    return DEFAULT_BRANDING;
-  }
-
-  try {
-    const response = await fetch(
-      `/api/branding?type=${entityType}&slug=${encodeURIComponent(slug)}`
-    );
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch branding: ${response.status}`);
-    }
-
-    const data = await response.json();
-    return data.branding || DEFAULT_BRANDING;
-  } catch (error) {
-    console.error("Branding fetch error:", error);
-    return DEFAULT_BRANDING;
-  }
+  initialData?: BrandingData;
 }
 
 /**
@@ -136,50 +77,15 @@ function applyBrandingToDocument(branding: BrandingData): void {
 
 export function BrandingProvider({
   children,
-  initialBranding,
+  initialData,
 }: BrandingProviderProps) {
-  const pathname = usePathname();
   const [state, setState] = useState<BrandingContextState>({
-    branding: initialBranding || DEFAULT_BRANDING,
+    branding: initialData || DEFAULT_BRANDING,
     entityType: null,
     slug: null,
-    isLoading: true,
+    isLoading: false,
     error: null,
   });
-
-  const refreshBranding = async () => {
-    const { entityType, slug } = parseRouteContext(pathname);
-
-    setState((prev) => ({ ...prev, isLoading: true, error: null }));
-
-    try {
-      const branding = await fetchBranding(entityType, slug);
-
-      setState({
-        branding,
-        entityType,
-        slug,
-        isLoading: false,
-        error: null,
-      });
-
-      applyBrandingToDocument(branding);
-    } catch (error) {
-      setState({
-        branding: DEFAULT_BRANDING,
-        entityType,
-        slug,
-        isLoading: false,
-        error:
-          error instanceof Error ? error.message : "Failed to load branding",
-      });
-    }
-  };
-
-  // Fetch branding when pathname changes
-  useEffect(() => {
-    refreshBranding();
-  }, [pathname]);
 
   // Initial application of branding
   useEffect(() => {
@@ -187,7 +93,7 @@ export function BrandingProvider({
   }, [state.branding]);
 
   return (
-    <BrandingContext.Provider value={{ ...state, refreshBranding }}>
+    <BrandingContext.Provider value={state}>
       {children}
     </BrandingContext.Provider>
   );

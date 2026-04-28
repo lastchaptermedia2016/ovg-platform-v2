@@ -10,12 +10,15 @@
     "lint:fix": "eslint . --fix"
   },
   "dependencies": {
+    "@headlessui/react": "^2.2.10",
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.103.3",
+    "autoprefixer": "^10.5.0",
     "framer-motion": "^11.18.2",
     "groq-sdk": "^1.1.2",
     "lucide-react": "^0.468.0",
     "next": "16.2.4",
+    "postcss": "^8.5.12",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "recharts": "^3.8.1",
@@ -28,7 +31,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
-    "tailwindcss": "^4",
+    "tailwindcss": "^4.2.4",
     "typescript": "^5"
   }
 }

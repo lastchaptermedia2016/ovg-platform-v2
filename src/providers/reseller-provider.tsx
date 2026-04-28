@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, ReactNode } from "react";
-import { createClient } from "@/lib/supabase";
+import { createBrowserClient } from "@/lib/supabase";
 import { BrandingData } from "@/types";
 
 interface ResellerProviderProps {
@@ -31,7 +31,7 @@ export function ResellerProvider({
   useEffect(() => {
     async function fetchResellerBranding() {
       try {
-        const supabase = createClient();
+        const supabase = createBrowserClient();
         
         const { data, error } = await supabase
           .from("resellers")
@@ -86,7 +86,7 @@ export function ResellerProvider({
   useEffect(() => {
     if (!branding) return;
 
-    const supabase = createClient();
+    const supabase = createBrowserClient();
     const channel = supabase
       .channel(`reseller-alerts-${resellerSlug}`)
       .on(

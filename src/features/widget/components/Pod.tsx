@@ -1,11 +1,6 @@
-"use client";
+import React from 'react';
+import PodBubble from '@/components/widget/PodBubble';
 
-import PodBubble from "@/components/widget/PodBubble";
-
-export interface PodProps {
-  tenantId: string;
-}
-
-export default function Pod({ tenantId }: PodProps) {
-  return <PodBubble tenantId={tenantId} />;
+export default function Pod(props: any) {
+  return <PodBubble {...props} />;
 }

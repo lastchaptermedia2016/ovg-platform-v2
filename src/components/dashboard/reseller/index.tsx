@@ -1,2 +1,2 @@
 export { Header } from "../Header";
-export { Sidebar } from "../Sidebar";
+// Sidebar intentionally omitted — no Sidebar implementation exists.

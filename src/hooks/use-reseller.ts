@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { createClient } from "@/lib/supabase";
+import { createBrowserClient } from "@/lib/supabase";
 import { Reseller, BrandingData } from "@/types";
 
 interface UseResellerReturn {
@@ -29,7 +29,7 @@ export function useReseller(): UseResellerReturn {
       setIsLoading(true);
       setError(null);
 
-      const supabase = createClient();
+      const supabase = createBrowserClient();
 
       // Get current user
       const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -103,7 +103,7 @@ export function useReseller(): UseResellerReturn {
  * Fetch reseller by ID
  */
 async function fetchResellerById(id: string): Promise<Reseller | null> {
-  const supabase = createClient();
+  const supabase = createBrowserClient();
   
   const { data, error } = await supabase
     .from("resellers")
@@ -124,7 +124,7 @@ async function fetchResellerById(id: string): Promise<Reseller | null> {
  * Fetch reseller by slug (tenant_id)
  */
 async function fetchResellerBySlug(slug: string): Promise<Reseller | null> {
-  const supabase = createClient();
+  const supabase = createBrowserClient();
   
   const { data, error } = await supabase
     .from("resellers")
