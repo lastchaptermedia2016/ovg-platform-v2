@@ -101,82 +101,102 @@ export function ClientCard({
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
       >
-      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
-        <div className="flex-1">
-          {/* Header with Status, Name, Industry, AI Insight, Diagnostics */}
-          <div className="flex items-center gap-3 mb-2 flex-wrap relative z-[60]">
-            <span className="text-lg">{getCategoryIcon(tenant.category)}</span>
-            <div className="flex items-center gap-2 flex-wrap">
+      {/* STRICT GRID STRUCTURE - Mobile Structural Lock */}
+      <div className="grid grid-cols-1 gap-3">
+        {/* HEADER GRID: 2-Row Lock on Mobile */}
+        <div className="grid grid-rows-2 gap-2">
+          {/* Row 1: [Icon + Name + Status Dot] */}
+          <div className="grid grid-cols-[auto_1fr_auto] gap-3 items-center">
+            <span className="text-lg w-6 text-center">{getCategoryIcon(tenant.category)}</span>
+            <div className="flex items-center gap-2 overflow-hidden">
               <StatusDot lastSeen={tenant.last_seen} />
-              <h3 className="text-sm font-medium text-white">{tenant.name}</h3>
+              <h3 className="text-sm font-medium text-white truncate">{tenant.name}</h3>
             </div>
-            <span className="px-2 py-0.5 text-[10px] tracking-[0.1em] bg-cyan-500/10 border border-cyan-500/20 rounded text-cyan-300 uppercase min-w-[60px] text-center">
-              {categoryLabel}
-            </span>
             <AIInsightBadge 
               insight={tenant.ai_insight || 'Signals are stable. Engagement is trending positively.'} 
               isPulsing={pulseCardId === tenant.id}
             />
-            {/* Diagnostics Button - Always present */}
-            <button
-              onClick={() => onDiagnosticClick(tenant.id)}
-              className="!opacity-100 !mix-blend-normal backdrop-blur-none w-6 h-6 rounded-lg bg-white/5 border border-white/20 flex items-center justify-center hover:bg-white/10 hover:border-[#00E5FF] transition-all duration-300 shadow-[0_0_10px_rgba(0,229,255,0.3)]"
-              title="View Diagnostics"
-              style={{ 
-                filter: 'drop-shadow(0 0 2px rgba(0, 151, 178, 0.3))',
-                transform: 'translateZ(0)'
-              }}
-            >
-              <svg 
-                className="w-3 h-3" 
-                fill="none" 
-                stroke="currentColor" 
-                viewBox="0 0 24 24"
-                style={{ color: '#00E5FF' }}
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-            </button>
-            {/* Management/Users Button - Always present */}
-            <div className="relative !opacity-100 !visible z-50 force-glow-icon">
+          </div>
+          
+          {/* Row 2: [Industry Tag] + [Action Icons - Fixed Width Right] */}
+          <div className="grid grid-cols-[1fr_auto] gap-3 items-center">
+            {/* Fixed Width Industry Tag - Cannot be pushed by text length */}
+            <span className="px-2 py-1 text-[10px] tracking-[0.1em] bg-cyan-500/10 border border-cyan-500/20 rounded text-cyan-300 uppercase min-w-[120px] w-fit text-center">
+              {categoryLabel}
+            </span>
+            {/* Action Icons - Fixed Width Container with Justify-End */}
+            <div className="flex items-center gap-2 w-[72px] justify-end">
+              {/* Diagnostics Button */}
               <button
-                className="!opacity-100 !mix-blend-normal backdrop-blur-none relative z-10 w-6 h-6 rounded-lg bg-white/5 border border-white/20 flex items-center justify-center hover:bg-white/10 hover:border-[#00E5FF] transition-all duration-300 shadow-[0_0_10px_rgba(0,229,255,0.3)]"
-                title="Manage Users"
+                onClick={() => onDiagnosticClick(tenant.id)}
+                className="!opacity-100 !mix-blend-normal backdrop-blur-none w-7 h-7 rounded-lg bg-white/5 border border-white/20 flex items-center justify-center hover:bg-white/10 hover:border-[#00E5FF] transition-all duration-300 shadow-[0_0_10px_rgba(0,229,255,0.3)]"
+                title="View Diagnostics"
                 style={{ 
                   filter: 'drop-shadow(0 0 2px rgba(0, 151, 178, 0.3))',
                   transform: 'translateZ(0)'
                 }}
               >
                 <svg 
-                  className="w-3 h-3 text-[#0097b2] opacity-100" 
-                  fill="currentColor" 
-                  viewBox="0 0 20 20" 
-                  aria-hidden="true"
+                  className="w-3.5 h-3.5" 
+                  fill="none" 
+                  stroke="currentColor" 
+                  viewBox="0 0 24 24"
+                  style={{ color: '#00E5FF' }}
                 >
-                  <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z"></path>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                 </svg>
               </button>
+              {/* Management/Users Button */}
+              <div className="relative !opacity-100 !visible z-50 force-glow-icon">
+                <button
+                  className="!opacity-100 !mix-blend-normal backdrop-blur-none relative z-10 w-7 h-7 rounded-lg bg-white/5 border border-white/20 flex items-center justify-center hover:bg-white/10 hover:border-[#00E5FF] transition-all duration-300 shadow-[0_0_10px_rgba(0,229,255,0.3)]"
+                  title="Manage Users"
+                  style={{ 
+                    filter: 'drop-shadow(0 0 2px rgba(0, 151, 178, 0.3))',
+                    transform: 'translateZ(0)'
+                  }}
+                >
+                  <svg 
+                    className="w-3.5 h-3.5 text-[#0097b2] opacity-100" 
+                    fill="currentColor" 
+                    viewBox="0 0 20 20" 
+                    aria-hidden="true"
+                  >
+                    <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z"></path>
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
-          <div className="text-xs text-white/40">{tenant.email}</div>
+        </div>
+        
+        <div className="text-xs text-white/40 truncate">{tenant.email}</div>
           
-          {/* Metrics Row - Twin Standardization: All values use font-bold */}
-          <div className="mt-2 flex flex-col md:flex-row md:items-center gap-2 md:gap-4 text-[10px] tracking-widest uppercase">
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1 w-full md:flex md:gap-4">
-              <span className="text-white/60">Active: <span className="text-white font-bold">Yes</span></span>
-              <span className="text-white/60">Leads: <span className="text-[#FFD700] font-bold font-black">{leads}</span></span>
-              <span className="text-white/60">Revenue: <span className="text-[#FFD700] font-bold font-black">{formatCurrency(revenue)}</span></span>
-              <span className="text-white/60 flex items-center gap-2">
-                Signals: <span className="text-[#0097b2] font-bold font-black">{tenant.signal_count ?? 0}</span>
-                {tenant.signal_trend && tenant.signal_trend.length > 0 && (
-                  <Sparkline data={tenant.signal_trend} width={40} height={12} />
-                )}
-              </span>
+          {/* METRICS GRID: Strict 2-Column Lock - Identical X-Coordinates on Every Card */}
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[10px] tracking-widest uppercase grid-flow-row">
+            <div className="flex items-center gap-1">
+              <span className="text-white/60">Active:</span>
+              <span className="text-white font-bold">Yes</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-white/60">Leads:</span>
+              <span className="text-[#FFD700] font-bold font-black">{leads}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-white/60">Revenue:</span>
+              <span className="text-[#FFD700] font-bold font-black">{formatCurrency(revenue)}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <span className="text-white/60">Signals:</span>
+              <span className="text-[#0097b2] font-bold font-black">{tenant.signal_count ?? 0}</span>
+              {tenant.signal_trend && tenant.signal_trend.length > 0 && (
+                <Sparkline data={tenant.signal_trend} width={32} height={10} />
+              )}
             </div>
           </div>
 
-          {/* Feature Toggles - Tightened vertical spacing for twin consistency */}
-          <div className="mt-2 flex items-center gap-2">
+          {/* Feature Toggles - Fixed spacing, hardcoded gap */}
+          <div className="flex items-center gap-3">
             {['ai', 'sms', 'vin', 'signal'].map((feature) => {
               const isActive = tenant.category_config?.super_functions?.includes(feature === 'ai' ? 'ai_omni_chat' : feature);
               return (
@@ -199,9 +219,9 @@ export function ClientCard({
           </div>
         </div>
 
-        {/* Automotive-Specific Inventory Section - Harmonized */}
+        {/* Automotive-Specific Inventory Section - Grid Aligned */}
         {isAutomotive && (
-          <div className="flex flex-col gap-2 min-w-[150px] justify-center">
+          <div className="grid grid-cols-1 gap-2 min-w-[150px]">
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-cyan-500/50" />
               <span className="text-[10px] text-white/60 tracking-[0.1em] uppercase">
@@ -211,6 +231,7 @@ export function ClientCard({
           </div>
         )}
       </div>
+      {/* End Strict Grid Structure */}
 
       {/* Active Features - Always present */}
       <div className="mt-3 pt-3 border-t border-white/10">
@@ -233,7 +254,6 @@ export function ClientCard({
 
       {/* SignalWave Animation */}
       <SignalWave />
-    </div>
     </>
   );
 }
