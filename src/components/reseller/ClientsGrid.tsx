@@ -33,13 +33,28 @@ export function ClientsGridInternal({
   filter = 'all', 
   showOfflineOnly = false, 
   categoryMap,
-  onSelectTenant 
+  onSelectTenant,
+  activeTenantId,
+  isProcessing,
+  isGlobalScanning,
+  onStatsUpdate,
 }: { 
   resellerSlug: string; 
   filter?: string; 
   showOfflineOnly?: boolean; 
   categoryMap?: Record<string, string>;
   onSelectTenant?: (tenantId: string, clientName?: string) => void;
+  activeTenantId?: string | null;
+  isProcessing?: boolean;
+  isGlobalScanning?: boolean;
+  onStatsUpdate?: (stats: {
+    totalClients: number;
+    totalMRR: number;
+    totalSignals: number;
+    aiEfficiency: number;
+    criticalAlerts: number;
+    loading: boolean;
+  }) => void;
 }) {
   // Props change tracking removed for production
   
@@ -66,6 +81,18 @@ export function ClientsGridInternal({
   });
   const [hudLoading, setHudLoading] = useState(true);
   const [criticalAlertsCount, setCriticalAlertsCount] = useState(0);
+
+  // Report stats to parent
+  useEffect(() => {
+    onStatsUpdate?.({
+      totalClients: allTenants.length,
+      totalMRR: hudStats.totalMRR,
+      totalSignals: hudStats.totalSignals,
+      aiEfficiency: hudStats.aiEfficiency,
+      criticalAlerts: criticalAlertsCount,
+      loading: hudLoading
+    });
+  }, [allTenants.length, hudStats, criticalAlertsCount, hudLoading, onStatsUpdate]);
 
   // Buffer for coalescing rapid tenant updates
   const tenantUpdateBuffer = useRef<{ updated: Tenant[]; inserted: Tenant[]; removedIds: Set<string>; timer: any }>({
@@ -474,110 +501,6 @@ export function ClientsGridInternal({
         </div>
       )}
 
-      {/* Header with Stats Bar */}
-      <div className="flex flex-col md:flex-row justify-between items-stretch relative z-10 gap-4 md:gap-8 w-full h-fit">
-        <div className="backdrop-blur-[8px] saturate-[180%] bg-white/[0.05] border border-white/10 rounded-xl p-4 flex flex-col gap-1 w-full md:w-[320px]">
-          <h2 className="text-[22px] font-black uppercase tracking-tight animate-gold-sweep">
-            Client Portfolio
-          </h2>
-          <div className="flex items-center gap-2 text-xs text-white/90">
-            <span className="w-2.5 h-2.5 rounded-full bg-[#0097b2] animate-pulse shadow-[0_0_8px_#0097b2]" />
-            {allTenants.length} active clients
-          </div>
-        </div>
-
-        {/* Portfolio Health HUD - Original Vertical State */}
-        <div className="w-full flex flex-wrap items-center gap-3 md:gap-6 backdrop-blur-md bg-white/5 border border-white/10 rounded-xl px-3 md:px-6 py-3 md:py-4 overflow-hidden">
-          {hudLoading ? (
-            <>
-              <div className="flex items-center gap-2 min-w-fit">
-                <span className="text-[10px] tracking-[0.15em] text-white/60 uppercase">Total MRR</span>
-                <div className="w-16 h-4 bg-white/10 rounded animate-pulse" />
-              </div>
-              <div className="w-px h-6 bg-white/10 hidden md:block" />
-              <div className="flex items-center gap-2 min-w-fit">
-                <span className="text-[10px] tracking-[0.15em] text-white/60 uppercase">Total Signals</span>
-                <div className="w-12 h-4 bg-white/10 rounded animate-pulse" />
-              </div>
-              <div className="w-px h-6 bg-white/10 hidden md:block" />
-              <div className="flex items-center gap-2 min-w-fit">
-                <span className="text-[10px] tracking-[0.15em] text-white/60 uppercase">AI Efficiency</span>
-                <div className="w-10 h-4 bg-white/10 rounded animate-pulse" />
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="flex items-center gap-2 min-w-fit">
-                <span className="text-[10px] tracking-[0.15em] text-white/60 uppercase">Total MRR</span>
-                <span className="text-sm md:text-sm font-bold text-[#D4AF37]">{formatCurrency(hudStats.totalMRR)}</span>
-              </div>
-              <div className="w-px h-6 bg-white/10 hidden md:block" />
-              <div className="flex items-center gap-2 min-w-fit">
-                <span className="text-[10px] tracking-[0.15em] text-white/60 uppercase">Total Signals</span>
-                <span className="text-sm md:text-sm font-bold text-[#0097b2]">{hudStats.totalSignals.toLocaleString()}</span>
-              </div>
-              <div className="w-px h-6 bg-white/10 hidden md:block" />
-              <div className="flex items-center gap-2 min-w-fit">
-                <span className="text-[10px] tracking-[0.15em] text-white/60 uppercase">AI Efficiency</span>
-                <span className="text-sm md:text-sm font-bold text-white">{hudStats.aiEfficiency}%</span>
-              </div>
-              <div className="w-px h-6 bg-white/10 hidden md:block" />
-              
-              {/* Critical Alerts Badge */}
-              {criticalAlertsCount > 0 && (
-                <div className="flex items-center gap-2 min-w-fit px-3 py-1 bg-[#DC143C]/20 border border-[#DC143C]/30 rounded-lg animate-pulse">
-                  <span className="text-[10px] tracking-[0.15em] text-[#DC143C] uppercase">Critical Alerts</span>
-                  <span className="text-sm font-bold text-[#DC143C]">{criticalAlertsCount}</span>
-                </div>
-              )}
-            </>
-          )}
-          <div className="w-px h-6 bg-white/10 hidden md:block" />
-          
-          {/* Sort Dropdown */}
-          <div className="relative">
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as 'name' | 'revenue' | 'leads')}
-              className="appearance-none bg-transparent text-xs text-white/60 uppercase tracking-[0.1em] outline-none cursor-pointer pr-6"
-            >
-              <option value="name" className="bg-gray-900">Name</option>
-              <option value="revenue" className="bg-gray-900">Revenue</option>
-              <option value="leads" className="bg-gray-900">Leads</option>
-            </select>
-            <svg className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 text-white/40 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          </div>
-          
-          {/* Search Input */}
-          <div className={`flex items-center backdrop-blur-xl bg-white/5 border border-white/10 rounded-lg transition-all duration-300 ${
-            searchExpanded ? 'w-48 px-3' : 'w-8 h-8 justify-center'
-          }`}>
-            {searchExpanded ? (
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search clients..."
-                className="bg-transparent text-xs text-white placeholder-white/40 outline-none w-full"
-                autoFocus
-                onBlur={() => setSearchExpanded(false)}
-              />
-            ) : (
-              <button
-                onClick={() => setSearchExpanded(true)}
-                className="w-full h-full flex items-center justify-center text-white/60 hover:text-white transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
       {/* Add Client Action Pane */}
       <AddClientAction onClientAdded={handleClientAdded} />
 
@@ -619,10 +542,21 @@ export function ClientsGridInternal({
                   console.log('ClientCard clicked, selecting tenant:', tenant.id, 'name:', tenant.name);
                   onSelectTenant?.(tenant.id, tenant.name);
                 }}
-                className={`cursor-pointer transition-all duration-200 ${
+                className={`relative cursor-pointer transition-all duration-200 ${
                   onSelectTenant ? 'hover:ring-2 hover:ring-[#0097b2]/50' : ''
-                }`}
+                } ${activeTenantId === tenant.id ? 'ring-2 ring-green-500 shadow-[0_0_20px_rgba(34,197,94,0.3)]' : ''}`}
               >
+                {/* Processing Skeleton Overlay */}
+                {isProcessing && activeTenantId === tenant.id && (
+                  <div className="absolute inset-0 z-10 rounded-lg bg-black/70 backdrop-blur-sm flex items-center justify-center">
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="w-8 h-8 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-[10px] text-green-400 tracking-widest uppercase animate-pulse">
+                        Processing...
+                      </span>
+                    </div>
+                  </div>
+                )}
                 <ClientCard
                   tenant={tenant}
                   pulseCardId={pulseCardId}
@@ -663,7 +597,11 @@ export const ClientsGrid = memo(ClientsGridInternal, (prev, next) => {
     prev.filter === next.filter &&
     prev.onSelectTenant === next.onSelectTenant &&
     prev.showOfflineOnly === next.showOfflineOnly &&
-    prev.categoryMap === next.categoryMap;
+    prev.categoryMap === next.categoryMap &&
+    prev.activeTenantId === next.activeTenantId &&
+    prev.isProcessing === next.isProcessing &&
+    prev.isGlobalScanning === next.isGlobalScanning &&
+    prev.onStatsUpdate === next.onStatsUpdate;
 
   return isSame;
 });

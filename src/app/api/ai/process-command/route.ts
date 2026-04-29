@@ -1,56 +1,61 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Groq from 'groq-sdk';
 import { z } from 'zod';
+import { createClient as createSupabaseClient } from '@/lib/supabase/server';
 
 // Initialize Groq client
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
 
-// Request validation schema
+// Request validation schema - tenantId is now optional for global commands
 const ProcessCommandSchema = z.object({
   resellerId: z.string().min(1), // Reseller slug, not UUID
   userCommand: z.string().min(1).max(2000),
   currentConfig: z.record(z.any()).default({}),
   tenantContext: z.object({
-    tenantId: z.string().uuid(),
+    tenantId: z.string().uuid().optional(), // Optional for global commands
     category: z.string().optional(),
   }),
 });
 
 type ProcessCommandRequest = z.infer<typeof ProcessCommandSchema>;
 
-// Response schema for AI output
+// Response schema for AI output - supports both SINGLE and BULK actions
 const AIResponseSchema = z.object({
-  technicalSummary: z.string().min(10).max(500),
-  configPatch: z.record(z.any()),
+  actionType: z.enum(['SINGLE', 'BULK']),
+  targetIds: z.array(z.string().uuid()).min(1),
+  payload: z.record(z.any()),
+  summary: z.string().min(10).max(500), // For TTS confirmation
 });
 
 const SYSTEM_PROMPT = `You are a Technical Deployment Officer for OVG Platform's AI Intelligence module.
 
 Your role is to analyze user commands and generate precise configuration updates for widget deployments.
+You can handle BOTH single-tenant updates AND bulk/global updates across multiple tenants.
 
 RULES:
-1. Analyze the user's natural language command against the current widget configuration
-2. Generate a technical summary describing what changes will be made
-3. Output a JSON patch object containing ONLY the fields that need to change
-4. NEVER output markdown, explanations, or code blocks - ONLY valid JSON
-5. Respect the existing theme colors (Electric Blue #0097b2 and Gold #D4AF37) unless explicitly changed
-6. For "Insurance" mode, emphasize trust signals, security badges, and professional tone
-7. For "Automotive" mode, emphasize speed, inventory, and urgency
-8. For "Retail" mode, emphasize deals, scarcity, and promotions
+1. Analyze the user's natural language command against the provided tenant context
+2. Determine if the command targets a SINGLE tenant or MULTIPLE tenants (BULK)
+3. For BULK commands: select appropriate targetIds based on the command intent (category filters, all tenants, etc.)
+4. Generate a summary string for voice confirmation (keep under 150 chars)
+5. Output a JSON object with actionType, targetIds array, payload, and summary
+6. NEVER output markdown, explanations, or code blocks - ONLY valid JSON
+7. Respect the existing theme colors (Electric Blue #0097b2 and Gold #D4AF37) unless explicitly changed
 
 OUTPUT FORMAT (STRICT JSON):
 {
-  "technicalSummary": "Brief description of changes (max 150 chars)",
-  "configPatch": {
+  "actionType": "SINGLE" | "BULK",
+  "targetIds": ["tenant-uuid-1", "tenant-uuid-2"],
+  "payload": {
     "theme": { "primary": "#color", "secondary": "#color" },
     "behavior": { "prompt": "system prompt text", "tone": "professional" },
     "ui": { "badgeStyle": "glass", "animation": "pulse" }
-  }
+  },
+  "summary": "Brief description of changes for voice confirmation"
 }
 
-The configPatch should only include fields that differ from currentConfig. Preserve all existing values not explicitly changed.`;
+The payload should only include fields that need to change. Preserve all existing values not explicitly changed.`;
 
 export async function POST(request: NextRequest) {
   try {
@@ -70,7 +75,6 @@ export async function POST(request: NextRequest) {
     const { resellerId, userCommand, currentConfig, tenantContext } = validationResult.data;
 
     // Security: Validate reseller authorization
-    // In production, this would verify the reseller owns the tenant
     if (!resellerId) {
       return NextResponse.json(
         { error: 'Unauthorized: Reseller ID required' },
@@ -78,14 +82,39 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Construct the AI prompt
+    // Initialize Supabase for potential global command lookup
+    const supabase = await createSupabaseClient();
+    let allTenants: { id: string; name: string; category: string }[] = [];
+
+    // If tenantId is null, fetch all tenants for this reseller
+    if (!tenantContext.tenantId) {
+      const { data: tenants, error: tenantsError } = await supabase
+        .from('tenants')
+        .select('id, name, category, reseller_id')
+        .eq('reseller_id', resellerId);
+
+      if (tenantsError) {
+        console.error('Error fetching tenants:', tenantsError);
+        return NextResponse.json(
+          { error: 'Failed to fetch tenant list for global command' },
+          { status: 500 }
+        );
+      }
+
+      allTenants = (tenants as { id: string; name: string; category: string }[]) || [];
+    }
+
+    // Construct the AI prompt with tenant context
     const userPrompt = `CURRENT CONFIG: ${JSON.stringify(currentConfig, null, 2)}
 
-TENANT CONTEXT: ${JSON.stringify(tenantContext)}
+TARGET TENANT: ${tenantContext.tenantId || 'GLOBAL (multiple tenants)'}
 
-USER COMMAND: "${userCommand}"
+${allTenants.length > 0 ? `AVAILABLE TENANTS:\n${allTenants.map(t => `- ${t.id}: ${t.name} (${t.category})`).join('\n')}\n\n` : ''}USER COMMAND: "${userCommand}"
 
-Generate the deployment configuration patch. Output ONLY valid JSON.`;
+Analyze if this is a SINGLE tenant command or a BULK/global command affecting multiple tenants.
+Select appropriate targetIds from the available tenants.
+Generate the deployment configuration.
+Output ONLY valid JSON.`;
 
     // Call Groq API
     const completion = await groq.chat.completions.create({
@@ -119,17 +148,67 @@ Generate the deployment configuration patch. Output ONLY valid JSON.`;
       throw new Error('AI response does not match required schema');
     }
 
-    const { technicalSummary, configPatch } = aiValidation.data;
+    const { actionType, targetIds, payload, summary } = aiValidation.data;
 
-    // Return successful response
+    // Execute the updates
+    let updateResult;
+    try {
+      if (actionType === 'BULK' && targetIds.length > 1) {
+        // Bulk update using .in() query
+        const { data, error: updateError } = await supabase
+          .from('tenants')
+          .update({ widget_config: payload })
+          .in('id', targetIds)
+          .select('id, name');
+
+        if (updateError) {
+          throw new Error(`Bulk update failed: ${updateError.message}`);
+        }
+
+        updateResult = {
+          type: 'BULK',
+          updatedCount: data?.length || 0,
+          tenants: data?.map((t: { id: string; name: string }) => ({ id: t.id, name: t.name })) || [],
+        };
+      } else {
+        // Single tenant update
+        const targetId = targetIds[0];
+        const { data, error: updateError } = await supabase
+          .from('tenants')
+          .update({ widget_config: payload })
+          .eq('id', targetId)
+          .select('id, name')
+          .single();
+
+        if (updateError) {
+          throw new Error(`Single update failed: ${updateError.message}`);
+        }
+
+        updateResult = {
+          type: 'SINGLE',
+          updatedCount: 1,
+          tenants: data ? [{ id: data.id, name: data.name }] : [],
+        };
+      }
+    } catch (updateError: any) {
+      console.error('Update execution failed:', updateError);
+      return NextResponse.json(
+        { error: `Update failed: ${updateError.message}` },
+        { status: 500 }
+      );
+    }
+
+    // Return successful response with TTS-ready summary
     return NextResponse.json({
       success: true,
-      technicalSummary,
-      configPatch,
+      actionType,
+      targetIds,
+      payload,
+      summary, // For Orpheus-v1 TTS
+      updateResult,
       metadata: {
         processedAt: new Date().toISOString(),
         resellerId,
-        tenantId: tenantContext.tenantId,
         model: 'llama-3.3-70b-versatile',
       },
     });

@@ -3,18 +3,19 @@
 import { useState, useCallback } from 'react';
 
 interface TenantContext {
-  tenantId: string;
+  tenantId?: string;
   category?: string;
 }
 
 interface AICommandResponse {
   success: boolean;
-  technicalSummary: string;
-  configPatch: Record<string, any>;
+  actionType: 'SINGLE' | 'BULK';
+  targetIds: string[];
+  payload: Record<string, any>;
+  summary: string;
   metadata: {
     processedAt: string;
     resellerId: string;
-    tenantId: string;
     model: string;
   };
 }
@@ -27,7 +28,7 @@ interface UseAICommandReturn {
   configPatch: Record<string, any> | null;
   targetTenantId: string | null;
   error: string | null;
-  handleCommandSubmit: (command: string, currentConfig: Record<string, any>, tenantContext: TenantContext, resellerId: string) => Promise<void>;
+  handleCommandSubmit: (command: string, currentConfig: Record<string, any>, tenantContext: TenantContext, resellerId: string, onResponse?: (response: AICommandResponse) => void) => Promise<AICommandResponse | undefined>;
   handleConfirmDeployment: () => Promise<void>;
   openModal: () => void;
   closeModal: () => void;
@@ -67,11 +68,14 @@ export function useAICommand(): UseAICommandReturn {
     command: string,
     currentConfig: Record<string, any>,
     tenantContext: TenantContext,
-    resellerId: string
-  ) => {
+    resellerId: string,
+    onResponse?: (response: AICommandResponse) => void
+  ): Promise<AICommandResponse | undefined> => {
     setIsAnalyzing(true);
     setError(null);
-    setTargetTenantId(tenantContext.tenantId);
+    if (tenantContext.tenantId) {
+      setTargetTenantId(tenantContext.tenantId);
+    }
 
     // Validate inputs before sending
     if (!resellerId || resellerId.trim() === '') {
@@ -84,13 +88,6 @@ export function useAICommand(): UseAICommandReturn {
     if (!command || command.trim() === '') {
       console.error('useAICommand: Missing userCommand');
       setError('Missing command');
-      setIsAnalyzing(false);
-      return;
-    }
-
-    if (!tenantContext?.tenantId) {
-      console.error('useAICommand: Missing tenantId');
-      setError('Missing tenant context');
       setIsAnalyzing(false);
       return;
     }
@@ -124,9 +121,33 @@ export function useAICommand(): UseAICommandReturn {
         throw new Error(data.error || `Failed to process command (HTTP ${response.status})`);
       }
 
-      setTechnicalSummary(data.technicalSummary);
-      setConfigPatch(data.configPatch);
-      setIsModalOpen(true);
+      // Transform new API response format
+      const transformedResponse: AICommandResponse = {
+        success: true,
+        actionType: data.actionType || 'SINGLE',
+        targetIds: data.targetIds || [tenantContext.tenantId],
+        payload: data.payload || data.configPatch || {},
+        summary: data.summary || data.technicalSummary || 'Changes applied',
+        metadata: data.metadata || {
+          processedAt: new Date().toISOString(),
+          resellerId,
+          model: 'llama-3.3-70b-versatile',
+        },
+      };
+
+      // Legacy support - still set these for modal
+      setTechnicalSummary(transformedResponse.summary);
+      setConfigPatch(transformedResponse.payload);
+
+      // Call the callback with transformed response
+      onResponse?.(transformedResponse);
+
+      // Only open modal for SINGLE actions
+      if (transformedResponse.actionType === 'SINGLE') {
+        setIsModalOpen(true);
+      }
+
+      return transformedResponse;
     } catch (err: any) {
       const errorMessage = err.message || 'An unexpected error occurred';
       setError(errorMessage);
