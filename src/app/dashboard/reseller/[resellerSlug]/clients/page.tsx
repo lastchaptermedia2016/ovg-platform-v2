@@ -27,6 +27,22 @@ export default function ClientsPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
+  // 🔷 Production Excellence: Inject shimmer animation styles
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes tab-shimmer {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(100%); }
+      }
+      .animate-tab-shimmer {
+        animation: tab-shimmer 5s ease-in-out infinite;
+      }
+    `;
+    document.head.appendChild(style);
+    return () => { document.head.removeChild(style); };
+  }, []);
+
   const resellerSlug = params.resellerSlug as string;
   
   // 🔷 Production Excellence: Detect Next.js hydration issues with route params
@@ -116,17 +132,26 @@ export default function ClientsPage() {
       }
       
       // Normal flow - auto-submit to AI when transcript is received
-      // 🔷 Warm Boot: Block API calls if resellerSlug is invalid
-      if (!resellerSlug || resellerSlug.includes('[') || resellerSlug.includes(']') || resellerSlug.includes('%5B')) {
-        console.warn('[Pierre] Skipping AI submission - invalid resellerSlug:', resellerSlug);
-        return;
+      // 🔷 Production Excellence: URL Path-Extraction Fallback for hydration race condition
+      let activeSlug = resellerSlug;
+      if (!activeSlug || activeSlug.includes('[') || activeSlug.includes(']') || activeSlug.includes('%5B')) {
+        // Direct extraction from window for "Production Excellence" speed
+        const segments = window.location.pathname.split('/');
+        const resellerIndex = segments.indexOf('reseller');
+        if (resellerIndex !== -1 && segments[resellerIndex + 1]) {
+          activeSlug = segments[resellerIndex + 1];
+          console.log('%c[Pierre] 🚀 Extracted slug from URL path:', 'color: #0097b2; font-weight: bold;', activeSlug);
+        }
       }
+      
+      // 🔷 Production Excellence: Electric blue structured logging
+      console.log('%c[Pierre] 🚀 Submission triggered with resolved slug:', 'color: #0097b2; font-weight: bold;', activeSlug);
       
       handleCommandSubmit(
         text,
         { theme: { primary: '#0097b2' }, behavior: { prompt: 'Default' } },
         selectedTenantId ? { tenantId: selectedTenantId, category: activeFilter } : { category: activeFilter },
-        resellerSlug,
+        activeSlug,
         (response: { actionType: string; targetIds: string[]; payload: any; summary: string; success?: boolean } | undefined) => {
           // Handle bulk command response
           if (response?.actionType === 'BULK' && response?.targetIds?.length > 1) {
@@ -163,6 +188,9 @@ export default function ClientsPage() {
 
   // Resilient 4-phase Voice Integration (Groq → ElevenLabs → Browser → Silent)
   const { isPlaying: isVoicePlaying, isSilentMode, captions, playVoice: speakVoice, stopVoice, clearCaptions } = useResilientVoice();
+
+  // 🔷 Production Excellence: Track TTS communication state for HUD
+  const isCommunicating = isVoicePlaying;
 
   // Handle bulk confirmation
   const handleBulkConfirm = async () => {
@@ -269,56 +297,126 @@ export default function ClientsPage() {
       console.error('No tenant selected or empty command');
       return;
     }
+    // 🔷 Production Excellence: URL Path-Extraction Fallback for hydration race condition
+    let activeSlug = resellerSlug;
+    if (!activeSlug || activeSlug.includes('[') || activeSlug.includes(']') || activeSlug.includes('%5B')) {
+      const segments = window.location.pathname.split('/');
+      const resellerIndex = segments.indexOf('reseller');
+      if (resellerIndex !== -1 && segments[resellerIndex + 1]) {
+        activeSlug = segments[resellerIndex + 1];
+        console.log('%c[Pierre] 🚀 Extracted slug from URL path (manual execute):', 'color: #0097b2; font-weight: bold;', activeSlug);
+      }
+    }
     handleCommandSubmit(
       commandInput,
       { theme: { primary: '#0097b2' }, behavior: { prompt: 'Default' } },
       { tenantId: selectedTenantId, category: activeFilter },
-      resellerSlug
+      activeSlug
     );
     setCommandInput('');
   }, [selectedTenantId, commandInput, activeFilter, resellerSlug]);
 
   return (
     <div className="w-full">
-      {/* Production Excellence: Synchronized Global Header - Glass Box Aesthetic */}
-      <header className="sticky top-0 left-0 right-0 z-[50] bg-white/[0.05] backdrop-blur-md border-b border-white/10">
+      {/* Production Excellence: Synchronized Global Header - Naked Wrapper */}
+      <header className="sticky top-0 left-0 right-0 z-[50]">
         <MasterpieceHeader 
           isListening={isListening}
           onMicClick={isListening ? stopListening : startListening}
           isProcessing={isProcessing}
           isAwaitingVoiceConfirm={isAwaitingVoiceConfirm}
           transcribedText={voiceTranscript}
+          isCommunicating={isCommunicating}
         />
         
-        {/* Navigation Tabs - Integrated Sub-Header - Glass Box */}
-        <div className="w-full border-b border-white/10 bg-white/[0.03] backdrop-blur-md">
+        {/* Main Navigation Tabs - Floating Glass Pods Array */}
+        <div className="w-full">
+          <div className="max-w-6xl mx-auto px-4">
+            <div className="flex items-center justify-center gap-3 md:gap-4 py-4">
+              {(() => {
+                // 🔷 Production Excellence: Path-extraction for active state even before hydration
+                const pathSegments = typeof window !== 'undefined' ? window.location.pathname.split('/') : [];
+                const resellerIdx = pathSegments.indexOf('reseller');
+                const currentSlug = (resellerIdx !== -1 && pathSegments[resellerIdx + 1]) 
+                  ? pathSegments[resellerIdx + 1] 
+                  : (resellerSlug || 'dashboard');
+                const navItems = [
+                  { label: 'CLIENTS', path: `/dashboard/reseller/${currentSlug}/clients`, active: true },
+                  { label: 'BRANDING', path: `/dashboard/reseller/${currentSlug}/branding`, active: false },
+                  { label: 'REVENUE', path: `/dashboard/reseller/${currentSlug}/revenue`, active: false },
+                  { label: 'AI ENGINE', path: `/dashboard/reseller/${currentSlug}/ai-engine`, active: false },
+                  { label: 'SIGNAL', path: `/dashboard/reseller/${currentSlug}/signal`, active: false },
+                ];
+                return navItems.map((item) => (
+                  <button
+                    key={item.label}
+                    onClick={() => {
+                      if (!item.active && typeof window !== 'undefined') {
+                        // Show loading state if slug is still hydrating
+                        if (currentSlug.includes('[') || currentSlug.includes('%5B')) {
+                          console.log('%c[Pierre] ⏳ Navigation delayed - waiting for hydration...', 'color: #0097b2; font-weight: bold;');
+                          return;
+                        }
+                        router.push(item.path);
+                      }
+                    }}
+                    className={`relative px-4 md:px-6 py-2.5 rounded-lg text-[11px] font-bold tracking-[0.2em] uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden
+                      backdrop-blur-md bg-white/10 border border-white/10
+                      hover:-translate-y-1 hover:backdrop-blur-xl hover:border-white/20 transition-colors duration-200
+                      ${item.active
+                        ? '!text-[#00e5ff] bg-[#0097b2]/15 border-[#0097b2]/50 shadow-[0_0_20px_rgba(0,151,178,0.3)]'
+                        : '!text-[#94a3b8] hover:!text-[#ffcc00] hover:font-semibold hover:bg-white/15'
+                      }`}
+                  >
+                    {/* Shimmer effect for active tab */}
+                    {item.active && (
+                      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                        <div className="absolute inset-0 animate-tab-shimmer">
+                          <div className="w-full h-full bg-gradient-to-r from-transparent via-white/20 to-transparent transform -skew-x-12" />
+                        </div>
+                      </div>
+                    )}
+                    <span className={`relative z-10 ${item.active ? 'drop-shadow-[0_0_8px_rgba(0,229,255,0.5)]' : ''}`}>{item.label}</span>
+                  </button>
+                ));
+              })()}
+            </div>
+          </div>
+        </div>
+        
+        {/* Industry Filter Tabs - Floating Glass Pods Array */}
+        <div className="w-full">
           <div className="max-w-4xl mx-auto px-4">
-            <div className="flex items-center justify-center gap-2 py-3">
+            <div className="flex items-center justify-center gap-3 py-3">
               {['All', 'Automotive', 'General', 'Retail', 'Healthcare', 'Insurance'].map((filter) => (
                 <button
                   key={filter}
                   onClick={() => handleFilterChange(filter)}
-                  className={`px-4 py-1.5 rounded-full text-[10px] md:text-xs tracking-widest uppercase transition-all duration-300 whitespace-nowrap border ${
-                    activeFilter === filter.toUpperCase()
-                      ? 'border-[#0097b2]/60 bg-[#0097b2]/10 text-[#0097b2]'
-                      : 'border-transparent bg-transparent text-white/50 hover:text-white/80 hover:bg-white/5'
-                  }`}
+                  className={`relative px-4 py-2 rounded-lg text-[11px] font-bold tracking-[0.2em] uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden
+                    backdrop-blur-md bg-white/10 border border-white/10
+                    hover:-translate-y-0.5 hover:backdrop-blur-xl hover:border-white/20 transition-colors duration-200
+                    ${activeFilter === filter.toUpperCase()
+                      ? '!text-[#00e5ff] bg-[#0097b2]/15 border-[#0097b2]/50 shadow-[0_0_15px_rgba(0,151,178,0.25)]'
+                      : '!text-[#94a3b8] hover:!text-[#ffcc00] hover:font-semibold hover:bg-white/15'
+                    }`}
                 >
-                  {filter}
+                  <span className={`relative z-10 ${activeFilter === filter.toUpperCase() ? 'drop-shadow-[0_0_6px_rgba(0,229,255,0.4)]' : ''}`}>{filter}</span>
                 </button>
               ))}
 
-              <div className="w-px h-4 bg-[#0097b2]/20 mx-2" />
+              <div className="w-px h-4 bg-[#0097b2]/30 mx-1" />
 
               <button
                 onClick={toggleOfflineOnly}
-                className={`px-4 py-1.5 rounded-full text-[10px] md:text-xs tracking-widest uppercase transition-all duration-300 whitespace-nowrap border ${
-                  showOfflineOnly
-                    ? 'border-[#0097b2]/60 bg-[#0097b2]/10 text-[#0097b2]'
-                    : 'border-transparent bg-transparent text-white/50 hover:text-[#0097b2]/70'
-                }`}
+                className={`relative px-4 py-2 rounded-lg text-[11px] font-bold tracking-[0.2em] uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden
+                  backdrop-blur-md bg-white/10 border border-white/10
+                  hover:-translate-y-0.5 hover:backdrop-blur-xl hover:border-white/20 transition-colors duration-200
+                  ${showOfflineOnly
+                    ? '!text-[#00e5ff] bg-[#0097b2]/15 border-[#0097b2]/50 shadow-[0_0_15px_rgba(0,151,178,0.25)]'
+                    : '!text-[#94a3b8] hover:!text-[#ffcc00] hover:font-semibold hover:bg-white/15'
+                  }`}
               >
-                Offline
+                <span className={`relative z-10 ${showOfflineOnly ? 'drop-shadow-[0_0_6px_rgba(0,229,255,0.4)]' : ''}`}>Offline</span>
               </button>
             </div>
           </div>
@@ -336,7 +434,7 @@ export default function ClientsPage() {
             {/* Outer Glow Container - Neon Blue - Glass Box */}
             <div className="relative p-[1px] rounded-xl bg-gradient-to-r from-transparent via-[#0097b2]/50 to-transparent">
               <div className="absolute inset-0 rounded-xl bg-[#0097b2]/20 blur-xl -z-10" />
-              <div className="relative bg-white/[0.05] backdrop-blur-xl border border-white/10 rounded-xl p-4 md:p-6">
+              <div className="relative bg-white/[0.05] backdrop-blur-xl rounded-xl p-4 md:p-6 border-t border-white/20 border-b border-[#0097b2]/40">
                 <div className="flex items-center gap-3">
                   {/* Green Pulse Indicator */}
                   <div className="relative">
@@ -399,11 +497,11 @@ export default function ClientsPage() {
                   </button>
                 </div>
 
-                {/* Status Line - High-Tech Military Badge - Glass Box */}
+                {/* Status Line - High-Tech Military Badge - Gemstone Glass Box */}
                 <div className="mt-3 flex items-center gap-3">
                   {selectedTenantId ? (
                     <>
-                      <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/10 backdrop-blur-md border border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.3)]">
+                      <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 backdrop-blur-md border-t border-white/20 border-b border-green-500/50 shadow-[0_0_15px_rgba(34,197,94,0.3)] transition-all duration-300 hover:-translate-y-0.5">
                         <span className="text-[10px] font-black text-green-500 tracking-tighter animate-pulse">
                           AI
                         </span>
@@ -416,7 +514,7 @@ export default function ClientsPage() {
                       </span>
                     </>
                   ) : (
-                    <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/10 backdrop-blur-md border border-white/30">
+                    <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 backdrop-blur-md border-t border-white/20 border-b border-white/30 transition-all duration-300 hover:-translate-y-0.5">
                       <span className="text-[10px] font-black text-white/40 tracking-tighter">
                         AI
                       </span>
