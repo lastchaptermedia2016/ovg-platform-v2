@@ -89,7 +89,7 @@ export function ClientCard({
         }
       `}} />
       <div
-        className={`${useSimpleStyle && !isHovered ? '' : 'backdrop-blur-xl'} bg-white/5 border border-white/10 rounded-lg p-4 hover:bg-white/[0.08] hover:border-[#0097b2]/50 hover:shadow-[0_0_20px_rgba(0,151,178,0.2)] transition-all duration-300 group relative mb-6 w-full overflow-visible ${
+        className={`${useSimpleStyle && !isHovered ? '' : 'backdrop-blur-xl'} bg-gradient-to-br from-white/5 via-white/[0.02] to-[#0097b2]/5 border border-white/10 rounded-lg p-4 hover:bg-white/[0.08] hover:border-[#0097b2]/50 hover:shadow-[0_0_20px_rgba(0,151,178,0.2)] transition-all duration-300 group relative mb-6 w-full min-h-[200px] overflow-visible ${
           successGlow === tenant.id ? 'shadow-[0_0_30px_rgba(0,151,178,0.5)] border-[#0097b2]' : ''
         } ${
           pulseCardId === tenant.id 
@@ -160,15 +160,14 @@ export function ClientCard({
           </div>
           <div className="text-xs text-white/40">{tenant.email}</div>
           
-          {/* Metrics Row - Responsive: 2-col grid on mobile, flex row on desktop */}
+          {/* Metrics Row - Twin Standardization: All values use font-bold */}
           <div className="mt-2 flex flex-col md:flex-row md:items-center gap-2 md:gap-4 text-[10px] tracking-widest uppercase">
-            {/* Mobile: 2x2 grid | Desktop: single row */}
-            <div className="grid grid-cols-2 gap-2 w-full md:flex md:gap-4">
-              <span className="text-white/60">Active: <span className="text-white">Yes</span></span>
-              <span className="text-white/60">Leads: <span className="text-[#FFD700]">{leads}</span></span>
-              <span className="text-white/60">Revenue: <span className="text-[#FFD700]">{formatCurrency(revenue)}</span></span>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 w-full md:flex md:gap-4">
+              <span className="text-white/60">Active: <span className="text-white font-bold">Yes</span></span>
+              <span className="text-white/60">Leads: <span className="text-[#FFD700] font-bold font-black">{leads}</span></span>
+              <span className="text-white/60">Revenue: <span className="text-[#FFD700] font-bold font-black">{formatCurrency(revenue)}</span></span>
               <span className="text-white/60 flex items-center gap-2">
-                Signals: <span className="text-[#0097b2]">{tenant.signal_count ?? 0}</span>
+                Signals: <span className="text-[#0097b2] font-bold font-black">{tenant.signal_count ?? 0}</span>
                 {tenant.signal_trend && tenant.signal_trend.length > 0 && (
                   <Sparkline data={tenant.signal_trend} width={40} height={12} />
                 )}
@@ -176,8 +175,8 @@ export function ClientCard({
             </div>
           </div>
 
-          {/* Super-Function Feature Toggles - Always present, conditionally active */}
-          <div className="mt-3 flex items-center gap-2">
+          {/* Feature Toggles - Tightened vertical spacing for twin consistency */}
+          <div className="mt-2 flex items-center gap-2">
             {['ai', 'sms', 'vin', 'signal'].map((feature) => {
               const isActive = tenant.category_config?.super_functions?.includes(feature === 'ai' ? 'ai_omni_chat' : feature);
               return (
@@ -200,13 +199,13 @@ export function ClientCard({
           </div>
         </div>
 
-        {/* Automotive-Specific Inventory Section */}
+        {/* Automotive-Specific Inventory Section - Harmonized */}
         {isAutomotive && (
-          <div className="flex flex-col gap-2 min-w-[150px]">
+          <div className="flex flex-col gap-2 min-w-[150px] justify-center">
             <div className="flex items-center gap-2">
               <div className="w-2 h-2 rounded-full bg-cyan-500/50" />
               <span className="text-[10px] text-white/60 tracking-[0.1em] uppercase">
-                Inventory: <span className="text-white">0</span>
+                Inventory: <span className="text-white font-bold">0</span>
               </span>
             </div>
           </div>
