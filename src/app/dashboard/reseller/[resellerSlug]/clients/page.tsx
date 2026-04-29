@@ -329,10 +329,10 @@ export default function ClientsPage() {
           isCommunicating={isCommunicating}
         />
         
-        {/* Main Navigation Tabs - Floating Glass Pods Array */}
+        {/* Main Navigation Tabs - Floating Glass Pods Array - Mobile Scroll */}
         <div className="w-full">
-          <div className="max-w-6xl mx-auto px-4">
-            <div className="flex items-center justify-center gap-3 md:gap-4 py-4">
+          <div className="px-6">
+            <div className="flex items-center gap-3 md:gap-4 py-4 flex-wrap md:flex-nowrap overflow-x-auto whitespace-nowrap scrollbar-hide snap-x snap-mandatory">
               {(() => {
                 // 🔷 Production Excellence: Path-extraction for active state even before hydration
                 const pathSegments = typeof window !== 'undefined' ? window.location.pathname.split('/') : [];
@@ -360,7 +360,8 @@ export default function ClientsPage() {
                         router.push(item.path);
                       }
                     }}
-                    className={`relative px-4 md:px-6 py-2.5 rounded-lg text-[11px] font-bold tracking-[0.2em] uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden
+                    style={{ display: 'inline-flex', width: 'auto', minWidth: 'max-content', padding: '8px 24px' }}
+                    className={`relative rounded-lg text-[11px] font-bold tracking-[0.2em] uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden snap-start
                       backdrop-blur-md bg-white/10 border border-white/10
                       hover:-translate-y-1 hover:backdrop-blur-xl hover:border-white/20 transition-colors duration-200
                       ${item.active
@@ -384,15 +385,16 @@ export default function ClientsPage() {
           </div>
         </div>
         
-        {/* Industry Filter Tabs - Floating Glass Pods Array */}
+        {/* Industry Filter Tabs - Floating Glass Pods Array - Mobile Scroll */}
         <div className="w-full">
-          <div className="max-w-4xl mx-auto px-4">
-            <div className="flex items-center justify-center gap-3 py-3">
+          <div className="px-6">
+            <div className="flex items-center gap-3 py-3 flex-wrap md:flex-nowrap overflow-x-auto whitespace-nowrap scrollbar-hide snap-x snap-mandatory">
               {['All', 'Automotive', 'General', 'Retail', 'Healthcare', 'Insurance'].map((filter) => (
                 <button
                   key={filter}
                   onClick={() => handleFilterChange(filter)}
-                  className={`relative px-4 py-2 rounded-lg text-[11px] font-bold tracking-[0.2em] uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden
+                  style={{ display: 'inline-flex', width: 'auto', minWidth: 'max-content', padding: '8px 24px' }}
+                  className={`relative rounded-lg text-[11px] font-bold tracking-[0.2em] uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden snap-start
                     backdrop-blur-md bg-white/10 border border-white/10
                     hover:-translate-y-0.5 hover:backdrop-blur-xl hover:border-white/20 transition-colors duration-200
                     ${activeFilter === filter.toUpperCase()
@@ -408,7 +410,8 @@ export default function ClientsPage() {
 
               <button
                 onClick={toggleOfflineOnly}
-                className={`relative px-4 py-2 rounded-lg text-[11px] font-bold tracking-[0.2em] uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden
+                style={{ display: 'inline-flex', width: 'auto', minWidth: 'max-content', padding: '8px 24px' }}
+                className={`relative rounded-lg text-[11px] font-bold tracking-[0.2em] uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden snap-start
                   backdrop-blur-md bg-white/10 border border-white/10
                   hover:-translate-y-0.5 hover:backdrop-blur-xl hover:border-white/20 transition-colors duration-200
                   ${showOfflineOnly

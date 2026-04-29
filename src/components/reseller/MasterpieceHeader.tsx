@@ -84,7 +84,7 @@ export function MasterpieceHeader({
           )}
         </div>
 
-        <span className={`text-[10px] font-bold tracking-widest animate-pulse ${
+        <span className={`text-[10px] md:text-[11px] font-bold tracking-widest animate-pulse ${
           isCommunicating 
             ? "!text-[#00e5ff] drop-shadow-[0_0_8px_rgba(0,229,255,0.6)]" 
             : isListening 
