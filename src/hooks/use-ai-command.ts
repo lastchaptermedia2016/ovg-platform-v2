@@ -77,17 +77,25 @@ export function useAICommand(): UseAICommandReturn {
       setTargetTenantId(tenantContext.tenantId);
     }
 
-    // Validate inputs before sending
+    // 🔷 Production Excellence: Validate all inputs before sending
     if (!resellerId || resellerId.trim() === '') {
-      console.error('useAICommand: Missing resellerId');
+      console.error('%c[useAICommand] ❌ Missing resellerId', 'color: #0097b2; font-weight: bold;');
       setError('Missing reseller ID');
       setIsAnalyzing(false);
       return;
     }
 
     if (!command || command.trim() === '') {
-      console.error('useAICommand: Missing userCommand');
+      console.error('%c[useAICommand] ❌ Missing userCommand', 'color: #0097b2; font-weight: bold;');
       setError('Missing command');
+      setIsAnalyzing(false);
+      return;
+    }
+
+    // Guard clause: tenantContext must be valid object
+    if (!tenantContext || typeof tenantContext !== 'object') {
+      console.error('%c[useAICommand] ❌ tenantContext is null or undefined', 'color: #0097b2; font-weight: bold;', { tenantContext });
+      setError('Missing tenant context');
       setIsAnalyzing(false);
       return;
     }
@@ -117,8 +125,16 @@ export function useAICommand(): UseAICommandReturn {
       const data = await response.json();
 
       if (!response.ok) {
-        console.error('useAICommand: API Error:', data);
-        throw new Error(data.error || `Failed to process command (HTTP ${response.status})`);
+        // 🔷 Production Excellence: Capture full error details for debugging
+        console.error('%c[useAICommand] ❌ API Error Response:', 'color: #dc2626; font-weight: bold;', {
+          status: response.status,
+          statusText: response.statusText,
+          error: data?.error || 'Unknown error',
+          details: data?.details || null,
+          fullResponse: data,
+          requestBody: requestBody,
+        });
+        throw new Error(data?.error || data?.details || `Failed to process command (HTTP ${response.status})`);
       }
 
       // Transform new API response format

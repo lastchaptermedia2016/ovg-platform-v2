@@ -3,10 +3,8 @@ import Groq from 'groq-sdk';
 import { z } from 'zod';
 import { createClient as createSupabaseClient } from '@/lib/supabase/server';
 
-// Initialize Groq client
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
-});
+// Force dynamic to prevent build-time initialization
+export const dynamic = 'force-dynamic';
 
 // Request validation schema - tenantId is now optional for global commands
 const ProcessCommandSchema = z.object({
@@ -58,6 +56,17 @@ OUTPUT FORMAT (STRICT JSON):
 The payload should only include fields that need to change. Preserve all existing values not explicitly changed.`;
 
 export async function POST(request: NextRequest) {
+  // Initialize Groq client inside handler for production excellence
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey) {
+    console.error('❌ GROQ_API_KEY not configured on server');
+    return NextResponse.json(
+      { error: 'AI service not configured' },
+      { status: 500 }
+    );
+  }
+  
+  const groq = new Groq({ apiKey });
   try {
     // Parse and validate request body
     const body = await request.json();
@@ -86,22 +95,61 @@ export async function POST(request: NextRequest) {
     const supabase = await createSupabaseClient();
     let allTenants: { id: string; name: string; category: string }[] = [];
 
+    console.log('%c[ProcessCommand] 🔷 Fetching tenants for reseller:', 'color: #0097b2; font-weight: bold;', resellerId);
+
+    // 🔷 Production Excellence: Resolve reseller_slug to reseller_id first
+    let actualResellerId = resellerId;
+    
+    // Check if resellerId looks like a slug (not a UUID)
+    const isSlug = !resellerId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    
+    if (isSlug) {
+      console.log('%c[ProcessCommand] 🔷 Detected slug, resolving to UUID...', 'color: #0097b2;');
+      const { data: reseller, error: resellerError } = await supabase
+        .from('resellers')
+        .select('id')
+        .eq('slug', resellerId)
+        .single();
+      
+      if (resellerError || !reseller) {
+        console.error('%c[ProcessCommand] ❌ Failed to resolve reseller slug:', 'color: #dc2626; font-weight: bold;', { 
+          slug: resellerId, 
+          error: resellerError?.message 
+        });
+        return NextResponse.json(
+          { error: 'Reseller not found', details: `No reseller with slug: ${resellerId}` },
+          { status: 404 }
+        );
+      }
+      
+      actualResellerId = reseller.id;
+      console.log('%c[ProcessCommand] ✅ Resolved slug to UUID:', 'color: #0097b2; font-weight: bold;', { 
+        slug: resellerId, 
+        uuid: actualResellerId 
+      });
+    }
+
     // If tenantId is null, fetch all tenants for this reseller
     if (!tenantContext.tenantId) {
       const { data: tenants, error: tenantsError } = await supabase
         .from('tenants')
         .select('id, name, category, reseller_id')
-        .eq('reseller_id', resellerId);
+        .eq('reseller_id', actualResellerId);
 
       if (tenantsError) {
-        console.error('Error fetching tenants:', tenantsError);
+        console.error('%c[ProcessCommand] ❌ Error fetching tenants:', 'color: #dc2626; font-weight: bold;', tenantsError);
         return NextResponse.json(
-          { error: 'Failed to fetch tenant list for global command' },
+          { error: 'Failed to fetch tenant list for global command', details: tenantsError.message },
           { status: 500 }
         );
       }
 
       allTenants = (tenants as { id: string; name: string; category: string }[]) || [];
+      console.log(`%c[ProcessCommand] ✅ Found ${allTenants.length} tenants for reseller: ${actualResellerId}`, 'color: #0097b2; font-weight: bold;');
+      
+      if (allTenants.length === 0) {
+        console.warn('%c[ProcessCommand] ⚠️ No tenants found for reseller:', 'color: #f59e0b; font-weight: bold;', actualResellerId);
+      }
     }
 
     // Construct the AI prompt with tenant context
@@ -116,7 +164,7 @@ Select appropriate targetIds from the available tenants.
 Generate the deployment configuration.
 Output ONLY valid JSON.`;
 
-    // Call Groq API
+    // Call Groq API with 70b Request Cap: max_tokens: 1000
     const completion = await groq.chat.completions.create({
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
@@ -124,7 +172,7 @@ Output ONLY valid JSON.`;
       ],
       model: 'llama-3.3-70b-versatile',
       temperature: 0.3,
-      max_tokens: 1024,
+      max_tokens: 1000, // Strict cap to preserve TPM
       response_format: { type: 'json_object' },
     });
 

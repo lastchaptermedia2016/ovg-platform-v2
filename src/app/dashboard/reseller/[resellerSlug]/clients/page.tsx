@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import { ClientsGrid } from '@/components/reseller/ClientsGrid';
 import { DeploymentModal } from '@/components/ai-intelligence/DeploymentModal';
+import { MasterpieceHeader } from '@/components/reseller/MasterpieceHeader';
 import { useAICommand } from '@/hooks/use-ai-command';
 import { useVoiceCommand } from '@/hooks/use-voice-command';
 import { useResilientVoice } from '@/hooks/use-resilient-voice';
@@ -27,6 +28,11 @@ export default function ClientsPage() {
   const router = useRouter();
 
   const resellerSlug = params.resellerSlug as string;
+  
+  // 🔷 Production Excellence: Detect Next.js hydration issues with route params
+  if (!resellerSlug || resellerSlug.includes('[') || resellerSlug.includes(']')) {
+    console.error('%c[Pierre] ❌ Route parameter failed to resolve:', 'color: #0097b2; font-weight: bold;', { resellerSlug, params });
+  }
   const categoryParam = (searchParams.get('category') || 'ALL').toUpperCase();
   const CATEGORY_MAP = useCategoryMap();
 
@@ -73,6 +79,10 @@ export default function ClientsPage() {
     startListening,
     stopListening,
   } = useVoiceCommand({
+    resellerId: resellerSlug,
+    tenantContext: selectedTenantId ? { tenantId: selectedTenantId, category: activeFilter } : { category: activeFilter },
+    currentConfig: { theme: { primary: '#0097b2' }, behavior: { prompt: 'Default' } },
+    skipAIPipeline: true, // AI processing handled by handleCommandSubmit
     onTranscript: (text) => {
       const lowerText = text.toLowerCase().trim();
       
@@ -106,6 +116,12 @@ export default function ClientsPage() {
       }
       
       // Normal flow - auto-submit to AI when transcript is received
+      // 🔷 Warm Boot: Block API calls if resellerSlug is invalid
+      if (!resellerSlug || resellerSlug.includes('[') || resellerSlug.includes(']') || resellerSlug.includes('%5B')) {
+        console.warn('[Pierre] Skipping AI submission - invalid resellerSlug:', resellerSlug);
+        return;
+      }
+      
       handleCommandSubmit(
         text,
         { theme: { primary: '#0097b2' }, behavior: { prompt: 'Default' } },
@@ -264,104 +280,55 @@ export default function ClientsPage() {
 
   return (
     <div className="w-full">
-      {/* Header Isolation: MasterpieceHeader ONLY - z-[100] */}
-      <header className="fixed top-0 left-0 right-0 z-[100]">
-        {/* Tier 1: Masterpiece Glassmorphic Bar (Clean & Minimal) */}
-        <nav className="w-full flex justify-between items-center px-6 py-5 backdrop-blur-md bg-white/[0.01] border border-white/5 rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.1)]">
-          {/* Left: POWERED BY PIERRE */}
-          <div className="text-[9px] font-bold tracking-[0.6em] text-white/40 uppercase animate-pulse">
-            POWERED BY PIERRE
-          </div>
+      {/* Production Excellence: Synchronized Global Header */}
+      <header className="sticky top-0 left-0 right-0 z-[50] bg-black/80 backdrop-blur-md border-b border-[#0097b2]/20">
+        <MasterpieceHeader 
+          isListening={isListening}
+          onMicClick={isListening ? stopListening : startListening}
+          isProcessing={isProcessing}
+          isAwaitingVoiceConfirm={isAwaitingVoiceConfirm}
+          transcribedText={voiceTranscript}
+        />
+        
+        {/* Navigation Tabs - Integrated Sub-Header */}
+        <div className="w-full border-b border-[#0097b2]/10 bg-black/60 backdrop-blur-md">
+          <div className="max-w-4xl mx-auto px-4">
+            <div className="flex items-center justify-center gap-2 py-3">
+              {['All', 'Automotive', 'General', 'Retail', 'Healthcare', 'Insurance'].map((filter) => (
+                <button
+                  key={filter}
+                  onClick={() => handleFilterChange(filter)}
+                  className={`px-4 py-1.5 rounded-full text-[10px] md:text-xs tracking-widest uppercase transition-all duration-300 whitespace-nowrap border ${
+                    activeFilter === filter.toUpperCase()
+                      ? 'border-[#0097b2]/60 bg-[#0097b2]/10 text-[#0097b2]'
+                      : 'border-transparent bg-transparent text-white/50 hover:text-white/80 hover:bg-white/5'
+                  }`}
+                >
+                  {filter}
+                </button>
+              ))}
 
-          {/* Center: Voice Intelligence Hub (Integrated into Masterpiece) */}
-          <div className="flex items-center gap-4">
-            {/* Mic Icon with AI Pulse */}
-            <button
-              onClick={isListening ? stopListening : startListening}
-              disabled={!selectedTenantId || isProcessing || isAwaitingVoiceConfirm}
-              className={`relative w-8 h-8 rounded-full flex items-center justify-center transition-all duration-300 ${
-                !selectedTenantId
-                  ? 'bg-white/5 text-white/30 cursor-not-allowed'
-                  : isAwaitingVoiceConfirm
-                  ? 'bg-emerald-500/20 text-emerald-400 animate-pulse'
-                  : isListening
-                  ? 'bg-[#FFD700]/20 text-[#FFD700] shadow-[0_0_15px_rgba(255,215,0,0.4)]'
-                  : 'bg-white/10 text-white/60 hover:bg-[#FFD700]/20 hover:text-[#FFD700]'
-              }`}
-            >
-              {(isListening || isAwaitingVoiceConfirm) && (
-                <span className="absolute inset-0 rounded-full border border-[#FFD700] animate-ping opacity-40" />
-              )}
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
-                  d={isListening 
-                    ? "M21 12a9 9 0 11-18 0 9 9 0 0118 0z M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" 
-                    : "M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"} 
-                />
-              </svg>
-            </button>
+              <div className="w-px h-4 bg-[#0097b2]/20 mx-2" />
 
-            {/* Voice Transcript HUD */}
-            <span className="hidden md:block text-xs text-white/50 max-w-[180px] truncate">
-              {voiceTranscript || (isListening ? 'Listening...' : 'Voice Ready')}
-            </span>
+              <button
+                onClick={toggleOfflineOnly}
+                className={`px-4 py-1.5 rounded-full text-[10px] md:text-xs tracking-widest uppercase transition-all duration-300 whitespace-nowrap border ${
+                  showOfflineOnly
+                    ? 'border-[#0097b2]/60 bg-[#0097b2]/10 text-[#0097b2]'
+                    : 'border-transparent bg-transparent text-white/50 hover:text-[#0097b2]/70'
+                }`}
+              >
+                Offline
+              </button>
+            </div>
           </div>
-
-          {/* Right: AI | RESELLER DASHBOARD */}
-          <div className="flex items-center">
-            <span className="text-[#FFD700] font-black text-xl animate-pulse">AI</span>
-            <div className="h-4 w-[1px] bg-white/20 mx-6" />
-            <span className="text-white/90 font-light tracking-[0.4em] text-[10px] uppercase">RESELLER DASHBOARD</span>
-          </div>
-        </nav>
+        </div>
       </header>
 
       {/* Main Content Area */}
       <main className="relative w-full min-h-screen">
-        {/* Buffer: MasterpieceHeader ONLY (~80px) */}
-        <div className="h-[80px] w-full shrink-0" aria-hidden="true" />
-        
-        {/* Hero Spacer: Reduced for tighter Industry placement ~120-130px from top */}
-        <div className="h-[40px] md:h-[60px] w-full" />
-
-        {/* Industry Filters: Centered, ~120-130px from top */}
-        <div className="w-full px-4 relative z-40 -mt-2">
-          <div className="max-w-4xl mx-auto">
-            <div className="flex items-center justify-center px-4 py-3 bg-black/40 backdrop-blur-xl border border-white/10 rounded-full">
-              <div className="flex items-center gap-1 md:gap-3 overflow-x-auto no-scrollbar">
-                {['All', 'Automotive', 'General', 'Retail', 'Healthcare', 'Insurance'].map((filter) => (
-                  <button
-                    key={filter}
-                    onClick={() => handleFilterChange(filter)}
-                    className={`px-3 md:px-5 py-1.5 rounded-full text-[10px] md:text-xs tracking-widest uppercase transition-all duration-300 whitespace-nowrap border ${
-                      activeFilter === filter.toUpperCase()
-                        ? 'border-[#FFD700]/60 bg-[#FFD700]/10 text-[#FFD700]'
-                        : 'border-transparent bg-transparent text-white/50 hover:text-white/80 hover:bg-white/5'
-                    }`}
-                  >
-                    {filter}
-                  </button>
-                ))}
-
-                <div className="w-px h-4 bg-white/10 mx-2" />
-
-                <button
-                  onClick={toggleOfflineOnly}
-                  className={`px-3 md:px-5 py-1.5 rounded-full text-[10px] md:text-xs tracking-widest uppercase transition-all duration-300 whitespace-nowrap border ${
-                    showOfflineOnly
-                      ? 'border-[#DC143C]/60 bg-[#DC143C]/10 text-[#DC143C]'
-                      : 'border-transparent bg-transparent text-white/50 hover:text-[#DC143C]/70'
-                  }`}
-                >
-                  Offline
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Generous Gap: Industry Row → Execute Bar (mt-16 = 64px) */}
-        <div className="mt-16 w-full" />
+        {/* Hero Spacer */}
+        <div className="h-[60px] w-full" />
 
         {/* Action Anchor: ExecuteBar - Centered with Neon Blue Glow */}
         <div className="w-full px-4 relative z-40">

@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { getIndustryProfile, getIndustryFeatureLabel } from '@/core/industries/registry';
 import { formatCurrency } from '@/utils/formatters';
 import { Sparkline } from './Sparkline';
@@ -29,6 +30,10 @@ interface ClientCardProps {
   successGlow: string | null;
   onDiagnosticClick: (tenantId: string) => void;
   onFeatureToggle: (tenantId: string, feature: string, event: React.MouseEvent) => void;
+  onModuleAction?: (clientId: string, actionType: 'ai' | 'sms' | 'vin' | 'signal') => void;
+  selectedClientId?: string | null;
+  onExecuteCommand?: (tenantId: string, command: string) => Promise<void>;
+  onSTTResult?: (tenantId: string, text: string) => void;
   isHovered?: boolean;
   useSimpleStyle?: boolean;
   onMouseEnter?: () => void;
@@ -43,12 +48,49 @@ export function ClientCard({
   successGlow, 
   onDiagnosticClick,
   onFeatureToggle,
+  onModuleAction,
+  selectedClientId,
+  onExecuteCommand,
+  onSTTResult,
   isHovered = false,
   useSimpleStyle = false,
   onMouseEnter,
   onMouseLeave,
   categoryMap
 }: ClientCardProps) {
+  const isArmed = selectedClientId === tenant.id;
+  const [commandInput, setCommandInput] = useState('');
+  const [isExecuting, setIsExecuting] = useState(false);
+
+  // Listen for STT results via custom event
+  useEffect(() => {
+    const handleSTTResult = (e: any) => {
+      const { tenantId, text } = e.detail;
+      // Logic: Even if 'isArmed' is briefly false during a re-render,
+      // if the ID matches, we should capture the text.
+      if (tenantId === tenant.id) {
+        console.log('🎙️ [ClientCard] Match Found. Updating Command:', text);
+        setCommandInput(text); // Inject into the 'I\'M LISTENING' bar
+      }
+    };
+
+    window.addEventListener('stt-result', handleSTTResult);
+    return () => window.removeEventListener('stt-result', handleSTTResult);
+  }, [tenant.id, isArmed]);
+
+  const handleExecute = async () => {
+    if (!commandInput.trim() || !onExecuteCommand) return;
+    setIsExecuting(true);
+    try {
+      await onExecuteCommand(tenant.id, commandInput.trim());
+      setCommandInput('');
+    } catch (error) {
+      console.error('Command execution failed:', error);
+    } finally {
+      setIsExecuting(false);
+    }
+  };
+
   const categoryProfile = getIndustryProfile(tenant.category);
   const isAutomotive = tenant.category === 'automotive';
   
@@ -196,18 +238,39 @@ export function ClientCard({
           </div>
 
           {/* Feature Toggles - Fixed spacing, hardcoded gap */}
-          <div className="flex items-center gap-3">
+          <div 
+            className="flex items-center gap-3"
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
             {['ai', 'sms', 'vin', 'signal'].map((feature) => {
               const isActive = tenant.category_config?.super_functions?.includes(feature === 'ai' ? 'ai_omni_chat' : feature);
+              const isAI = feature === 'ai';
               return (
                 <button
                   key={feature}
-                  onClick={(e) => onFeatureToggle(tenant.id, feature, e)}
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-300 ${
+                  data-client-id={tenant.id}
+                  data-action={feature}
+                  onClick={(e) => {
+                    console.log('--- DEBUG START ---');
+                    console.log('Action:', feature);
+                    console.log('Is onModuleAction a function?:', typeof onModuleAction); 
+                    console.log('Tenant ID:', tenant.id);
+                    
+                    e.stopPropagation();
+                    
+                    if (typeof onModuleAction === 'function') {
+                      onModuleAction(tenant.id, feature as 'ai' | 'sms' | 'vin' | 'signal');
+                    } else {
+                      console.error('❌ ERROR: onModuleAction is UNDEFINED. The Grid did not plug in the wire!');
+                    }
+                  }}
+                  style={{ pointerEvents: 'auto', zIndex: 9999 }}
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-300 transition-transform active:scale-90 cursor-pointer ${
                     isActive 
                       ? 'bg-[#0097b2]/20 border border-[#0097b2]/50 shadow-[0_0_10px_rgba(0,151,178,0.3)]' 
                       : 'bg-white/5 border border-white/10 opacity-40 hover:opacity-60'
-                  }`}
+                  } ${isAI ? 'border-2 border-red-500' : ''}`}
                   title={`Activate/Deactivate ${feature.toUpperCase()}`}
                 >
                   <span className="text-[10px] uppercase font-bold text-white/80">
@@ -217,6 +280,36 @@ export function ClientCard({
               );
             })}
           </div>
+
+          {/* AI COMMAND INPUT BAR - Shows when Armed */}
+          {isArmed && (
+            <div className="mt-3 pt-3 border-t border-white/10">
+              <div className="flex items-center gap-2">
+                <div className="flex-1 flex items-center gap-2 bg-black/40 border border-[#22c55e]/50 rounded-lg p-2">
+                  <div className="w-2 h-2 rounded-full bg-[#22c55e] animate-pulse" />
+                  <input
+                    type="text"
+                    placeholder="I'M LISTENING..."
+                    value={commandInput}
+                    onChange={(e) => setCommandInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && commandInput.trim() && handleExecute()}
+                    className="flex-1 bg-transparent text-white/90 text-xs placeholder-white/40 outline-none"
+                  />
+                </div>
+                <button
+                  onClick={handleExecute}
+                  disabled={isExecuting || !commandInput.trim()}
+                  className={`px-4 py-2 rounded-lg text-xs tracking-widest uppercase transition-all duration-300 font-medium whitespace-nowrap ${
+                    isExecuting || !commandInput.trim()
+                      ? 'border-white/10 bg-white/5 text-white/30 cursor-not-allowed'
+                      : 'border-green-500 bg-green-500/20 text-green-400 hover:bg-green-500/30 hover:shadow-[0_0_20px_rgba(34,197,94,0.5)] hover:text-white'
+                  }`}
+                >
+                  {isExecuting ? 'EXECUTING' : 'EXECUTE'}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Automotive-Specific Inventory Section - Grid Aligned */}

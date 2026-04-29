@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, useMemo, memo, startTransition } from 'react';
+import { useEffect, useState, useRef, useMemo, memo, startTransition, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient as createSupabaseClient } from '@/lib/supabase/client';
 import { getIndustryProfile, getIndustryFeatureLabel } from '@/core/industries/registry';
@@ -12,6 +12,16 @@ import { checkClientStatus } from '@/utils/heartbeat';
 import { DiagnosticPanel } from './DiagnosticPanel';
 import { ClientCard } from './ClientCard';
 import { UniversalCommandModal } from './modals/UniversalCommandModal';
+
+// Status Indicator Types
+type IndicatorStatus = 'active' | 'inactive' | 'error';
+
+interface Indicators {
+  ai: IndicatorStatus;
+  sms: IndicatorStatus;
+  vin: IndicatorStatus;
+  signal: IndicatorStatus;
+}
 
 interface Tenant {
   id: string;
@@ -26,6 +36,7 @@ interface Tenant {
   last_seen?: string;
   total_revenue?: number;
   total_leads?: number;
+  indicators?: Indicators;
 }
 
 export function ClientsGridInternal({ 
@@ -38,6 +49,7 @@ export function ClientsGridInternal({
   isProcessing,
   isGlobalScanning,
   onStatsUpdate,
+  onSTTResult, // Ref to pass STT results without re-rendering
 }: { 
   resellerSlug: string; 
   filter?: string; 
@@ -55,7 +67,11 @@ export function ClientsGridInternal({
     criticalAlerts: number;
     loading: boolean;
   }) => void;
+  onSTTResult?: (tenantId: string, text: string) => void;
 }) {
+  // CONSOLE SUPREMACY: Detect event bubbling
+  console.log('--- DOM CLICK DETECTED ---');
+  
   // Props change tracking removed for production
   
   const router = useRouter();
@@ -72,6 +88,158 @@ export function ClientsGridInternal({
   const [hoveredCardId, setHoveredCardId] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'name' | 'revenue' | 'leads'>('name');
   const [showAddClientModal, setShowAddClientModal] = useState(false);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+  const [isExecutingCommand, setIsExecutingCommand] = useState(false);
+  
+  // Cache for AI confirmation audio (zero-latency playback)
+  const cachedAudioBlob = useRef<Blob | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  
+  // STT State
+  const [isListening, setIsListening] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  
+  // Ref to pass STT results without re-rendering - Initialized for Production Excellence
+  const onSTTResultRef = useRef<((tenantId: string, text: string) => void) | null>(null);
+  
+  // Update the ref with latest callback
+  onSTTResultRef.current = (tenantId: string, text: string) => {
+    // This will be passed to ClientCard to update command input
+    console.log(' [STT] Result for', tenantId, ':', text);
+    onSTTResult?.(tenantId, text);
+  };
+  
+  // Play AI confirmation with caching for zero-latency playback
+  const playAIConfirmation = useCallback(async () => {
+    const confirmationText = "AI Control System Initiated";
+
+    // Use cached blob if available (zero-latency)
+    if (cachedAudioBlob.current) {
+      console.log('🔊 [Audio] Playing cached AI confirmation');
+      const audioUrl = URL.createObjectURL(cachedAudioBlob.current);
+      audioRef.current = new Audio(audioUrl);
+      audioRef.current.play().catch(console.error);
+      return;
+    }
+
+    // Fetch and cache the audio blob via secure internal API
+    try {
+      console.log('🔊 [Audio] Fetching AI confirmation from internal API...');
+      const payload = {
+        text: confirmationText,
+        model: 'canopylabs/orpheus-v1-english',
+        voice: 'daniel', // Professional tone for Pierre AI Control System
+      };
+      console.log('🔊 [Audio] Sending payload:', payload);
+      
+      const response = await fetch('/api/ai/speech', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+
+      const audioBuffer = await response.arrayBuffer();
+      cachedAudioBlob.current = new Blob([audioBuffer], { type: 'audio/mpeg' });
+      
+      console.log('🔊 [Audio] Audio cached, playing now');
+      const audioUrl = URL.createObjectURL(cachedAudioBlob.current);
+      audioRef.current = new Audio(audioUrl);
+      
+      // Attach onEnded listener to trigger STT
+      audioRef.current.onended = () => {
+        console.log('🔊 [Audio] TTS complete, starting STT capture...');
+        startSTTCapture();
+      };
+      
+      audioRef.current.play().catch(console.error);
+    } catch (error) {
+      console.error('❌ [Audio] Failed to fetch AI confirmation:', error);
+    }
+  }, []);
+  
+  // STT Capture: Record audio and send to API
+  const startSTTCapture = useCallback(async () => {
+    if (isListening || !selectedClientId) return;
+    
+    try {
+      console.log('🎙️ [STT] Requesting microphone access...');
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      setIsListening(true);
+      audioChunksRef.current = [];
+      
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus'
+      });
+      
+      mediaRecorderRef.current = mediaRecorder;
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+      
+      mediaRecorder.onstop = async () => {
+        console.log('🎙️ [STT] Recording stopped, processing...');
+        
+        // Stop all tracks to release microphone
+        stream.getTracks().forEach(track => track.stop());
+        
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        
+        // Send to STT API
+        try {
+          const formData = new FormData();
+          formData.append('audio', audioBlob, 'recording.webm');
+          
+          console.log('🎙️ [STT] Sending to API...');
+          const response = await fetch('/api/ai/stt', {
+            method: 'POST',
+            body: formData,
+          });
+          
+          if (!response.ok) {
+            throw new Error(`STT API error: ${response.status}`);
+          }
+          
+          const result = await response.json();
+          console.log('✅ [STT] Transcription:', result.text);
+          
+          // Pass result to ClientCard
+          if (result.text && onSTTResultRef.current) {
+            onSTTResultRef.current(selectedClientId, result.text);
+          }
+        } catch (error) {
+          console.error('❌ [STT] Transcription failed:', error);
+        } finally {
+          setIsListening(false);
+        }
+      };
+      
+      // Start recording
+      mediaRecorder.start();
+      console.log('🎙️ [STT] Recording started (5s max)');
+      
+      // Auto-stop after 5 seconds
+      setTimeout(() => {
+        if (mediaRecorderRef.current?.state === 'recording') {
+          mediaRecorderRef.current.stop();
+        }
+      }, 5000);
+      
+    } catch (error) {
+      console.error('❌ [STT] Failed to start recording:', error);
+      setIsListening(false);
+    }
+  }, [isListening, selectedClientId]);
   
   // HUD State
   const [hudStats, setHudStats] = useState({
@@ -81,6 +249,15 @@ export function ClientsGridInternal({
   });
   const [hudLoading, setHudLoading] = useState(true);
   const [criticalAlertsCount, setCriticalAlertsCount] = useState(0);
+
+  // GLOBAL SNIFFER: Intercept all DOM clicks to reveal what's being clicked
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      console.log('DOM HIT:', e.target);
+    };
+    window.addEventListener('click', handleClick);
+    return () => window.removeEventListener('click', handleClick);
+  }, []);
 
   // Report stats to parent
   useEffect(() => {
@@ -104,6 +281,220 @@ export function ClientsGridInternal({
   const PULSE_THROTTLE_MS = 800;
   const lastAlertAt = useRef(0);
   const ALERT_THROTTLE_MS = 500;
+
+  // ENTERPRISE DISPATCHER: Centralized action handler for scale
+  const gridContainerRef = useRef<HTMLDivElement>(null);
+  
+  // Feature toggle handler - memoized for stable refs
+  const handleFeatureToggle = useCallback((tenantId: string, feature: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    console.log(`[Grid] Feature toggle: ${feature} for ${tenantId}`);
+  }, []);
+  
+  // Handle new client added
+  const handleClientAdded = useCallback(() => {
+    console.log('[Grid] New client added, refreshing...');
+    fetchTenants();
+  }, []);
+  
+  // STRICT TYPE GUARDS: Runtime validation for data attributes
+  const isValidActionType = (value: string | null): value is 'ai' | 'sms' | 'vin' | 'signal' => {
+    return value === 'ai' || value === 'sms' || value === 'vin' || value === 'signal';
+  };
+
+  // AI Command Execution Handler
+  const handleExecuteCommand = useCallback(async (tenantId: string, command: string) => {
+    if (!resellerSlug || !command.trim()) {
+      console.error('Missing resellerSlug or command');
+      return;
+    }
+
+    setIsExecutingCommand(true);
+    console.log('🚀 [AI Command] Executing:', { tenantId, command, resellerSlug });
+
+    try {
+      const response = await fetch('/api/ai/process-command', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          resellerId: resellerSlug,
+          userCommand: command.trim(),
+          currentConfig: { theme: { primary: '#0097b2' }, behavior: { prompt: 'Default' } },
+          tenantContext: {
+            tenantId,
+            category: allTenants.find(t => t.id === tenantId)?.category || 'GENERAL',
+          },
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        console.error('AI Command API Error:', data);
+        throw new Error(data.error || 'Failed to process command');
+      }
+
+      console.log('✅ [AI Command] Success:', data);
+
+      // Apply configuration changes if returned
+      if (data.payload || data.configPatch) {
+        console.log('📝 [AI Command] Applying config patch:', data.payload || data.configPatch);
+        // TODO: Apply config changes to tenant state
+      }
+
+    } catch (error) {
+      console.error('❌ [AI Command] Execution failed:', error);
+    } finally {
+      setIsExecutingCommand(false);
+    }
+  }, [resellerSlug, allTenants]);
+
+  const handleModuleAction = useCallback(async (clientId: string, actionType: 'ai' | 'sms' | 'vin' | 'signal') => {
+    // ENTRY LOG: First line to verify signal reception
+    console.log('[Dispatcher] Received signal for:', clientId, actionType);
+    
+    // TYPE SAFETY: Validate actionType at runtime
+    if (!isValidActionType(actionType)) {
+      console.error(`[Dispatcher] Invalid actionType: ${actionType}`);
+      return;
+    }
+
+    // Database-First Guard: Verify from cached state
+    const tenant = allTenants.find(t => t.id === clientId);
+    if (!tenant) {
+      console.warn(`[Dispatcher] Client ${clientId} not found in cache`);
+      return;
+    }
+    
+    // Check is_active status (if field exists)
+    if ((tenant as any).is_active === false) {
+      console.warn(`[Dispatcher] Client ${clientId} is inactive`);
+      return;
+    }
+    
+    // Check permission_level (if field exists)
+    const permissionLevel = (tenant as any).permission_level || 'standard';
+    if (permissionLevel === 'readonly') {
+      console.warn(`[Dispatcher] Client ${clientId} has readonly permissions`);
+      return;
+    }
+    
+    // Industry-specific guards
+    if (actionType === 'vin' && tenant.category !== 'automotive') {
+      console.warn(`[Dispatcher] VIN action blocked for non-Automotive client ${clientId}`);
+      return;
+    }
+    
+    // AI ARMING MODE: Bypass status check for AI to allow activation
+    if (actionType === 'ai') {
+      console.log('🚀 [Dispatcher] ARMING AI SYSTEM for:', clientId);
+      setSelectedClientId(clientId); // Trigger input bar display
+      playAIConfirmation(); // Play vocal confirmation
+      return;
+    }
+    
+    // Type guard: actionType is now 'sms' | 'vin' | 'signal' after AI early return
+    const nonAiActionType: 'sms' | 'vin' | 'signal' = actionType;
+    
+    // Check indicator status from cached indicators with type safety
+    const indicatorStatus = tenant.indicators?.[nonAiActionType];
+    if (indicatorStatus === 'inactive') {
+      console.warn(`[Dispatcher] Action ${actionType} is inactive for client ${clientId}`);
+      return;
+    }
+    
+    // Execute action based on type (AI already handled above with early return)
+    switch (nonAiActionType) {
+      case 'sms':
+        console.log(`[Dispatcher] Opening SMS Gateway for:`, clientId);
+        break;
+      case 'vin':
+        console.log(`[Dispatcher] VIN Scanner Activating for:`, clientId);
+        break;
+      case 'signal':
+        console.log(`[Dispatcher] Signal Analysis Starting for:`, clientId);
+        break;
+    }
+    
+    // Trigger feature toggle through existing handler
+    const mockEvent = { stopPropagation: () => {}, preventDefault: () => {} } as React.MouseEvent;
+    handleFeatureToggle(clientId, actionType, mockEvent);
+    
+    // FIRE-AND-FORGET: Async module logging (non-blocking)
+    // NO AWAIT: This must not block the UI thread
+    const logModuleAction = async (): Promise<void> => {
+      try {
+        const supabase = createSupabaseClient();
+        if (!supabase) {
+          console.warn(`[Dispatcher] Supabase client not initialized for logging`);
+          return;
+        }
+        
+        await supabase.from('module_logs').insert({
+          tenant_id: clientId,
+          module_type: actionType,
+          timestamp: new Date().toISOString(),
+        });
+        console.log(`[Dispatcher] Logged ${actionType} action for ${clientId}`);
+      } catch (err) {
+        // STRUCTURED ERROR LOGGING: Never interrupts UI thread
+        console.error(`[Dispatcher] Module log insertion failed`, {
+          clientId,
+          actionType,
+          error: err instanceof Error ? err.message : String(err),
+          timestamp: new Date().toISOString(),
+        });
+      }
+    };
+    
+    // Fire log without await - keep UI snappy for 100k+ clients
+    void logModuleAction();
+  }, [allTenants]);
+  
+  // Event Delegation: Single listener for all module actions
+  useEffect(() => {
+    const container = gridContainerRef.current;
+    if (!container) return;
+    
+    const handleClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      const button = target.closest('[data-action]') as HTMLElement;
+      
+      if (!button) return;
+      
+      const clientId = button.getAttribute('data-client-id');
+      const rawActionType = button.getAttribute('data-action');
+      
+      // STRICT TYPE VALIDATION: Runtime check before dispatch
+      if (!clientId || !rawActionType || !isValidActionType(rawActionType)) {
+        console.warn(`[Dispatcher] Invalid data attributes`, { clientId, actionType: rawActionType });
+        return;
+      }
+      
+      e.stopPropagation();
+      handleModuleAction(clientId, rawActionType);
+    };
+    
+    container.addEventListener('click', handleClick);
+    
+ // SCALABLE CLEAN-UP: Prevent memory leaks during rapid tab switching
+    return () => {
+      container.removeEventListener('click', handleClick);
+    };
+  }, [handleModuleAction]);
+
+  // SAFETY GUARD: Ensure VIN stays inactive for non-Automotive clients
+  const sanitizeIndicators = (tenant: Tenant, indicators?: Indicators): Indicators | undefined => {
+    if (!indicators) return undefined;
+    const isAutomotive = tenant.category === 'automotive';
+    return {
+      ...indicators,
+      // VIN lock: Force 'inactive' for non-Automotive regardless of realtime data
+      vin: !isAutomotive ? 'inactive' : indicators.vin
+    };
+  };
 
   // Filter clients using useMemo to preserve master list
   const visibleClients = useMemo(() => {
@@ -261,10 +652,59 @@ export function ClientsGridInternal({
       )
       .subscribe();
 
+    // DEDICATED INDICATOR CHANNEL: Realtime monitoring for status changes
+    const indicatorChannel = supabase
+      .channel('tenant-indicator-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'tenants',
+          // Only listen for indicator column changes would be ideal, 
+          // but Supabase realtime filters by row not column
+        },
+        (payload) => {
+          const updatedTenant = payload.new as Tenant;
+          const oldTenant = payload.old as Tenant;
+          
+          // Check if indicators actually changed
+          const newIndicators = updatedTenant.indicators;
+          const oldIndicators = oldTenant.indicators;
+          
+          if (JSON.stringify(newIndicators) !== JSON.stringify(oldIndicators)) {
+            console.log(`[Realtime] Indicator update for ${updatedTenant.id}:`, newIndicators);
+            
+            // Apply optimistic guard before updating state
+            const sanitizedIndicators = sanitizeIndicators(updatedTenant, newIndicators);
+            
+            // Update the specific tenant's indicators in local state
+            startTransition(() => {
+              setAllTenants(prev => prev.map(t => 
+                t.id === updatedTenant.id 
+                  ? { ...t, indicators: sanitizedIndicators }
+                  : t
+              ));
+            });
+            
+            // Trigger pulse animation for indicator change
+            const now = Date.now();
+            if (!lastPulseAt.current[updatedTenant.id] || now - lastPulseAt.current[updatedTenant.id] > PULSE_THROTTLE_MS) {
+              lastPulseAt.current[updatedTenant.id] = now;
+              setPulseCardId(updatedTenant.id);
+              setPulseType('standard');
+              setTimeout(() => setPulseCardId(null), 3000);
+            }
+          }
+        }
+      )
+      .subscribe();
+
     // CLEANUP: Remove channels on unmount
     return () => {
       supabase.removeChannel(channel);
       supabase.removeChannel(logsChannel);
+      supabase.removeChannel(indicatorChannel);
     };
   }, []); // Empty array ensures this only runs ONCE on mount
 
@@ -398,13 +838,18 @@ export function ClientsGridInternal({
       if (error) throw error;
 
       setAllTenants(prev => {
-        const newData = data || [];
-        if (prev.length === newData.length &&
-            prev.every((t, i) => t.id === newData[i]?.id)) {
-          const hasChanges = newData.some((newTenant, i) => {
+        // Sanitize indicators on fetch (VIN lock for non-Automotive)
+        const sanitizedData = (data || []).map((tenant: Tenant) => ({
+          ...tenant,
+          indicators: sanitizeIndicators(tenant, tenant.indicators)
+        }));
+        
+        if (prev.length === sanitizedData.length &&
+            prev.every((t, i) => t.id === sanitizedData[i]?.id)) {
+          const hasChanges = sanitizedData.some((newTenant, i) => {
             const prevTenant = prev[i];
             return Object.keys(newTenant).some(
-              key => (prevTenant as any)?.[key] !== (newTenant as any)[key]
+              key => (prevTenant as any)?.[key] !== (newTenant as any)?.[key]
             );
           });
           if (!hasChanges) {
@@ -412,46 +857,18 @@ export function ClientsGridInternal({
             return prev;
           }
         }
-        console.log('setAllTenants applied, count:', newData.length);
-        return newData;
+        console.log('setAllTenants applied, count:', sanitizedData.length);
+        return sanitizedData;
       });
     } catch (err: any) {
       console.error('Error fetching tenants:', {
         message: err?.message,
         code: err?.code,
         status: err?.status,
-        details: err?.details
       });
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleClientAdded = () => {
-    fetchTenants({ offlineOnly: !!showOfflineOnly, filterParam: filter, resellerSlugParam: resellerSlug });
-  };
-
-  const handleImpersonate = (tenantId: string) => {
-    router.push(`/dashboard/client/${tenantId}`);
-  };
-
-  const handleFeatureToggle = async (tenantId: string, feature: string, event: React.MouseEvent) => {
-    // Trigger success glow
-    setSuccessGlow(tenantId);
-    
-    // Trigger revenue popup
-    const rect = event.currentTarget.getBoundingClientRect();
-    setRevenuePopup({
-      x: rect.left + rect.width / 2,
-      y: rect.top,
-      amount: Math.floor(Math.random() * 5000) + 1000 // Random revenue between R 1,000 and R 6,000
-    });
-    
-    setTimeout(() => setSuccessGlow(null), 1000);
-    setTimeout(() => setRevenuePopup(null), 2000);
-    
-    // TODO: Implement optimistic UI update and Supabase update
-    console.log('Toggle feature:', feature, 'for tenant:', tenantId);
   };
 
   const getCategoryIcon = (category: string) => {
@@ -534,7 +951,7 @@ export function ClientsGridInternal({
           );
         }
         return (
-          <div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(300px,1fr))] w-full px-4 sm:px-0">
+          <div ref={gridContainerRef} className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(300px,1fr))] w-full px-4 sm:px-0">
             {visibleClients.map((tenant) => (
               <div
                 key={tenant.id}
@@ -564,6 +981,14 @@ export function ClientsGridInternal({
                   successGlow={successGlow}
                   onDiagnosticClick={setDiagnosticTenantId}
                   onFeatureToggle={handleFeatureToggle}
+                  onModuleAction={handleModuleAction}
+                  selectedClientId={selectedClientId}
+                  onExecuteCommand={handleExecuteCommand}
+                  onSTTResult={(tenantId, text) => {
+                    // Find the card and update its input - use a custom event approach
+                    const event = new CustomEvent('stt-result', { detail: { tenantId, text } });
+                    window.dispatchEvent(event);
+                  }}
                   isHovered={hoveredCardId === tenant.id}
                   useSimpleStyle={visibleClients.length > 20}
                   onMouseEnter={() => setHoveredCardId(tenant.id)}

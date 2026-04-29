@@ -15,9 +15,18 @@ interface UseVoiceCommandReturn {
   abort: () => void;
 }
 
+interface TenantContext {
+  tenantId?: string;
+  category?: string;
+}
+
 interface VoiceCommandOptions {
   silenceThreshold?: number;
   silenceDuration?: number;
+  resellerId?: string;
+  tenantContext?: TenantContext;
+  currentConfig?: Record<string, any>;
+  skipAIPipeline?: boolean; // Skip internal AI processing when using external handling
   onTranscript?: (text: string) => void;
   onAIResponse?: (text: string) => void;
   onError?: (error: string) => void;
@@ -27,6 +36,10 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   const {
     silenceThreshold = 0.02,
     silenceDuration = 1800, // 1.8 seconds
+    resellerId,
+    tenantContext = {},
+    currentConfig = {},
+    skipAIPipeline = false, // Default to false for backward compatibility
     onTranscript,
     onAIResponse,
     onError,
@@ -148,27 +161,53 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     try {
       // Step 1: Speech-to-Text (Whisper)
       const sttFormData = new FormData();
-      sttFormData.append('audio', audioBlob, 'recording.webm');
+      
+      // Production Excellence: Convert Blob to File with explicit naming
+      // This satisfies the 403 permission check for file types
+      const audioFile = new File([audioBlob], 'command.webm', { type: 'audio/webm' });
+      sttFormData.append('file', audioFile);
 
-      const sttResponse = await fetch('/api/stt', {
+      const sttResponse = await fetch('/api/ai/stt', {
         method: 'POST',
-        body: sttFormData,
+        body: sttFormData, // Do NOT set Content-Type header; let the browser do it
         signal,
       });
 
       if (!sttResponse.ok) {
-        throw new Error(`STT failed: ${sttResponse.status}`);
+        const errorData = await sttResponse.json();
+        throw new Error(`STT failed: ${sttResponse.status} - ${errorData.error}`);
       }
 
       const { text } = await sttResponse.json();
       setTranscript(text);
       onTranscript?.(text);
 
+      // Skip AI pipeline if handled externally (e.g., via ClientsGrid)
+      if (skipAIPipeline) {
+        console.log('[VoiceCommand] Skipping internal AI pipeline - handled externally');
+        return;
+      }
+
       // Step 2: Process with AI (Llama)
-      const processResponse = await fetch('/api/process', {
+      // 🔷 Warm Boot: Allow mic initialization even if resellerId is not yet valid
+      // API calls will be blocked in onTranscript if resellerId is invalid
+      if (!resellerId || resellerId.includes('[') || resellerId.includes(']') || resellerId.includes('%5B')) {
+        console.warn('[VoiceCommand] Skipping AI pipeline - invalid resellerId:', resellerId);
+        return;
+      }
+      
+      const processResponse = await fetch('/api/ai/process-command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({
+          resellerId: resellerId.trim(),
+          userCommand: text,
+          currentConfig: currentConfig || {},
+          tenantContext: {
+            tenantId: tenantContext.tenantId,
+            category: tenantContext.category || 'GENERAL',
+          },
+        }),
         signal,
       });
 
@@ -181,10 +220,10 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       onAIResponse?.(aiText);
 
       // Step 3: Text-to-Speech (Orpheus)
-      const ttsResponse = await fetch('/api/tts', {
+      const ttsResponse = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: aiText }),
+        body: JSON.stringify({ text: aiText, voice: 'daniel' }),
         signal,
       });
 
