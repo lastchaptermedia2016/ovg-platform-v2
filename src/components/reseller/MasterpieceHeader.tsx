@@ -24,11 +24,13 @@ export function MasterpieceHeader({
         POWERED BY PIERRE
       </div>
 
-      {/* Center: Voice Status Indicator - Clickable Mic */}
+      {/* Center: Voice Status Indicator - Clickable Mic - Glass Box */}
       <div 
         onClick={onMicClick}
-        className={`flex items-center gap-3 px-4 py-2 bg-black/20 rounded-full border border-[#0097b2]/30 pointer-events-auto cursor-pointer active:scale-95 transition-transform ${
+        className={`flex items-center gap-3 px-4 py-2 bg-white/10 rounded-full border border-white/20 pointer-events-auto cursor-pointer active:scale-95 transition-transform ${
           isAwaitingVoiceConfirm ? 'bg-emerald-500/10 border-emerald-500/30' : ''
+        } ${
+          isListening ? 'bg-[#0097b2]/20 border-[#0097b2]/40 shadow-[0_0_20px_rgba(0,151,178,0.3)]' : ''
         }`}
       >
         <div className="relative flex items-center justify-center">

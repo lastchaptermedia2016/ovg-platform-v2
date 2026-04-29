@@ -280,8 +280,8 @@ export default function ClientsPage() {
 
   return (
     <div className="w-full">
-      {/* Production Excellence: Synchronized Global Header */}
-      <header className="sticky top-0 left-0 right-0 z-[50] bg-black/80 backdrop-blur-md border-b border-[#0097b2]/20">
+      {/* Production Excellence: Synchronized Global Header - Glass Box Aesthetic */}
+      <header className="sticky top-0 left-0 right-0 z-[50] bg-white/[0.05] backdrop-blur-md border-b border-white/10">
         <MasterpieceHeader 
           isListening={isListening}
           onMicClick={isListening ? stopListening : startListening}
@@ -290,8 +290,8 @@ export default function ClientsPage() {
           transcribedText={voiceTranscript}
         />
         
-        {/* Navigation Tabs - Integrated Sub-Header */}
-        <div className="w-full border-b border-[#0097b2]/10 bg-black/60 backdrop-blur-md">
+        {/* Navigation Tabs - Integrated Sub-Header - Glass Box */}
+        <div className="w-full border-b border-white/10 bg-white/[0.03] backdrop-blur-md">
           <div className="max-w-4xl mx-auto px-4">
             <div className="flex items-center justify-center gap-2 py-3">
               {['All', 'Automotive', 'General', 'Retail', 'Healthcare', 'Insurance'].map((filter) => (
@@ -333,10 +333,10 @@ export default function ClientsPage() {
         {/* Action Anchor: ExecuteBar - Centered with Neon Blue Glow */}
         <div className="w-full px-4 relative z-40">
           <div className="max-w-3xl mx-auto">
-            {/* Outer Glow Container - Neon Blue */}
+            {/* Outer Glow Container - Neon Blue - Glass Box */}
             <div className="relative p-[1px] rounded-xl bg-gradient-to-r from-transparent via-[#0097b2]/50 to-transparent">
               <div className="absolute inset-0 rounded-xl bg-[#0097b2]/20 blur-xl -z-10" />
-              <div className="relative bg-black/60 backdrop-blur-xl border border-[#0097b2]/30 rounded-xl p-4 md:p-6">
+              <div className="relative bg-white/[0.05] backdrop-blur-xl border border-white/10 rounded-xl p-4 md:p-6">
                 <div className="flex items-center gap-3">
                   {/* Green Pulse Indicator */}
                   <div className="relative">
@@ -365,12 +365,12 @@ export default function ClientsPage() {
                       }
                       className={`w-full px-4 py-3 rounded-lg border text-sm tracking-widest uppercase outline-none transition-all duration-300 font-medium backdrop-blur-md ${
                         !selectedTenantId
-                          ? 'border-white/20 bg-black/40 text-white/40 cursor-not-allowed placeholder:text-white/30'
+                          ? 'border-white/20 bg-white/10 text-white/40 cursor-not-allowed placeholder:text-white/30'
                           : isAnalyzing
-                          ? 'border-green-500 bg-black/30 text-white animate-pulse placeholder:text-white/60'
+                          ? 'border-green-500 bg-green-500/10 text-white animate-pulse placeholder:text-white/60'
                           : inputFlash
                           ? 'border-green-400 bg-green-500/20 text-white placeholder:text-white/70 shadow-[0_0_30px_rgba(34,197,94,0.6)]'
-                          : 'border-green-500 bg-black/40 text-white placeholder:text-white/60 focus:bg-black/50 focus:shadow-[0_0_20px_rgba(34,197,94,0.4)]'
+                          : 'border-green-500 bg-white/10 text-white placeholder:text-white/60 focus:bg-white/15 focus:shadow-[0_0_20px_rgba(34,197,94,0.4)]'
                       }`}
                     />
                   </div>
@@ -399,11 +399,11 @@ export default function ClientsPage() {
                   </button>
                 </div>
 
-                {/* Status Line - High-Tech Military Badge */}
+                {/* Status Line - High-Tech Military Badge - Glass Box */}
                 <div className="mt-3 flex items-center gap-3">
                   {selectedTenantId ? (
                     <>
-                      <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/40 backdrop-blur-md border border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.3)]">
+                      <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/10 backdrop-blur-md border border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.3)]">
                         <span className="text-[10px] font-black text-green-500 tracking-tighter animate-pulse">
                           AI
                         </span>
@@ -416,7 +416,7 @@ export default function ClientsPage() {
                       </span>
                     </>
                   ) : (
-                    <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/40 backdrop-blur-md border border-white/30">
+                    <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/10 backdrop-blur-md border border-white/30">
                       <span className="text-[10px] font-black text-white/40 tracking-tighter">
                         AI
                       </span>
