@@ -39,9 +39,9 @@ export function MasterpieceHeader({
         }
       `}</style>
       
-      <nav className="w-full flex justify-between items-center px-6 py-5 backdrop-blur-md bg-white/[0.01] border border-white/5 rounded-2xl shadow-[0_4px_24px_rgba(0,0,0,0.1)] pointer-events-none">
+      <nav className="w-full flex justify-between items-center px-6 py-3 backdrop-blur-md bg-white/[0.01] border border-white/5 rounded-2xl pointer-events-none">
         {/* Left Side - Gold 3D-styled lettering */}
-        <div className="text-[9px] font-bold tracking-[0.6em] text-white/40 uppercase animate-signature-pulse pointer-events-auto">
+        <div className="text-[10px] font-bold tracking-[0.6em] text-white/40 uppercase animate-signature-pulse pointer-events-auto">
           POWERED BY PIERRE
         </div>
 
