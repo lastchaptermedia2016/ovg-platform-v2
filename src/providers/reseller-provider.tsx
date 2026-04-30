@@ -30,6 +30,13 @@ export function ResellerProvider({
 
   useEffect(() => {
     async function fetchResellerBranding() {
+      // 🔷 Hydration Guard: Prevent query until real URL slug is ready
+      if (!resellerSlug || resellerSlug.startsWith('[') || resellerSlug === 'undefined') {
+        console.log('%c[Pierre] ⏳ ResellerProvider Guard: Skipping fetch - resellerSlug not ready', 'color: #0097b2; font-weight: bold;');
+        setIsLoading(false);
+        return;
+      }
+
       try {
         const supabase = createBrowserClient();
         
@@ -84,6 +91,12 @@ export function ResellerProvider({
 
   // Initialize Supabase Realtime for Sales Tapper alerts
   useEffect(() => {
+    // 🔷 Hydration Guard: Prevent subscription until real URL slug is ready
+    if (!resellerSlug || resellerSlug.startsWith('[') || resellerSlug === 'undefined') {
+      console.log('%c[Pierre] ⏳ Realtime Guard: Skipping subscription - resellerSlug not ready', 'color: #0097b2; font-weight: bold;');
+      return;
+    }
+
     if (!branding) return;
 
     const supabase = createBrowserClient();

@@ -547,7 +547,7 @@ export function ClientsGridInternal({
     fetchTenants({ offlineOnly: false, filterParam: 'ALL', resellerSlugParam: resellerSlug });
     fetchDashboardStats();
     fetchCriticalAlerts();
-  }, []);
+  }, [resellerSlug]);
 
   // Refetch when offline toggle or filter changes
   useEffect(() => {
@@ -708,8 +708,17 @@ export function ClientsGridInternal({
     };
   }, []); // Empty array ensures this only runs ONCE on mount
 
-  const fetchCriticalAlerts = async () => {
+  const fetchCriticalAlerts = useCallback(async () => {
     try {
+      // 🔷 Hydration Guard: Circuit breaker to prevent 400 error
+      if (!resellerSlug || resellerSlug.startsWith('[') || resellerSlug === 'undefined') {
+        console.log('%c[Pierre] ⏳ Hydration Guard: Skipping fetch - resellerSlug not ready', 'color: #0097b2; font-weight: bold;');
+        setCriticalAlertsCount(0);
+        return;
+      }
+
+      console.log("🚀 Fetching logs for:", resellerSlug);
+
       // Initialization Gate
       const supabase = createSupabaseClient();
       if (!supabase || !process.env.NEXT_PUBLIC_SUPABASE_URL) {
@@ -726,13 +735,43 @@ export function ClientsGridInternal({
 
       const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
       
-      console.log('DEBUG: Attempting fetch from table tenant_logs...');
+      console.log('DEBUG: Attempting fetch from table tenant_logs with tenant scope...');
       
-      const { count, error } = await supabase
+      // Get tenant_ids for this reseller to scope query
+      let tenantIds: string[] = [];
+      const { data: rData, error: rErr } = await supabase
+        .from('resellers')
+        .select('id')
+        .eq('slug', resellerSlug)
+        .maybeSingle();
+      
+      if (rErr) {
+        console.warn('Reseller lookup failed:', rErr.message);
+      } else if (rData?.id) {
+        // Fetch all tenant_ids for this reseller
+        const { data: tData, error: tErr } = await supabase
+          .from('tenants')
+          .select('id')
+          .eq('reseller_id', rData.id);
+        
+        if (!tErr && tData) {
+          tenantIds = tData.map(t => t.id);
+        }
+      }
+      
+      // Build query with tenant scope and error_type filter
+      let query = supabase
         .from('tenant_logs')
-        .select('*', { count: 'exact', head: true })
+        .select('*', { count: 'exact', head: false })
         .gte('created_at', oneHourAgo)
         .in('error_type', ['error', 'critical']);
+      
+      // Add tenant filter if we have tenant_ids
+      if (tenantIds.length > 0) {
+        query = query.in('tenant_id', tenantIds);
+      }
+
+      const { count, error } = await query;
 
       if (error) {
         console.debug('SYSTEM DIAGNOSTIC RAW:', error.toString());
@@ -751,7 +790,7 @@ export function ClientsGridInternal({
       console.dir(error);
       setCriticalAlertsCount(0);
     }
-  };
+  }, [resellerSlug]);
 
   const fetchDashboardStats = async () => {
     try {
