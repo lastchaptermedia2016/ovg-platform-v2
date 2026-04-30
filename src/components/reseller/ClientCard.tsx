@@ -21,6 +21,7 @@ interface Tenant {
   last_seen?: string;
   total_revenue?: number;
   total_leads?: number;
+  system_prompt?: string;
 }
 
 interface ClientCardProps {
@@ -39,6 +40,37 @@ interface ClientCardProps {
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
   categoryMap?: Record<string, string>;
+}
+
+// ClientMiniAnalytics Sub-Component
+function ClientMiniAnalytics({ tenant }: { tenant: Tenant }) {
+  const revenue = tenant.total_revenue ?? 0;
+  const leads = tenant.total_leads ?? 0;
+  const signals = tenant.signal_count ?? 0;
+
+  return (
+    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[10px] tracking-widest uppercase grid-flow-row">
+      <div className="flex items-center gap-1">
+        <span className="text-white/60">Active:</span>
+        <span className="text-white font-bold">Yes</span>
+      </div>
+      <div className="flex items-center gap-1">
+        <span className="text-white/60">Leads:</span>
+        <span className={`text-[#FFD700] font-bold font-black ${leads > 0 ? 'animate-gold-pulse' : ''}`}>{leads}</span>
+      </div>
+      <div className="flex items-center gap-1">
+        <span className="text-white/60">Revenue:</span>
+        <span className={`text-[#FFD700] font-bold font-black ${revenue > 0 ? 'animate-gold-pulse' : ''}`}>{formatCurrency(revenue)}</span>
+      </div>
+      <div className="flex items-center gap-1">
+        <span className="text-white/60">Signals:</span>
+        <span className="text-[#0097b2] font-bold font-black">{signals}</span>
+        {tenant.signal_trend && tenant.signal_trend.length > 0 && (
+          <Sparkline data={tenant.signal_trend} width={32} height={10} />
+        )}
+      </div>
+    </div>
+  );
 }
 
 export function ClientCard({ 
@@ -97,10 +129,6 @@ export function ClientCard({
   // Get display label from categoryMap or use tenant.category directly
   const categoryLabel = categoryMap?.[tenant.category?.toUpperCase()] || tenant.category;
 
-  // Zero-State Default - Force zero-baseline to prevent ghost values
-  const revenue = tenant.total_revenue ?? 0;
-  const leads = tenant.total_leads ?? 0;
-
   const getCategoryIcon = (category: string) => {
     switch (category?.toLowerCase()) {
       case 'automotive':
@@ -154,9 +182,11 @@ export function ClientCard({
               <StatusDot lastSeen={tenant.last_seen} />
               <h3 className="text-sm font-medium text-white truncate">{tenant.name}</h3>
             </div>
-            <AIInsightBadge 
-              insight={tenant.ai_insight || 'Signals are stable. Engagement is trending positively.'} 
+            <AIInsightBadge
+              insight={tenant.ai_insight || 'Signals are stable. Engagement is trending positively.'}
               isPulsing={pulseCardId === tenant.id}
+              systemPrompt={tenant.system_prompt}
+              clientName={tenant.name}
             />
           </div>
           
@@ -213,29 +243,9 @@ export function ClientCard({
         </div>
         
         <div className="text-xs text-white/40 truncate">{tenant.email}</div>
-          
-          {/* METRICS GRID: Strict 2-Column Lock - Identical X-Coordinates on Every Card */}
-          <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[10px] tracking-widest uppercase grid-flow-row">
-            <div className="flex items-center gap-1">
-              <span className="text-white/60">Active:</span>
-              <span className="text-white font-bold">Yes</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <span className="text-white/60">Leads:</span>
-              <span className="text-[#FFD700] font-bold font-black">{leads}</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <span className="text-white/60">Revenue:</span>
-              <span className="text-[#FFD700] font-bold font-black">{formatCurrency(revenue)}</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <span className="text-white/60">Signals:</span>
-              <span className="text-[#0097b2] font-bold font-black">{tenant.signal_count ?? 0}</span>
-              {tenant.signal_trend && tenant.signal_trend.length > 0 && (
-                <Sparkline data={tenant.signal_trend} width={32} height={10} />
-              )}
-            </div>
-          </div>
+
+          {/* METRICS GRID: Using ClientMiniAnalytics sub-component */}
+          <ClientMiniAnalytics tenant={tenant} />
 
           {/* Feature Toggles - Fixed spacing, hardcoded gap */}
           <div 

@@ -10,6 +10,7 @@ interface DraftData {
   industry: string;
   mobile: string;
   website: string;
+  systemPrompt: string;
   parsedFromVoice: boolean;
 }
 
@@ -28,6 +29,7 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
   const [industry, setIndustry] = useState('GENERAL BUSINESS');
   const [mobile, setMobile] = useState('');
   const [website, setWebsite] = useState('');
+  const [systemPrompt, setSystemPrompt] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +61,9 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
       setIndustry(draftData.industry);
       setMobile(draftData.mobile);
       setWebsite(draftData.website);
+      setSystemPrompt(draftData.systemPrompt);
       console.log("OVG-PLATFORM-V2: CRM fields successfully integrated into UI and API.");
+      console.log("OVG-PLATFORM-V2: Personality and Analytics modules initialized.");
     }
   }, [draftData, step]);
 
@@ -212,6 +216,7 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
       setClientEmail(data.parsed.email || '');
       setMobile(data.parsed.mobile || '');
       setWebsite(data.parsed.website || '');
+      setSystemPrompt(data.parsed.systemPrompt || '');
 
       setDraftData({
         clientName: data.parsed.name,
@@ -219,6 +224,7 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
         industry: data.parsed.industry,
         mobile: data.parsed.mobile || '',
         website: data.parsed.website || '',
+        systemPrompt: data.parsed.systemPrompt || '',
         parsedFromVoice: true,
       });
 
@@ -267,6 +273,7 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
             email: draftData.clientEmail,
             mobile: mobile,
             website: website,
+            systemPrompt: systemPrompt,
           },
         }),
       });
@@ -418,6 +425,17 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
                     onChange={(e) => setWebsite(e.target.value)}
                     placeholder="https://example.com"
                     className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
+                  />
+                </div>
+                {/* System Prompt Textarea */}
+                <div className="flex flex-col gap-2">
+                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">System Prompt</span>
+                  <textarea
+                    value={systemPrompt}
+                    onChange={(e) => setSystemPrompt(e.target.value)}
+                    placeholder="Describe the client's vibe, role, or personality (e.g., 'innovative tech startup', 'traditional family business')"
+                    rows={2}
+                    className="text-xs text-white bg-black/30 border border-white/20 focus:border-cyan-500/50 outline-none rounded p-2 resize-none"
                   />
                 </div>
                 {draftData.parsedFromVoice && (

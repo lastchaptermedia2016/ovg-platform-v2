@@ -12,6 +12,7 @@ Return ONLY valid JSON in this exact format:
   "email": "email if mentioned or null",
   "mobile": "mobile number in E.164 format (e.g., +1234567890) if mentioned or null",
   "website": "website URL with protocol (e.g., https://example.com) if mentioned or null",
+  "systemPrompt": "client personality/vibe description if mentioned (e.g., 'innovative tech startup', 'traditional family business') or null",
   "confirmed": true
 }
 Rules:
@@ -22,6 +23,8 @@ Rules:
 - Format mobile numbers to E.164 format (include country code with + prefix)
 - Ensure website URLs include the protocol (http:// or https://)
 - If no mobile or website mentioned, set them to null
+- Extract systemPrompt when user describes the client's vibe, role, or personality (e.g., "innovative", "traditional", "fast-paced", "family-owned")
+- If no personality/vibe mentioned, set systemPrompt to null
 - Always set confirmed to true
 - Output ONLY the JSON object, no other text`;
 
@@ -67,6 +70,7 @@ export async function POST(request: NextRequest) {
           custom_assets: {},
           mobile_number: clientData.mobile || null,
           website_url: clientData.website || null,
+          system_prompt: clientData.systemPrompt || null,
         })
         .select('id, name, industry')
         .single();
