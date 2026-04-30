@@ -18,7 +18,7 @@ body {
   --background: #050a14;
   --foreground: #ffffff;
   --glow-color: rgba(212, 175, 55, 0.4);
-  --glass-bg: rgba(0, 26, 44, 0.8);
+  --glass-bg: rgba(0, 26, 44, 0.4);
 }
 
 @keyframes pulse-gold {

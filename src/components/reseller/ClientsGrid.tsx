@@ -964,7 +964,7 @@ export function ClientsGridInternal({
       {(() => {
         if (visibleClients.length === 0) {
           return (
-            <div className="backdrop-blur-xl bg-white/[0.05] border border-white/10 rounded-lg p-12 text-center">
+            <div className="backdrop-blur-xl bg-white/[0.02] border border-white/10 rounded-lg p-12 text-center">
               <div className="text-xs text-white/40 tracking-[0.2em] uppercase mb-2">
                 {filter === 'all' || filter === 'ALL' 
                   ? 'No clients yet' 
@@ -1004,7 +1004,7 @@ export function ClientsGridInternal({
               >
                 {/* Processing Skeleton Overlay */}
                 {isProcessing && activeTenantId === tenant.id && (
-                  <div className="absolute inset-0 z-10 rounded-lg bg-black/70 backdrop-blur-sm flex items-center justify-center">
+                  <div className="absolute inset-0 z-10 rounded-lg bg-black/50 backdrop-blur-sm flex items-center justify-center">
                     <div className="flex flex-col items-center gap-2">
                       <div className="w-8 h-8 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
                       <span className="text-[10px] text-green-400 tracking-widest uppercase animate-pulse">

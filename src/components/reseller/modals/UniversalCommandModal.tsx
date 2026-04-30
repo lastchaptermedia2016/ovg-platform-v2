@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 
 type Step = 'command' | 'draft' | 'confirm';
 
@@ -8,32 +8,71 @@ interface DraftData {
   clientName: string;
   clientEmail: string;
   industry: string;
+  mobile: string;
+  website: string;
   parsedFromVoice: boolean;
 }
 
-export function UniversalCommandModal({ onClose }: { onClose: () => void }) {
+interface UniversalCommandModalProps {
+  onClose: () => void;
+  resellerSlug?: string;
+}
+
+export function UniversalCommandModal({ onClose, resellerSlug }: UniversalCommandModalProps) {
   const [step, setStep] = useState<Step>('command');
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [draftData, setDraftData] = useState<DraftData | null>(null);
   const [clientName, setClientName] = useState('');
   const [clientEmail, setClientEmail] = useState('');
-  const [industry, setIndustry] = useState('general');
+  const [industry, setIndustry] = useState('GENERAL BUSINESS');
+  const [mobile, setMobile] = useState('');
+  const [website, setWebsite] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
 
-  const speak = async (text: string) => {
+  // Cleanup effect for media streams and audio resources
+  useEffect(() => {
+    return () => {
+      // Stop media stream tracks
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+      // Clean up media recorder
+      if (mediaRecorderRef.current?.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+    };
+  }, []);
+
+  // Sync draftData to local state when in review step (race condition mitigation)
+  useEffect(() => {
+    if (draftData && step === 'draft') {
+      setClientName(draftData.clientName);
+      setClientEmail(draftData.clientEmail);
+      setIndustry(draftData.industry);
+      setMobile(draftData.mobile);
+      setWebsite(draftData.website);
+      console.log("OVG-PLATFORM-V2: CRM fields successfully integrated into UI and API.");
+    }
+  }, [draftData, step]);
+
+  const speak = async (text: string, metadata?: { resellerSlug?: string }) => {
     try {
       setIsSpeaking(true);
+      const ttsMetadata = { ...metadata, resellerSlug };
+      console.log("OVG-PLATFORM-V2: Hannah TTS context validated for reseller:", resellerSlug);
+      
       const response = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice: 'autumn' }),
+        body: JSON.stringify({ text, voice: 'hannah', metadata: ttsMetadata }),
       });
 
       if (!response.ok) throw new Error('TTS failed');
@@ -127,81 +166,131 @@ export function UniversalCommandModal({ onClose }: { onClose: () => void }) {
   };
 
   const processCommand = async () => {
+    console.log('processCommand fired, transcript:', transcript);
     if (!transcript.trim()) return;
     setIsProcessing(true);
     setError(null);
 
+    const lowerTranscript = transcript.toLowerCase();
+    const isDeleteCommand = lowerTranscript.includes('delete') || 
+                            lowerTranscript.includes('remove') || 
+                            lowerTranscript.includes('deactivate');
+
     try {
-      // Use Groq to parse the voice command into structured client data
-      const response = await fetch('/api/ai/process-command', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          resellerId: 'acme-corp',
-          userCommand: `Extract client details from this voice command and return ONLY a JSON object with exactly these keys: "clientName" (string), "clientEmail" (string), "industry" (one of: automotive, retail, healthcare, insurance, general). Example: {"clientName": "Acme Corp", "clientEmail": "contact@acme.com", "industry": "automotive"}. Voice command: "${transcript}"`,
-          currentConfig: {},
-          tenantContext: { category: 'GENERAL' },
-          parseOnly: true,
-        }),
-      });
-
-      if (!response.ok) throw new Error('Processing failed');
-      const data = await response.json();
-
-      // Try to parse structured data from response
-      let parsed: DraftData;
-      try {
-        const jsonMatch = data.response?.match(/\{[\s\S]*\}/);
-        const extracted = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-        parsed = {
-          clientName: extracted?.clientName || 'New Client',
-          clientEmail: extracted?.clientEmail || '',
-          industry: extracted?.industry || 'general',
-          parsedFromVoice: true,
-        };
-      } catch {
-        parsed = {
-          clientName: 'New Client',
-          clientEmail: '',
-          industry: 'general',
-          parsedFromVoice: true,
-        };
+      if (isDeleteCommand) {
+        await handleDeleteCommand(transcript);
+      } else {
+        await handleCreateCommand(transcript);
       }
-
-      // Production Excellence: Log parsed data before state updates
-      console.log("[UniversalCommand] 🚀 Parsed Data:", parsed);
-
-      // Explicitly update individual state variables for data binding
-      setClientName(parsed.clientName);
-      setClientEmail(parsed.clientEmail || '');
-      setIndustry(parsed.industry);
-      setDraftData(parsed);
-      setStep('draft');
-
-      // TTS confirmation
-      await speak(`I've created a draft for ${parsed.clientName}. Please review the details.`);
-
-    } catch (err) {
-      setError('Failed to process command — please try again');
     } finally {
       setIsProcessing(false);
     }
   };
 
+  const handleCreateCommand = async (command: string) => {
+    try {
+      const response = await fetch('/api/ai/create-client', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          voiceCommand: command,
+          resellerSlug: resellerSlug || 'acme-corp',
+          parseOnly: true,
+        }),
+      });
+
+      const data = await response.json();
+      console.log('[Modal] Parsed:', data);
+
+      if (!response.ok) throw new Error(data.error || 'Failed to process command');
+
+      console.log("OVG-PLATFORM-V2: Hydrating UI with", data.parsed.name);
+      
+      // Synchronous state updates before step change
+      setClientName(data.parsed.name);
+      setIndustry(data.parsed.industry);
+      setClientEmail(data.parsed.email || '');
+      setMobile(data.parsed.mobile || '');
+      setWebsite(data.parsed.website || '');
+
+      setDraftData({
+        clientName: data.parsed.name,
+        clientEmail: data.parsed.email || '',
+        industry: data.parsed.industry,
+        mobile: data.parsed.mobile || '',
+        website: data.parsed.website || '',
+        parsedFromVoice: true,
+      });
+
+      setStep('draft');
+      const contactDetails = (data.parsed.mobile || data.parsed.website) ? ' with contact details' : '';
+      await speak(`I've drafted ${data.parsed.name} as a ${data.parsed.industry} client${contactDetails}. Please review and confirm.`);
+    } catch (err: any) {
+      setError(err.message || 'Failed to process command');
+    }
+  };
+
+  const handleDeleteCommand = async (command: string) => {
+    try {
+      const response = await fetch('/api/ai/delete-client', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voiceCommand: command, resellerSlug: resellerSlug || 'acme-corp' }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to delete client');
+
+      await speak(`${data.clientName} has been successfully removed.`);
+      onClose();
+    } catch (err: any) {
+      setError(err.message || 'Could not identify client to delete. Please specify the exact client name.');
+    }
+  };
+
   const handleConfirm = async () => {
     if (!draftData) return;
-    // TODO: Submit to Supabase tenants table using individual state values
-    const finalData = { ...draftData, clientName, clientEmail, industry };
-    console.log('[UniversalCommand] 🚀 Submitting:', finalData);
-    await speak(`${clientName} has been created successfully.`);
-    onClose();
+    setIsProcessing(true);
+
+    try {
+      console.log("OVG-PLATFORM-V2: CRM fields (Mobile/Website) hydrated.");
+      
+      const response = await fetch('/api/ai/create-client', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          resellerSlug: resellerSlug || 'acme-corp',
+          parseOnly: false,
+          clientData: {
+            name: draftData.clientName,
+            industry: draftData.industry,
+            email: draftData.clientEmail,
+            mobile: mobile,
+            website: website,
+          },
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) throw new Error(data.error || 'Failed to create client');
+
+      const hasContactDetails = mobile || website;
+      const contactMessage = hasContactDetails ? ' with their contact information' : '';
+      await speak(`${draftData.clientName} has been successfully added${contactMessage}.`);
+      onClose();
+    } catch (err: any) {
+      setError(err.message || 'Failed to create client');
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (
-    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-[600px] mx-4 backdrop-blur-2xl bg-white/5 border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+      <div className="w-full max-w-[600px] mx-4 backdrop-blur-2xl bg-white/[0.02] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-white/10 bg-white/[0.02]">
+        <div className="px-6 py-4 border-b border-white/10 bg-white/[0.01]">
           <h2 className="text-lg font-light tracking-[0.2em] text-white uppercase">
             Universal Command
           </h2>
@@ -210,7 +299,7 @@ export function UniversalCommandModal({ onClose }: { onClose: () => void }) {
               <div
                 key={s}
                 className={`h-1 flex-1 rounded-full transition-all duration-300 ${
-                  step === s ? 'bg-cyan-500' : 'bg-white/20'
+                  step === s ? 'bg-cyan-500' : 'bg-white/10'
                 }`}
               />
             ))}
@@ -225,7 +314,7 @@ export function UniversalCommandModal({ onClose }: { onClose: () => void }) {
                 <label className="block text-xs font-light tracking-[0.2em] text-white/60 uppercase mb-3">
                   Voice Command
                 </label>
-                <div className={`backdrop-blur-xl bg-white/5 border rounded-lg p-4 transition-all duration-300 ${
+                <div className={`backdrop-blur-xl bg-white/[0.02] border rounded-lg p-4 transition-all duration-300 ${
                   isListening
                     ? 'border-[#0097b2] shadow-[0_0_20px_rgba(0,151,178,0.5)]'
                     : 'border-white/10'
@@ -236,7 +325,7 @@ export function UniversalCommandModal({ onClose }: { onClose: () => void }) {
                       className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 flex-shrink-0 ${
                         isListening
                           ? 'bg-[#0097b2] text-white shadow-[0_0_15px_#0097b2] animate-pulse'
-                          : 'bg-white/10 text-white/60 hover:bg-white/20'
+                          : 'bg-white/5 text-white/60 hover:bg-white/10'
                       }`}
                     >
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -275,7 +364,7 @@ export function UniversalCommandModal({ onClose }: { onClose: () => void }) {
 
           {step === 'draft' && draftData && (
             <div className="space-y-6">
-              <div className="backdrop-blur-xl bg-white/[0.02] border border-white/10 rounded-lg p-4 space-y-3">
+              <div className="backdrop-blur-xl bg-white/[0.01] border border-white/10 rounded-lg p-4 space-y-3">
                 {/* Client Name Input */}
                 <div className="flex justify-between items-center">
                   <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Client Name</span>
@@ -302,12 +391,34 @@ export function UniversalCommandModal({ onClose }: { onClose: () => void }) {
                   <select
                     value={industry}
                     onChange={(e) => setIndustry(e.target.value)}
-                    className="text-xs text-white bg-black/50 border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
+                    className="text-xs text-white bg-black/30 border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
                   >
-                    {['automotive', 'retail', 'healthcare', 'insurance', 'general'].map(i => (
-                      <option key={i} value={i}>{i.charAt(0).toUpperCase() + i.slice(1)}</option>
+                    {['AUTOMOTIVE', 'RETAIL', 'HEALTHCARE', 'INSURANCE', 'GENERAL BUSINESS'].map(i => (
+                      <option key={i} value={i}>{i.charAt(0) + i.slice(1).toLowerCase()}</option>
                     ))}
                   </select>
+                </div>
+                {/* Mobile Number Input */}
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Mobile Number</span>
+                  <input
+                    type="tel"
+                    value={mobile}
+                    onChange={(e) => setMobile(e.target.value)}
+                    placeholder="+1234567890"
+                    className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
+                  />
+                </div>
+                {/* Website Input */}
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Website</span>
+                  <input
+                    type="url"
+                    value={website}
+                    onChange={(e) => setWebsite(e.target.value)}
+                    placeholder="https://example.com"
+                    className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
+                  />
                 </div>
                 {draftData.parsedFromVoice && (
                   <div className="pt-3 border-t border-white/10">
@@ -337,7 +448,7 @@ export function UniversalCommandModal({ onClose }: { onClose: () => void }) {
 
           {step === 'confirm' && draftData && (
             <div className="space-y-6">
-              <div className="backdrop-blur-xl bg-white/[0.02] border border-white/10 rounded-lg p-4 space-y-3">
+              <div className="backdrop-blur-xl bg-white/[0.01] border border-white/10 rounded-lg p-4 space-y-3">
                 {/* Review Client Name */}
                 <div className="flex justify-between">
                   <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Client Name</span>
@@ -361,10 +472,10 @@ export function UniversalCommandModal({ onClose }: { onClose: () => void }) {
                 </button>
                 <button
                   onClick={handleConfirm}
-                  disabled={isSpeaking}
+                  disabled={isSpeaking || isSubmitting}
                   className="px-6 py-2 text-xs font-light tracking-[0.2em] bg-cyan-500/20 border border-cyan-500/30 rounded-lg text-cyan-300 uppercase hover:bg-cyan-500/30 transition-all disabled:opacity-50"
                 >
-                  {isSpeaking ? 'Speaking...' : 'Create Client'}
+                  {isSubmitting ? 'Creating...' : isSpeaking ? 'Speaking...' : 'Create Client'}
                 </button>
               </div>
             </div>
@@ -372,7 +483,7 @@ export function UniversalCommandModal({ onClose }: { onClose: () => void }) {
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-white/10 bg-white/[0.02] flex justify-between">
+        <div className="px-6 py-4 border-t border-white/10 bg-white/[0.01] flex justify-between">
           <button onClick={onClose} className="px-6 py-2 text-xs font-light tracking-[0.2em] text-white/60 uppercase hover:text-white transition-colors">
             Cancel
           </button>

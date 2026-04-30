@@ -372,11 +372,11 @@ export default function ClientsPage() {
                     }}
                     style={{ display: 'inline-flex', width: '100%', padding: '4px 8px' }}
                     className={`relative rounded-lg text-[10px] font-bold tracking-wider uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden
-                      backdrop-blur-md bg-black/20 border border-white/10
+                      backdrop-blur-md bg-black/10 border border-white/10
                       hover:-translate-y-1 hover:backdrop-blur-xl hover:border-white/20 transition-colors duration-200
                       ${item.active
-                        ? '!text-[#00e5ff] border-[#00e5ff] bg-[#0097b2]/15 shadow-[0_0_8px_rgba(0,229,255,0.4)]'
-                        : '!text-white hover:!text-white hover:font-semibold hover:bg-black/30'
+                        ? '!text-[#00e5ff] border-[#00e5ff] bg-[#0097b2]/10 shadow-[0_0_8px_rgba(0,229,255,0.4)]'
+                        : '!text-white hover:!text-white hover:font-semibold hover:bg-black/20'
                       }`}
                   >
                     {/* Shimmer effect for active tab */}
@@ -405,11 +405,11 @@ export default function ClientsPage() {
                   onClick={() => handleFilterChange(filter)}
                   style={{ display: 'inline-flex', width: '100%', padding: '4px 8px' }}
                   className={`relative rounded-lg text-[10px] font-medium tracking-wider uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden
-                    backdrop-blur-md bg-black/20 border border-white/10
+                    backdrop-blur-md bg-black/10 border border-white/10
                     hover:-translate-y-0.5 hover:backdrop-blur-xl hover:border-white/20 transition-colors duration-200
                     ${activeFilter === filter.toUpperCase()
                       ? '!text-[#FFD700] bg-[#FFD700]/10 border-[#FFD700]/30'
-                      : '!text-[#94a3b8] hover:!text-white hover:font-semibold hover:bg-black/30'
+                      : '!text-[#94a3b8] hover:!text-white hover:font-semibold hover:bg-black/20'
                     }`}
                 >
                   <span className={`relative z-20 ${activeFilter === filter.toUpperCase() ? 'drop-shadow-[0_0_6px_rgba(255,215,0,0.3)]' : ''}`} style={{ textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>{filter}</span>
@@ -422,11 +422,11 @@ export default function ClientsPage() {
                 onClick={toggleOfflineOnly}
                 style={{ display: 'inline-flex', width: '100%', padding: '4px 8px' }}
                 className={`relative rounded-lg text-[10px] font-medium tracking-wider uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden
-                  backdrop-blur-md bg-black/20 border border-white/10
+                  backdrop-blur-md bg-black/10 border border-white/10
                   hover:-translate-y-0.5 hover:backdrop-blur-xl hover:border-white/20 transition-colors duration-200
                   ${showOfflineOnly
                     ? '!text-[#FFD700] bg-[#FFD700]/10 border-[#FFD700]/30'
-                    : '!text-[#94a3b8] hover:!text-white hover:font-semibold hover:bg-black/30'
+                    : '!text-[#94a3b8] hover:!text-white hover:font-semibold hover:bg-black/20'
                   }`}
               >
                 <span className={`relative z-20 ${showOfflineOnly ? 'drop-shadow-[0_0_6px_rgba(255,215,0,0.3)]' : ''}`} style={{ textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>Offline</span>

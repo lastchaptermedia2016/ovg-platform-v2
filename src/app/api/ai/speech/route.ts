@@ -2,10 +2,19 @@ import Groq from "groq-sdk";
 
 export const dynamic = 'force-dynamic'; // Prevents build-time API key errors
 
+console.log("OVG-PLATFORM-V2: Voice identity updated to Hannah.");
+
 export async function POST(req: Request) {
   try {
-    const { text, voice } = await req.json();
+    const { text, voice, metadata } = await req.json();
     const apiKey = process.env.GROQ_API_KEY;
+
+    // Log metadata for clean tracking
+    console.log('[TTS] Request:', { 
+      textLength: text?.length, 
+      voice, 
+      resellerSlug: metadata?.resellerSlug 
+    });
 
     if (!apiKey) {
       return new Response(JSON.stringify({ error: "API Key Missing" }), { status: 500 });
@@ -17,7 +26,7 @@ export async function POST(req: Request) {
     // Your logic, optimized for streaming instead of local file writing
     const wav = await groq.audio.speech.create({
       model: "canopylabs/orpheus-v1-english",
-      voice: voice || "autumn", // Using 'autumn' as requested
+      voice: voice || "hannah", // Using 'hannah' as requested
       response_format: "wav",
       input: text,
     });

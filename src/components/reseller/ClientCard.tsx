@@ -131,7 +131,7 @@ export function ClientCard({
         }
       `}} />
       <div
-        className={`${useSimpleStyle && !isHovered ? '' : 'backdrop-blur-xl'} bg-gradient-to-br from-white/5 via-white/[0.02] to-[#0097b2]/5 border border-white/10 rounded-lg p-4 hover:bg-white/[0.08] hover:border-[#0097b2]/50 hover:shadow-[0_0_20px_rgba(0,151,178,0.2)] transition-all duration-300 group relative mb-6 w-full min-h-[200px] overflow-visible ${
+        className={`${useSimpleStyle && !isHovered ? '' : 'backdrop-blur-xl'} bg-gradient-to-br from-white/[0.02] via-white/[0.01] to-[#0097b2]/[0.02] border border-white/10 rounded-lg p-4 hover:bg-white/[0.04] hover:border-[#0097b2]/50 hover:shadow-[0_0_20px_rgba(0,151,178,0.2)] transition-all duration-300 group relative mb-6 w-full min-h-[200px] overflow-visible ${
           successGlow === tenant.id ? 'shadow-[0_0_30px_rgba(0,151,178,0.5)] border-[#0097b2]' : ''
         } ${
           pulseCardId === tenant.id 
@@ -171,7 +171,7 @@ export function ClientCard({
               {/* Diagnostics Button */}
               <button
                 onClick={() => onDiagnosticClick(tenant.id)}
-                className="!opacity-100 !mix-blend-normal backdrop-blur-none w-7 h-7 rounded-lg bg-white/5 border border-white/20 flex items-center justify-center hover:bg-white/10 hover:border-[#00E5FF] transition-all duration-300 shadow-[0_0_10px_rgba(0,229,255,0.3)]"
+                className="!opacity-100 !mix-blend-normal backdrop-blur-none w-7 h-7 rounded-lg bg-white/[0.02] border border-white/20 flex items-center justify-center hover:bg-white/5 hover:border-[#00E5FF] transition-all duration-300 shadow-[0_0_10px_rgba(0,229,255,0.3)]"
                 title="View Diagnostics"
                 style={{ 
                   filter: 'drop-shadow(0 0 2px rgba(0, 151, 178, 0.3))',
@@ -191,7 +191,7 @@ export function ClientCard({
               {/* Management/Users Button */}
               <div className="relative !opacity-100 !visible z-50 force-glow-icon">
                 <button
-                  className="!opacity-100 !mix-blend-normal backdrop-blur-none relative z-10 w-7 h-7 rounded-lg bg-white/5 border border-white/20 flex items-center justify-center hover:bg-white/10 hover:border-[#00E5FF] transition-all duration-300 shadow-[0_0_10px_rgba(0,229,255,0.3)]"
+                  className="!opacity-100 !mix-blend-normal backdrop-blur-none relative z-10 w-7 h-7 rounded-lg bg-white/[0.02] border border-white/20 flex items-center justify-center hover:bg-white/5 hover:border-[#00E5FF] transition-all duration-300 shadow-[0_0_10px_rgba(0,229,255,0.3)]"
                   title="Manage Users"
                   style={{ 
                     filter: 'drop-shadow(0 0 2px rgba(0, 151, 178, 0.3))',
@@ -269,7 +269,7 @@ export function ClientCard({
                   className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-300 transition-transform active:scale-90 cursor-pointer ${
                     isActive 
                       ? 'bg-[#0097b2]/20 border border-[#0097b2]/50 shadow-[0_0_10px_rgba(0,151,178,0.3)]' 
-                      : 'bg-white/5 border border-white/10 opacity-40 hover:opacity-60'
+                      : 'bg-white/[0.02] border border-white/10 opacity-40 hover:opacity-60'
                   } ${isAI ? 'border-2 border-red-500' : ''}`}
                   title={`Activate/Deactivate ${feature.toUpperCase()}`}
                 >
@@ -285,7 +285,7 @@ export function ClientCard({
           {isArmed && (
             <div className="mt-3 pt-3 border-t border-white/10">
               <div className="flex items-center gap-2">
-                <div className="flex-1 flex items-center gap-2 bg-black/40 border border-[#22c55e]/50 rounded-lg p-2">
+                <div className="flex-1 flex items-center gap-2 bg-black/20 border border-[#22c55e]/50 rounded-lg p-2">
                   <div className="w-2 h-2 rounded-full bg-[#22c55e] animate-pulse" />
                   <input
                     type="text"
@@ -301,7 +301,7 @@ export function ClientCard({
                   disabled={isExecuting || !commandInput.trim()}
                   className={`px-4 py-2 rounded-lg text-xs tracking-widest uppercase transition-all duration-300 font-medium whitespace-nowrap ${
                     isExecuting || !commandInput.trim()
-                      ? 'border-white/10 bg-white/5 text-white/30 cursor-not-allowed'
+                      ? 'border-white/10 bg-white/[0.02] text-white/30 cursor-not-allowed'
                       : 'border-green-500 bg-green-500/20 text-green-400 hover:bg-green-500/30 hover:shadow-[0_0_20px_rgba(34,197,94,0.5)] hover:text-white'
                   }`}
                 >
@@ -332,7 +332,7 @@ export function ClientCard({
           {tenant.category_config?.features?.slice(0, 3).map((feature: string) => (
             <span
               key={feature}
-              className="px-2 py-0.5 text-[10px] tracking-[0.1em] bg-white/5 border border-white/10 rounded text-white/50"
+              className="px-2 py-0.5 text-[10px] tracking-[0.1em] bg-white/[0.02] border border-white/10 rounded text-white/50"
             >
               {getIndustryFeatureLabel(feature)}
             </span>
