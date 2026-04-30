@@ -38,6 +38,10 @@ export default function ClientsPage() {
       .animate-tab-shimmer {
         animation: tab-shimmer 5s ease-in-out infinite;
       }
+      .mask-gradient {
+        mask-image: linear-gradient(to right, black 85%, transparent 100%);
+        -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%);
+      }
     `;
     document.head.appendChild(style);
     return () => { document.head.removeChild(style); };
@@ -329,10 +333,10 @@ export default function ClientsPage() {
           isCommunicating={isCommunicating}
         />
         
-        {/* Main Navigation Tabs - Floating Glass Pods Array - Mobile Scroll */}
+        {/* Main Navigation Tabs - Compact Grid Layout */}
         <div className="w-full">
           <div className="px-6">
-            <div className="flex items-center gap-3 md:gap-4 py-4 flex-wrap md:flex-nowrap overflow-x-auto whitespace-nowrap scrollbar-hide snap-x snap-mandatory">
+            <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 py-3 mb-3">
               {(() => {
                 // 🔷 Production Excellence: Path-extraction for active state even before hydration
                 const pathSegments = typeof window !== 'undefined' ? window.location.pathname.split('/') : [];
@@ -360,13 +364,13 @@ export default function ClientsPage() {
                         router.push(item.path);
                       }
                     }}
-                    style={{ display: 'inline-flex', width: 'auto', minWidth: 'max-content', padding: '8px 24px' }}
-                    className={`relative rounded-lg text-[11px] font-bold tracking-[0.2em] uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden snap-start
+                    style={{ display: 'inline-flex', width: '100%', padding: '4px 8px' }}
+                    className={`relative rounded-lg text-[10px] font-bold tracking-wider uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden
                       backdrop-blur-md bg-white/10 border border-white/10
                       hover:-translate-y-1 hover:backdrop-blur-xl hover:border-white/20 transition-colors duration-200
                       ${item.active
-                        ? '!text-[#00e5ff] bg-[#0097b2]/15 border-[#0097b2]/50 shadow-[0_0_20px_rgba(0,151,178,0.3)]'
-                        : '!text-[#94a3b8] hover:!text-[#ffcc00] hover:font-semibold hover:bg-white/15'
+                        ? '!text-[#00e5ff] border-[#00e5ff] bg-[#0097b2]/15 shadow-[0_0_8px_rgba(0,229,255,0.4)]'
+                        : '!text-white/80 hover:!text-white hover:font-semibold hover:bg-white/15'
                       }`}
                   >
                     {/* Shimmer effect for active tab */}
@@ -377,7 +381,7 @@ export default function ClientsPage() {
                         </div>
                       </div>
                     )}
-                    <span className={`relative z-10 ${item.active ? 'drop-shadow-[0_0_8px_rgba(0,229,255,0.5)]' : ''}`}>{item.label}</span>
+                    <span className={`relative z-10 ${item.active ? 'drop-shadow-[0_0_8px_rgba(0,229,255,0.4)]' : ''}`}>{item.label}</span>
                   </button>
                 ));
               })()}
@@ -385,24 +389,24 @@ export default function ClientsPage() {
           </div>
         </div>
         
-        {/* Industry Filter Tabs - Floating Glass Pods Array - Mobile Scroll */}
+        {/* Industry Filter Tabs - Compact Grid Layout */}
         <div className="w-full">
           <div className="px-6">
-            <div className="flex items-center gap-3 py-3 flex-wrap md:flex-nowrap overflow-x-auto whitespace-nowrap scrollbar-hide snap-x snap-mandatory">
+            <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 py-2">
               {['All', 'Automotive', 'General', 'Retail', 'Healthcare', 'Insurance'].map((filter) => (
                 <button
                   key={filter}
                   onClick={() => handleFilterChange(filter)}
-                  style={{ display: 'inline-flex', width: 'auto', minWidth: 'max-content', padding: '8px 24px' }}
-                  className={`relative rounded-lg text-[11px] font-bold tracking-[0.2em] uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden snap-start
-                    backdrop-blur-md bg-white/10 border border-white/10
+                  style={{ display: 'inline-flex', width: '100%', padding: '4px 8px' }}
+                  className={`relative rounded-lg text-[10px] font-medium tracking-wider uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden
+                    backdrop-blur-md bg-white/5 border border-white/10
                     hover:-translate-y-0.5 hover:backdrop-blur-xl hover:border-white/20 transition-colors duration-200
                     ${activeFilter === filter.toUpperCase()
-                      ? '!text-[#00e5ff] bg-[#0097b2]/15 border-[#0097b2]/50 shadow-[0_0_15px_rgba(0,151,178,0.25)]'
-                      : '!text-[#94a3b8] hover:!text-[#ffcc00] hover:font-semibold hover:bg-white/15'
+                      ? '!text-[#FFD700] bg-[#FFD700]/10 border-[#FFD700]/30'
+                      : '!text-[#94a3b8] hover:!text-white hover:font-semibold hover:bg-white/10'
                     }`}
                 >
-                  <span className={`relative z-10 ${activeFilter === filter.toUpperCase() ? 'drop-shadow-[0_0_6px_rgba(0,229,255,0.4)]' : ''}`}>{filter}</span>
+                  <span className={`relative z-10 ${activeFilter === filter.toUpperCase() ? 'drop-shadow-[0_0_6px_rgba(255,215,0,0.3)]' : ''}`}>{filter}</span>
                 </button>
               ))}
 
@@ -410,16 +414,16 @@ export default function ClientsPage() {
 
               <button
                 onClick={toggleOfflineOnly}
-                style={{ display: 'inline-flex', width: 'auto', minWidth: 'max-content', padding: '8px 24px' }}
-                className={`relative rounded-lg text-[11px] font-bold tracking-[0.2em] uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden snap-start
-                  backdrop-blur-md bg-white/10 border border-white/10
+                style={{ display: 'inline-flex', width: '100%', padding: '4px 8px' }}
+                className={`relative rounded-lg text-[10px] font-medium tracking-wider uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden
+                  backdrop-blur-md bg-white/5 border border-white/10
                   hover:-translate-y-0.5 hover:backdrop-blur-xl hover:border-white/20 transition-colors duration-200
                   ${showOfflineOnly
-                    ? '!text-[#00e5ff] bg-[#0097b2]/15 border-[#0097b2]/50 shadow-[0_0_15px_rgba(0,151,178,0.25)]'
-                    : '!text-[#94a3b8] hover:!text-[#ffcc00] hover:font-semibold hover:bg-white/15'
+                    ? '!text-[#FFD700] bg-[#FFD700]/10 border-[#FFD700]/30'
+                    : '!text-[#94a3b8] hover:!text-white hover:font-semibold hover:bg-white/10'
                   }`}
               >
-                <span className={`relative z-10 ${showOfflineOnly ? 'drop-shadow-[0_0_6px_rgba(0,229,255,0.4)]' : ''}`}>Offline</span>
+                <span className={`relative z-10 ${showOfflineOnly ? 'drop-shadow-[0_0_6px_rgba(255,215,0,0.3)]' : ''}`}>Offline</span>
               </button>
             </div>
           </div>
