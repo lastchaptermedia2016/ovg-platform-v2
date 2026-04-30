@@ -109,6 +109,7 @@ export function useResilientVoice(): UseResilientVoiceReturn {
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const cancelTypewriterRef = useRef<(() => void) | null>(null);
+  const isCancelledRef = useRef(false);
 
   const clearCaptions = useCallback(() => {
     if (cancelTypewriterRef.current) {
@@ -119,17 +120,14 @@ export function useResilientVoice(): UseResilientVoiceReturn {
   }, []);
 
   const stopVoice = useCallback(() => {
-    // Stop audio playback
+    isCancelledRef.current = true;
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
     }
-
-    // Stop browser speech
     if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
-
     clearCaptions();
     setIsPlaying(false);
   }, [clearCaptions]);
@@ -137,88 +135,48 @@ export function useResilientVoice(): UseResilientVoiceReturn {
   const playVoice = useCallback(async (text: string) => {
     if (!text.trim()) return;
 
+    isCancelledRef.current = false;
     setIsPlaying(true);
     setIsSilentMode(false);
     clearCaptions();
 
-    // Phase 1: Groq Orpheus-v1 (default for speed)
+    // Phase 1: Groq
     try {
-      console.log('[Voice] Phase 1: Attempting Groq Orpheus-v1...');
       const audioBuffer = await playGroqTTS(text);
+      if (isCancelledRef.current) return;
       
       const audioBlob = new Blob([audioBuffer], { type: 'audio/wav' });
       const audioUrl = URL.createObjectURL(audioBlob);
-      
       audioRef.current = new Audio(audioUrl);
       
       await new Promise<void>((resolve, reject) => {
         if (!audioRef.current) return reject(new Error('Audio not initialized'));
-        
-        audioRef.current.onended = () => {
-          URL.revokeObjectURL(audioUrl);
-          resolve();
-        };
-        audioRef.current.onerror = () => {
-          URL.revokeObjectURL(audioUrl);
-          reject(new Error('Audio playback failed'));
-        };
-        
+        audioRef.current.onended = () => { URL.revokeObjectURL(audioUrl); resolve(); };
+        audioRef.current.onerror = () => { URL.revokeObjectURL(audioUrl); reject(new Error('Playback failed')); };
         audioRef.current.play().catch(reject);
       });
 
-      setIsPlaying(false);
+      if (!isCancelledRef.current) setIsPlaying(false);
       return;
     } catch (error: any) {
-      console.log(`[Voice] Groq failed (${error.status || 'unknown'}), pivoting to Phase 2...`);
+      if (isCancelledRef.current) return;
+      console.log(`[Voice] Groq failed, trying browser TTS...`);
     }
 
-    // Phase 2: ElevenLabs (fallback from Groq 429/500)
+    // Phase 2: Browser TTS (skip ElevenLabs since you don't have it configured)
     try {
-      console.log('[Voice] Phase 2: Attempting ElevenLabs...');
-      const audioBuffer = await playElevenLabsTTS(text);
-      
-      const audioBlob = new Blob([audioBuffer], { type: 'audio/mpeg' });
-      const audioUrl = URL.createObjectURL(audioBlob);
-      
-      audioRef.current = new Audio(audioUrl);
-      
-      await new Promise<void>((resolve, reject) => {
-        if (!audioRef.current) return reject(new Error('Audio not initialized'));
-        
-        audioRef.current.onended = () => {
-          URL.revokeObjectURL(audioUrl);
-          resolve();
-        };
-        audioRef.current.onerror = () => {
-          URL.revokeObjectURL(audioUrl);
-          reject(new Error('Audio playback failed'));
-        };
-        
-        audioRef.current.play().catch(reject);
-      });
-
-      setIsPlaying(false);
-      return;
-    } catch (error: any) {
-      console.log(`[Voice] ElevenLabs failed (${error.status || 'unknown'}), pivoting to Phase 3...`);
-    }
-
-    // Phase 3: Browser Web Speech API
-    try {
-      console.log('[Voice] Phase 3: Attempting Browser TTS...');
+      if (isCancelledRef.current) return;
       await playBrowserTTS(text);
-      setIsPlaying(false);
+      if (!isCancelledRef.current) setIsPlaying(false);
       return;
     } catch (error) {
-      console.log('[Voice] Browser TTS failed, entering Phase 4...');
+      console.log('[Voice] Browser TTS failed, entering silent mode...');
     }
 
-    // Phase 4: Silent Fallback with Captions HUD
-    console.log('[Voice] Phase 4: Silent mode with captions...');
+    // Phase 3: Silent captions
+    if (isCancelledRef.current) return;
     setIsSilentMode(true);
     setIsPlaying(false);
-    
-    // Show captions with typewriter effect in Electric Blue aesthetic
     cancelTypewriterRef.current = typewriterEffect(text, (typedText) => {
       setCaptions(typedText);
     }, 40);

@@ -67,6 +67,7 @@ export default function ClientsPage() {
   const [isAwaitingVoiceConfirm, setIsAwaitingVoiceConfirm] = useState(false);
   const confirmationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const commandInputRef = useRef<HTMLInputElement>(null);
+  const hasProcessedRef = useRef(false);
 
   // Portfolio Stats State (lifted from ClientsGrid)
   const [portfolioStats, setPortfolioStats] = useState({
@@ -104,6 +105,11 @@ export default function ClientsPage() {
     currentConfig: { theme: { primary: '#0097b2' }, behavior: { prompt: 'Default' } },
     skipAIPipeline: true, // AI processing handled by handleCommandSubmit
     onTranscript: (text) => {
+      stopListening();
+      if (hasProcessedRef.current) return;
+      if (!text || text.trim().length < 3) return;
+      hasProcessedRef.current = true;
+      setTimeout(() => { hasProcessedRef.current = false; }, 3000);
       const lowerText = text.toLowerCase().trim();
       
       // Intent filtering for bulk confirmation state
@@ -336,7 +342,7 @@ export default function ClientsPage() {
         {/* Main Navigation Tabs - Compact Grid Layout */}
         <div className="w-full">
           <div className="px-6">
-            <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 py-3 mb-3">
+            <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 py-2 mb-2">
               {(() => {
                 // 🔷 Production Excellence: Path-extraction for active state even before hydration
                 const pathSegments = typeof window !== 'undefined' ? window.location.pathname.split('/') : [];
@@ -345,11 +351,11 @@ export default function ClientsPage() {
                   ? pathSegments[resellerIdx + 1] 
                   : (resellerSlug || 'dashboard');
                 const navItems = [
-                  { label: 'CLIENTS', path: `/dashboard/reseller/${currentSlug}/clients`, active: true },
-                  { label: 'BRANDING', path: `/dashboard/reseller/${currentSlug}/branding`, active: false },
-                  { label: 'REVENUE', path: `/dashboard/reseller/${currentSlug}/revenue`, active: false },
-                  { label: 'AI ENGINE', path: `/dashboard/reseller/${currentSlug}/ai-engine`, active: false },
-                  { label: 'SIGNAL', path: `/dashboard/reseller/${currentSlug}/signal`, active: false },
+                  { label: 'CLIENTS', path: `/reseller/${currentSlug}/clients`, active: true },
+                  { label: 'BRANDING', path: `/reseller/${currentSlug}/branding`, active: false },
+                  { label: 'REVENUE', path: `/reseller/${currentSlug}/revenue`, active: false },
+                  { label: 'AI ENGINE', path: `/reseller/${currentSlug}/ai-engine`, active: false },
+                  { label: 'SIGNAL', path: `/reseller/${currentSlug}/signal`, active: false },
                 ];
                 return navItems.map((item) => (
                   <button
@@ -433,7 +439,7 @@ export default function ClientsPage() {
       {/* Main Content Area */}
       <main className="relative w-full min-h-screen">
         {/* Hero Spacer */}
-        <div className="h-[60px] w-full" />
+        <div className="h-[40px] w-full" />
 
         {/* Action Anchor: ExecuteBar - Centered with Neon Blue Glow */}
         <div className="w-full px-4 relative z-40">

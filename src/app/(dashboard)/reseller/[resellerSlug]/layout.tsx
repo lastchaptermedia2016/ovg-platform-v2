@@ -14,7 +14,7 @@ export default function ResellerLayout({
         style={{
           backgroundImage: "url('/reseller-bg.jpg')",
           backgroundSize: 'cover',
-          backgroundPosition: 'center -450px',
+          backgroundPosition: 'center top 20%',
           backgroundRepeat: 'no-repeat',
           backgroundAttachment: 'fixed',
           backgroundColor: '#000',

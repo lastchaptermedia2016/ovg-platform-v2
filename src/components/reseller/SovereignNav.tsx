@@ -25,7 +25,9 @@ export default function SovereignNav({ slug }: { slug: string }) {
       {NAV_ITEMS.map((item, index) => {
         const isActive = pathname.endsWith(item.href) || (item.href === '' && pathname.endsWith(slug));
         const isDimmed = isNavigating !== null && isNavigating !== item.href;
-        const fullPath = `/dashboard/reseller/${slug}/${item.href}`;
+        const fullPath = item.href === '' 
+          ? `/reseller/${slug}/clients` 
+          : `/reseller/${slug}/${item.href}`;
         const isClients = item.label === 'CLIENTS';
         const isLast = index === NAV_ITEMS.length - 1;
         
@@ -35,11 +37,7 @@ export default function SovereignNav({ slug }: { slug: string }) {
             onClick={(e) => {
               e.stopPropagation();
               console.log("CORE SIGNAL:", item.label, "CLICKED");
-              if (isClients) {
-                window.location.href = window.location.href + '/clients';
-              } else {
-                handleNavigation(fullPath, item.href);
-              }
+              handleNavigation(fullPath, item.href);
             }}
             className={`backdrop-blur-xl bg-white/5 border border-white/10 rounded-lg transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] cursor-pointer pointer-events-auto hover:scale-[1.02] group-hover:border-[#0097b2] group-hover:shadow-[0_0_25px_rgba(0,151,178,0.6)] group-hover:bg-[rgba(34,102,131,0.3)] min-h-[44px] flex items-center justify-center ${isLast ? 'col-span-2 md:col-span-1' : ''} ${
               isActive ? 'border-[#0097b2] shadow-[0_0_25px_rgba(0,151,178,0.6)] bg-[rgba(34,102,131,0.3)]' : ''

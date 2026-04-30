@@ -39,16 +39,16 @@ export function MasterpieceHeader({
         }
       `}</style>
       
-      <nav className="w-full flex justify-between items-center px-6 py-3 backdrop-blur-md bg-white/[0.01] border border-white/5 rounded-2xl pointer-events-none">
+      <nav className="w-full flex justify-between items-center px-6 py-2 backdrop-blur-md bg-black/60 border border-white/5 rounded-2xl pointer-events-none">
         {/* Left Side - Gold 3D-styled lettering */}
-        <div className="text-[10px] font-bold tracking-[0.6em] text-white/40 uppercase animate-signature-pulse pointer-events-auto">
+        <div className="text-[9px] font-bold tracking-[0.6em] text-white/40 uppercase animate-signature-pulse pointer-events-auto">
           POWERED BY PIERRE
         </div>
 
         {/* Center: Voice Status Indicator - Clickable Mic - Glass Box with Gemstone Effect */}
         <div 
           onClick={onMicClick}
-          className={`relative flex items-center gap-3 px-4 py-2 bg-white/10 rounded-full pointer-events-auto cursor-pointer active:scale-95 transition-all duration-300 ease-out overflow-hidden ${
+          className={`relative flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-full pointer-events-auto cursor-pointer active:scale-95 transition-all duration-300 ease-out overflow-hidden ${
             isAwaitingVoiceConfirm ? 'bg-emerald-500/10 border border-emerald-500/30' : ''
           } ${
             isListening ? 'bg-[#0097b2]/20 border border-[#0097b2]/40' : ''
@@ -67,7 +67,7 @@ export function MasterpieceHeader({
         <div className="relative flex items-center justify-center">
           {/* The Mic Icon */}
           <Mic 
-            className={`w-5 h-5 transition-colors duration-300 ${
+            className={`w-4 h-4 transition-colors duration-300 ${
               isCommunicating
                 ? "text-[#0097b2]"
                 : isListening 
@@ -84,7 +84,7 @@ export function MasterpieceHeader({
           )}
         </div>
 
-        <span className={`text-[10px] md:text-[11px] font-bold tracking-widest animate-pulse ${
+        <span className={`text-[9px] md:text-[10px] font-bold tracking-widest animate-pulse ${
           isCommunicating 
             ? "!text-[#00e5ff] drop-shadow-[0_0_8px_rgba(0,229,255,0.6)]" 
             : isListening 
@@ -100,8 +100,8 @@ export function MasterpieceHeader({
         
         {/* Pierre HUD: STT Command Feedback */}
         {transcribedText && (
-          <div className="ml-4 px-3 py-1 bg-[#226683]/50 border-l-2 border-[#0097b2] backdrop-blur-sm">
-            <span className="text-[#0097b2] text-[10px] font-mono uppercase tracking-tighter italic">
+          <div className="ml-3 px-2 py-0.5 bg-[#226683]/50 border-l-2 border-[#0097b2] backdrop-blur-sm">
+            <span className="text-[#0097b2] text-[9px] font-mono uppercase tracking-tighter italic">
               Detected: "{transcribedText}"
             </span>
           </div>
@@ -110,11 +110,11 @@ export function MasterpieceHeader({
 
         {/* Right Side */}
         <div className="flex items-center pointer-events-auto">
-          <span className="text-[#FFD700] font-black text-xl animate-pulse-gold">
+          <span className="text-[#FFD700] font-black text-lg animate-pulse-gold">
             AI
           </span>
-          <div className="h-4 w-[1px] bg-white/20 mx-6" />
-          <span className="text-white/90 font-light tracking-[0.4em] text-[10px] uppercase">
+          <div className="h-3 w-[1px] bg-white/20 mx-4" />
+          <span className="text-white/90 font-light tracking-[0.4em] text-[9px] uppercase">
             RESELLER DASHBOARD
           </span>
         </div>

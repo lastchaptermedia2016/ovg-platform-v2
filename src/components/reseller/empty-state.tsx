@@ -126,7 +126,7 @@ export function EmptyState({
 
       {/* Primary CTA */}
       <a
-        href={`/dashboard/reseller/${resellerSlug}/clients/new`}
+        href={`/reseller/${resellerSlug}/clients/new`}
         className="group inline-flex items-center gap-3 px-8 py-4 rounded-xl font-semibold text-white transition-all duration-300 hover:shadow-xl hover:scale-105 active:scale-95"
         style={{ 
           background: `linear-gradient(135deg, ${primaryColor}, ${primaryColor}dd)`

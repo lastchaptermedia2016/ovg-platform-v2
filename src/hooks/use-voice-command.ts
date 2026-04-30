@@ -63,6 +63,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   const animationFrameRef = useRef<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const isProcessingRef = useRef(false);
 
   // Cleanup function
   const cleanup = useCallback(() => {
@@ -126,7 +127,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
 
     // Check silence threshold
     if (normalizedVolume < silenceThreshold) {
-      if (!silenceTimerRef.current) {
+      if (!silenceTimerRef.current && !isProcessingRef.current) {
         silenceTimerRef.current = setTimeout(() => {
           stopListening();
         }, silenceDuration);
@@ -154,6 +155,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
 
   // Process audio through pipeline
   const processAudioPipeline = useCallback(async (audioBlob: Blob) => {
+    isProcessingRef.current = true;
     setIsProcessing(true);
     abortControllerRef.current = new AbortController();
     const { signal } = abortControllerRef.current;
@@ -258,6 +260,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       setError(errorMsg);
       onError?.(errorMsg);
     } finally {
+      isProcessingRef.current = false;
       setIsProcessing(false);
     }
   }, [onTranscript, onAIResponse, onError]);
