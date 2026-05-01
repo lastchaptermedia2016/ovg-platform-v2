@@ -78,6 +78,9 @@ export function ClientsGridInternal({
   const [allTenants, setAllTenants] = useState<Tenant[]>([]);
   const isSubscribed = useRef(false);
   const [loading, setLoading] = useState(true);
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [hasSession, setHasSession] = useState(false);
+  const supabase = useRef(createSupabaseClient());
   const [successGlow, setSuccessGlow] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchExpanded, setSearchExpanded] = useState(false);
@@ -543,11 +546,106 @@ export function ClientsGridInternal({
     });
   }, [allTenants, filter, showOfflineOnly, searchQuery, sortBy]);
 
+  // Auth state management with retry logic - fetch only when session is truthy
   useEffect(() => {
-    fetchTenants({ offlineOnly: false, filterParam: 'ALL', resellerSlugParam: resellerSlug });
-    fetchDashboardStats();
-    fetchCriticalAlerts();
-  }, [resellerSlug]);
+    const checkSession = async () => {
+      try {
+        // Token refresh: Verify token is valid before hitting tenants table
+        const { data: { user }, error: userError } = await supabase.current.auth.getUser();
+        
+        if (userError || !user) {
+          console.log('Token invalid or expired:', userError?.message);
+          setHasSession(false);
+          setSessionLoading(false);
+          return;
+        }
+
+        // Session is valid, proceed with data fetching
+        setHasSession(true);
+        setSessionLoading(false);
+        
+        // Trigger UI transition from red pulse back to Cyan
+        document.body.classList.remove('heartbeat-error');
+        
+        fetchTenants({ offlineOnly: false, filterParam: 'ALL', resellerSlugParam: resellerSlug });
+        fetchDashboardStats();
+        fetchCriticalAlerts();
+      } catch (error) {
+        console.error('Session check error:', error);
+        setHasSession(false);
+        setSessionLoading(false);
+      }
+    };
+
+    // Only fetch if we have a session
+    if (hasSession) {
+      checkSession();
+    } else {
+      // Initial session check
+      const initialCheck = async () => {
+        const { data: { session } } = await supabase.current.auth.getSession();
+        setHasSession(!!session);
+        setSessionLoading(false);
+        
+        if (session) {
+          // Trigger UI transition and fetch data
+          document.body.classList.remove('heartbeat-error');
+          fetchTenants({ offlineOnly: false, filterParam: 'ALL', resellerSlugParam: resellerSlug });
+          fetchDashboardStats();
+          fetchCriticalAlerts();
+        }
+      };
+      
+      initialCheck();
+    }
+
+    // Session Bridge: Listen for custom event from sign-in page
+    const handleUserSignedIn = (event: CustomEvent) => {
+      console.log('User signed in event received:', event.detail);
+      setHasSession(true);
+      setSessionLoading(false);
+      
+      // Trigger UI transition from red pulse back to Cyan
+      document.body.classList.remove('heartbeat-error');
+      
+      // Immediately re-fetch tenants list
+      fetchTenants({ offlineOnly: false, filterParam: 'ALL', resellerSlugParam: resellerSlug });
+      fetchDashboardStats();
+      fetchCriticalAlerts();
+    };
+
+    // Add event listener for custom sign-in event
+    window.addEventListener('userSignedIn', handleUserSignedIn as EventListener);
+
+    // Retry logic: Listen for auth state changes
+    const { data: { subscription } } = supabase.current.auth.onAuthStateChange((event, session) => {
+      console.log('Auth state changed:', event, session?.user?.id);
+      
+      if (event === 'SIGNED_IN' && session) {
+        setHasSession(true);
+        setSessionLoading(false);
+        
+        // Trigger UI transition from red pulse back to Cyan
+        document.body.classList.remove('heartbeat-error');
+        
+        // Re-fetch data when user signs in
+        fetchTenants({ offlineOnly: false, filterParam: 'ALL', resellerSlugParam: resellerSlug });
+        fetchDashboardStats();
+        fetchCriticalAlerts();
+      } else if (event === 'SIGNED_OUT') {
+        setHasSession(false);
+        setSessionLoading(false);
+        setAllTenants([]);
+        // Add red pulse for locked state
+        document.body.classList.add('heartbeat-error');
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+      window.removeEventListener('userSignedIn', handleUserSignedIn as EventListener);
+    };
+  }, [resellerSlug, hasSession]);
 
   // Refetch when offline toggle or filter changes
   useEffect(() => {
@@ -840,6 +938,16 @@ export function ClientsGridInternal({
       setLoading(true);
       const supabase = createSupabaseClient();
 
+      // Verify authentication state
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      console.log('OVG-PLATFORM-V2: Auth state:', { hasSession: !!session, userId: session?.user?.id, sessionError });
+
+      if (!session) {
+        console.warn('OVG-PLATFORM-V2: No authenticated session - RLS will block queries');
+        setLoading(false);
+        return;
+      }
+
       const cutoffIso = new Date(Date.now() - OFFLINE_THRESHOLD_MS).toISOString();
 
       // 1) Get reseller UUID from slug
@@ -850,8 +958,18 @@ export function ClientsGridInternal({
           .select('id')
           .eq('slug', resellerSlugParam)
           .maybeSingle();
-        console.log('Reseller lookup:', { resellerSlugParam, rData, rErr: rErr?.message });
-        if (rData?.id) resellerId = rData.id;
+        
+        console.log('OVG-PLATFORM-V2: Reseller lookup:', { resellerSlugParam, rData, rErr: rErr?.message });
+        
+        if (rErr) {
+          console.error('OVG-PLATFORM-V2: Reseller lookup failed:', rErr);
+          // RLS or auth issue likely
+          if (rErr.code === 'PGRST116') {
+            console.warn('OVG-PLATFORM-V2: Reseller not found or RLS blocking access');
+          }
+        } else if (rData?.id) {
+          resellerId = rData.id;
+        }
       }
 
       // 2) Build tenants query
@@ -905,6 +1023,9 @@ export function ClientsGridInternal({
         code: err?.code,
         status: err?.status,
       });
+      
+      // Production Excellence: Set empty state on error
+      setAllTenants([]);
     } finally {
       setLoading(false);
     }
@@ -962,6 +1083,74 @@ export function ClientsGridInternal({
 
       {/* Grid */}
       {(() => {
+        // Pierre AI themed skeleton loader for session loading
+        if (sessionLoading) {
+          return (
+            <div className="backdrop-blur-xl bg-white/[0.02] border border-white/10 rounded-lg p-12 text-center">
+              <div className="flex items-center justify-center mb-4">
+                <div className="relative flex h-8 w-8">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-8 w-8 bg-cyan-500"></span>
+                </div>
+              </div>
+              <div className="text-xs text-cyan-300 tracking-widest font-mono mb-2">
+                POWERED BY PIERRE AI
+              </div>
+              <div className="text-xs text-white/40 tracking-[0.2em] uppercase">
+                Initializing secure vault...
+              </div>
+            </div>
+          );
+        }
+
+        // Show authentication prompt if no session
+        if (!hasSession) {
+          return (
+            <div className="backdrop-blur-xl bg-white/[0.02] border border-white/10 rounded-lg p-12 text-center">
+              <div className="flex items-center justify-center mb-4">
+                <div className="relative flex h-8 w-8">
+                  <span className="relative inline-flex rounded-full h-8 w-8 bg-red-500"></span>
+                </div>
+              </div>
+              <div className="text-xs text-red-300 tracking-widest font-mono mb-2">
+                SECURE VAULT LOCKED
+              </div>
+              <div className="text-xs text-white/40 tracking-[0.2em] uppercase mb-4">
+                Please sign in to access your clients
+              </div>
+              <div className="text-xs text-white/20 mb-6">
+                Authentication required for data access
+              </div>
+              <button
+                onClick={() => router.push('/auth')}
+                className="px-6 py-2 text-xs font-light tracking-[0.2em] bg-cyan-500/20 border border-cyan-500/30 rounded-lg text-cyan-300 uppercase hover:bg-cyan-500/30 transition-all"
+              >
+                Sign In
+              </button>
+            </div>
+          );
+        }
+
+        if (loading) {
+          return (
+            <div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(300px,1fr))] w-full px-4 sm:px-0">
+              {[...Array(6)].map((_, i) => (
+                <div key={i} className="backdrop-blur-xl bg-white/[0.02] border border-white/10 rounded-lg p-6">
+                  <div className="animate-pulse">
+                    <div className="h-4 bg-white/10 rounded w-3/4 mb-3" />
+                    <div className="h-3 bg-white/5 rounded w-1/2 mb-4" />
+                    <div className="flex gap-2 mb-4">
+                      <div className="h-8 bg-white/5 rounded flex-1" />
+                      <div className="h-8 bg-white/5 rounded flex-1" />
+                    </div>
+                    <div className="h-2 bg-white/5 rounded w-full" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        }
+
         if (visibleClients.length === 0) {
           return (
             <div className="backdrop-blur-xl bg-white/[0.02] border border-white/10 rounded-lg p-12 text-center">

@@ -23,6 +23,7 @@ interface TenantContext {
 interface VoiceCommandOptions {
   silenceThreshold?: number;
   silenceDuration?: number;
+  forcedContinuousMode?: boolean; // Override silence detection for hands-free sessions
   resellerId?: string;
   tenantContext?: TenantContext;
   currentConfig?: Record<string, any>;
@@ -35,7 +36,8 @@ interface VoiceCommandOptions {
 export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceCommandReturn {
   const {
     silenceThreshold = 0.02,
-    silenceDuration = 1800, // 1.8 seconds
+    silenceDuration = 3000, // 3 seconds - extended for thinking pauses
+    forcedContinuousMode = false,
     resellerId,
     tenantContext = {},
     currentConfig = {},
@@ -125,15 +127,15 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     const normalizedVolume = average / 255; // Normalize to 0-1
     setVolumeLevel(normalizedVolume);
 
-    // Check silence threshold
-    if (normalizedVolume < silenceThreshold) {
+    // Check silence threshold (unless forced continuous mode)
+    if (!forcedContinuousMode && normalizedVolume < silenceThreshold) {
       if (!silenceTimerRef.current && !isProcessingRef.current) {
         silenceTimerRef.current = setTimeout(() => {
           stopListening();
         }, silenceDuration);
       }
     } else {
-      // Reset silence timer if volume detected
+      // Reset silence timer if volume detected (or in forced continuous mode)
       if (silenceTimerRef.current) {
         clearTimeout(silenceTimerRef.current);
         silenceTimerRef.current = null;
@@ -142,7 +144,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
 
     // Continue monitoring
     animationFrameRef.current = requestAnimationFrame(monitorVolume);
-  }, [silenceThreshold, silenceDuration]);
+  }, [silenceThreshold, silenceDuration, forcedContinuousMode]);
 
   // Stop listening and process
   const stopListening = useCallback(() => {
