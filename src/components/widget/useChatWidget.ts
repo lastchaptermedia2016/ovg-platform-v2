@@ -1,11 +1,9 @@
 import { useState, useRef } from "react";
-import { usePathname } from "next/navigation";
 import { Message } from "@/types";
 
 export type KineticState = "idle" | "thinking" | "speaking" | "error";
 
 export function useChatWidget(tenantId: string) {
-  const pathname = usePathname();
   const [status, setStatus] = useState<KineticState>("idle");
   const [messages, setMessages] = useState<Message[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -40,14 +38,11 @@ export function useChatWidget(tenantId: string) {
 
       // 4. Play Unified Voice using Orpheus TTS audio
       if (data.audioBase64) {
-        // FINAL EXORCISM: Prevent Base64 audio during Neural Assembly Lab
-        if (!pathname.includes('/create-agent')) {
-          setStatus("speaking"); // Trigger Harmonic Pulse
-          const audio = new Audio(`data:audio/wav;base64,${data.audioBase64}`);
-          audioRef.current = audio;
-          audio.onended = () => setStatus("idle");
-          await audio.play();
-        }
+        setStatus("speaking"); // Trigger Harmonic Pulse
+        const audio = new Audio(`data:audio/wav;base64,${data.audioBase64}`);
+        audioRef.current = audio;
+        audio.onended = () => setStatus("idle");
+        await audio.play();
       } else {
         setStatus("idle");
       }

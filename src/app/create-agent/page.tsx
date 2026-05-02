@@ -19,6 +19,9 @@ export default function CreateAgent() {
   
   // Global Audio Reference for Exclusive Playback
   const currentAudio = useRef<HTMLAudioElement | null>(null);
+  
+  // State Guard: Prevent standalone Step 1 audio during initialization
+  const isInitialBoot = useRef(true);
 
   // Global Exit & Silence Hook
   const handleGlobalExit = () => {
@@ -49,15 +52,14 @@ export default function CreateAgent() {
     4: "> Deploying agent to infrastructure..."
   };
 
-  // Sequential Audio Chaining - Enhanced Playback Protocol
+  // Strict Relay Implementation - Chained Audio Relay (No Overlap)
   const playChainedAudio = (audioKey: string, audioFile: string, consoleMessage: string, triggerModal?: boolean, nextAudioKey?: string) => {
     // Play-once-per-session check
     if (playedAudio.has(audioKey)) {
       return;
     }
 
-    // FINAL EXORCISM: Global Audio Kill-Switch Reinforcement
-    window.speechSynthesis.cancel(); // Kill browser TTS
+    // EXECUTION PRIORITY: Kill any accidental sounds immediately
     if (currentAudio.current) {
       currentAudio.current.pause();
       currentAudio.current.currentTime = 0;
@@ -71,30 +73,28 @@ export default function CreateAgent() {
       // Store in global ref
       currentAudio.current = audio;
       
-      // Sequential Hook: Add onended event listener for chaining
-      if (nextAudioKey) {
+      // STRICT RELAY: Only chain from tab->step1 during initial boot
+      if (audioKey === 'tab' && nextAudioKey === 'step1' && isInitialBoot.current) {
         audio.onended = () => {
           // Clear the current audio reference
           currentAudio.current = null;
           
-          // Trigger next audio in sequence
-          const audioMap = {
-            'step1': '/ElevenLabs2.mp3',
-            'step2': '/ElevenLabs3.mp3',
-            'step3': '/ElevenLabs4.mp3',
-            'deploy': '/ElevenLabs5.mp3'
-          };
+          // Mark initial boot as complete
+          isInitialBoot.current = false;
           
-          const messageMap = {
-            'step1': '> ANALYZING PERSONALITY MATRIX PARAMETERS...',
-            'step2': '> CALIBRATING SYNTHESIS...',
-            'step3': '> INJECTING KNOWLEDGE...',
-            'deploy': '> AUTHENTICATION REQUIRED...'
-          };
+          // Trigger ElevenLabs2.mp3 directly
+          const step1Audio = new Audio('/ElevenLabs2.mp3');
+          step1Audio.volume = 0.8;
+          currentAudio.current = step1Audio;
           
-          if (audioMap[nextAudioKey as keyof typeof audioMap]) {
-            playChainedAudio(nextAudioKey, audioMap[nextAudioKey as keyof typeof audioMap], messageMap[nextAudioKey as keyof typeof messageMap], nextAudioKey === 'deploy');
-          }
+          step1Audio.play().then(() => {
+            setStatusText('> ANALYZING PERSONALITY MATRIX PARAMETERS...');
+            setPlayedAudio(prev => new Set(prev).add('step1'));
+          }).catch(error => {
+            console.log('Step 1 audio failed:', error);
+            setStatusText('> ANALYZING PERSONALITY MATRIX PARAMETERS...');
+            setPlayedAudio(prev => new Set(prev).add('step1'));
+          });
         };
       }
       
@@ -134,16 +134,21 @@ export default function CreateAgent() {
 
   // Page mount audio - Chain Trigger for Sequential Playback
   useEffect(() => {
-    // FINAL EXORCISM: 50ms delay to allow system to fully silence legacy background hooks
+    // Play ElevenLabs1.mp3 on page mount with sequential chaining to step1
     const timer = setTimeout(() => {
       playChainedAudio('tab', '/ElevenLabs1.mp3', '> INITIALIZING VOCAL HANDSHAKE...', false, 'step1');
-    }, 1050); // 1000ms + 50ms for system silence
+    }, 1000);
     
     return () => clearTimeout(timer);
   }, []);
 
   // Step transition audio triggers - 3-Step Flow (Non-chained for manual navigation)
   useEffect(() => {
+    // STRICT RELAY: Block auto-play during initial boot to prevent premature ElevenLabs2.mp3
+    if (isInitialBoot.current) {
+      return; // Don't play any step audio during initial boot
+    }
+    
     // Trigger audio based on current step without chaining for manual navigation
     if (currentStep === 1) {
       playChainedAudio('step1', '/ElevenLabs2.mp3', '> ANALYZING PERSONALITY MATRIX PARAMETERS...');
@@ -185,6 +190,8 @@ export default function CreateAgent() {
 
   return (
     <div className="min-h-screen bg-cover bg-center bg-no-repeat relative overflow-hidden" style={{ backgroundImage: "url('/home-bg.jpg')" }}>
+      {/* Mobile Dark Overlay for Better Text Contrast */}
+      <div className="absolute inset-0 bg-black/30 md:bg-black/0 pointer-events-none" />
       {/* Premium Navigation Header */}
       <header className="fixed top-0 left-0 right-0 z-50 bg-black/40 backdrop-blur-md border-b border-white/10">
         <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
@@ -236,14 +243,14 @@ export default function CreateAgent() {
       </header>
 
       {/* Agent Assembly Lab */}
-      <div className="min-h-screen flex items-center justify-center p-8 relative z-10">
+      <div className="min-h-screen md:h-screen flex md:items-center md:justify-center p-4 md:p-8 relative z-10 overflow-y-auto">
         <div className="w-full max-w-4xl mx-auto">
           {/* Main Lab Card */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, ease: "easeOut" }}
-            className="relative backdrop-blur-3xl bg-black/40 border border-[#FFD700]/10 rounded-2xl p-8 shadow-2xl shadow-[#FFD700]/20"
+            className="relative backdrop-blur-3xl bg-black/40 border border-[#FFD700]/10 rounded-2xl p-4 md:p-8 shadow-2xl shadow-[#FFD700]/20"
           >
             {/* EXIT LAB Button - Top Right */}
             <motion.button
@@ -322,7 +329,7 @@ export default function CreateAgent() {
                   </p>
                   
                   {/* Cognitive Parameters */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8">
                     <div className="space-y-4">
                       <label className="text-[#FFD700] text-sm font-medium block mb-2">Cognitive Bias</label>
                       <input
@@ -373,7 +380,7 @@ export default function CreateAgent() {
                   </p>
                   
                   {/* Synthesis Models */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
                     {[
                       { name: 'Model Alpha', desc: 'Premium synthesis with advanced neural processing', icon: '⚡' },
                       { name: 'Model Sigma', desc: 'Enhanced vocal range with emotional intelligence', icon: '🎯' }
@@ -416,7 +423,7 @@ export default function CreateAgent() {
                   
                   {/* Drag and Drop Zone with Pulsing Gold Glow */}
                   <div
-                    className="border-2 border-dashed border-[#FFD700]/50 rounded-xl p-12 text-center hover:border-[#FFD700] transition-all duration-300 relative overflow-hidden"
+                    className="border-2 border-dashed border-[#FFD700]/50 rounded-xl p-6 md:p-12 text-center hover:border-[#FFD700] transition-all duration-300 relative overflow-hidden"
                     onDragOver={(e) => {
                       e.preventDefault();
                       e.currentTarget.classList.add('border-[#FFD700]', 'bg-[#FFD700]/10');
@@ -589,6 +596,20 @@ export default function CreateAgent() {
           </motion.div>
         </motion.div>
       )}
+
+      {/* Fixed Bottom Bar - Create Your Agent Tab */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 bg-black/60 backdrop-blur-md border-t border-[#FFD700]/20 md:hidden">
+        <div className="p-4">
+          <motion.button
+            onClick={() => window.location.href = '/create-agent'}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="w-full px-6 py-4 bg-[#FFD700] border border-[#FFD700] rounded-lg text-black font-bold hover:bg-[#FFD700]/90 hover:border-[#FFD700]/90 hover:shadow-[0_0_20px_rgba(255,215,0,0.4)] transition-all duration-300 shadow-lg shadow-[#FFD700]/50"
+          >
+            CREATE YOUR AGENT
+          </motion.button>
+        </div>
+      </div>
     </div>
   );
 }

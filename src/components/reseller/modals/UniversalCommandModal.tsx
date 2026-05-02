@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { usePathname } from 'next/navigation';
 import { mapVisualStyleToPersona } from '@/lib/voice-visual-harmony';
 import { createClient } from '@/lib/supabase/client';
 
@@ -24,7 +23,6 @@ interface UniversalCommandModalProps {
 }
 
 export function UniversalCommandModal({ onClose, resellerSlug }: UniversalCommandModalProps) {
-  const pathname = usePathname();
   const [step, setStep] = useState<Step>('command');
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -157,12 +155,7 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
           URL.revokeObjectURL(audioUrl);
           resolve();
         };
-        // FINAL EXORCISM: Prevent audio during Neural Assembly Lab
-        if (!pathname.includes('/create-agent')) {
-          audio.play().catch(() => resolve());
-        } else {
-          resolve();
-        }
+        audio.play().catch(() => resolve());
       });
     } catch (err) {
       console.error('[Modal TTS] Failed:', err);
