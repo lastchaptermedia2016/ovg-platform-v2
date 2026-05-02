@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { motion } from "framer-motion";
+import Link from "next/link";
 import { Zap, Mic, Brain } from "lucide-react";
 
 // Interactive Particle Canvas Component
@@ -320,19 +321,21 @@ export default function Home() {
         </p>
 
         {/* Create Your Agent Button with Glow-Track Effect */}
-        <motion.button
-          className="relative px-8 py-3 bg-transparent border-2 border-[#D4AF37]/50 text-[#D4AF37] font-semibold rounded-lg overflow-hidden group"
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-        >
+        <Link href="/create-agent">
           <motion.div
-            className="absolute inset-0 bg-[#D4AF37]/10"
-            initial={{ x: "-100%" }}
-            whileHover={{ x: "100%" }}
-            transition={{ duration: 0.5 }}
-          />
-          <span className="relative z-10">Create Your Agent</span>
-        </motion.button>
+            className="relative px-8 py-3 bg-transparent border-2 border-[#D4AF37]/50 text-[#D4AF37] font-semibold rounded-lg overflow-hidden group cursor-pointer"
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+          >
+            <motion.div
+              className="absolute inset-0 bg-[#D4AF37]/10"
+              initial={{ x: "-100%" }}
+              whileHover={{ x: "100%" }}
+              transition={{ duration: 0.5 }}
+            />
+            <span className="relative z-10">Create Your Agent</span>
+          </motion.div>
+        </Link>
       </div>
 
       {/* Feature Grid with Glassmorphism */}
