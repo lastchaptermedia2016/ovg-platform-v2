@@ -36,11 +36,26 @@ function ParticleCanvas() {
       color: Math.random() > 0.5 ? '#0097b2' : '#D4AF37'
     }));
 
-    const handleMouseMove = (e: MouseEvent) => {
-      mouseRef.current = { x: e.clientX, y: e.clientY };
+    const handlePointerMove = (e: MouseEvent | TouchEvent) => {
+      let x: number, y: number;
+      
+      if ('touches' in e && e.touches.length > 0) {
+        // Touch event
+        x = e.touches[0].clientX;
+        y = e.touches[0].clientY;
+      } else {
+        // Mouse event
+        x = (e as MouseEvent).clientX;
+        y = (e as MouseEvent).clientY;
+      }
+      
+      mouseRef.current = { x, y };
     };
 
-    window.addEventListener('mousemove', handleMouseMove);
+    // Unified pointer event listeners for instant touch response
+    window.addEventListener('mousemove', handlePointerMove);
+    window.addEventListener('touchstart', handlePointerMove, { passive: true });
+    window.addEventListener('touchmove', handlePointerMove, { passive: true });
 
     const animate = () => {
       // Clear canvas completely for transparency
@@ -104,7 +119,9 @@ function ParticleCanvas() {
 
     return () => {
       window.removeEventListener('resize', resizeCanvas);
-      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mousemove', handlePointerMove);
+      window.removeEventListener('touchstart', handlePointerMove);
+      window.removeEventListener('touchmove', handlePointerMove);
     };
   }, []);
 
@@ -222,16 +239,16 @@ export default function Home() {
           </div>
           
           {/* Navigation Group: Dual Portal Entry Points */}
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2 sm:space-x-4 flex-wrap">
             {/* Client Portal */}
-            <div className="relative backdrop-blur-sm bg-white/10 border border-white/20 rounded-lg px-4 py-2">
+            <div className="relative backdrop-blur-sm bg-white/10 border border-white/20 rounded-lg px-2 py-1 sm:px-4 sm:py-2">
               <a 
                 href="#"
-                className="px-4 py-2 border border-gray-300/50 text-gray-600 font-medium rounded-lg hover:bg-gray-50 transition-colors duration-200"
+                className="px-2 py-1 sm:px-4 sm:py-2 border border-gray-300/50 text-gray-600 font-medium rounded-lg hover:bg-gray-50 transition-colors duration-200 text-xs sm:text-sm"
               >
                 CLIENT PORTAL
               </a>
-              <span className="absolute -top-6 -right-2 bg-gray-100 text-gray-500 text-xs px-2 py-1 rounded">
+              <span className="absolute -top-5 -right-1 sm:-top-6 sm:-right-2 bg-gray-100 text-gray-500 text-[10px] sm:text-xs px-1 sm:px-2 py-1 rounded">
                 Coming Soon
               </span>
             </div>
@@ -239,7 +256,7 @@ export default function Home() {
             {/* Reseller Portal */}
             <a 
               href="/auth"
-              className="px-6 py-2 border border-[#FFD700] text-white font-semibold rounded-lg hover:bg-[#FFD700]/10 transition-colors duration-200"
+              className="px-3 py-1 sm:px-6 sm:py-2 border border-[#FFD700] text-white font-semibold rounded-lg hover:bg-[#FFD700]/10 transition-colors duration-200 text-xs sm:text-sm"
             >
               RESELLER ACCESS
             </a>
@@ -283,15 +300,15 @@ export default function Home() {
         </h1>
         
         {/* Autonomous Status Loop */}
-        <div className="flex items-center justify-center mb-6">
-          <motion.p className="text-[#FFD700] text-sm font-mono drop-shadow-[0_0_10px_rgba(255,215,0,0.5)] drop-shadow-[0_0_20px_rgba(255,215,0,0.3)]">
+        <div className="flex items-center justify-center mb-4 md:mb-6 px-4">
+          <motion.p className="text-[#FFD700] text-xs sm:text-sm font-mono drop-shadow-[0_0_10px_rgba(255,215,0,0.5)] drop-shadow-[0_0_20px_rgba(255,215,0,0.3)] text-center">
             {statusText}
           </motion.p>
           {isTypingStatus && (
             <motion.span
               animate={{ opacity: [1, 0, 1] }}
               transition={{ duration: 0.8, repeat: Infinity }}
-              className="ml-1 text-[#FFD700] text-sm font-mono drop-shadow-[0_0_10px_rgba(255,215,0,0.5)] drop-shadow-[0_0_20px_rgba(255,215,0,0.3)]"
+              className="ml-1 text-[#FFD700] text-xs sm:text-sm font-mono drop-shadow-[0_0_10px_rgba(255,215,0,0.5)] drop-shadow-[0_0_20px_rgba(255,215,0,0.3)]"
             >
               |
             </motion.span>
