@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Zap, Mic, Brain, Upload, User, Settings, Sparkles, X } from "lucide-react";
+import { Zap, Mic, Brain, Upload, User, Settings, Sparkles, X, Menu } from "lucide-react";
 import StrategySlides from "@/components/StrategySlides";
 import { useRef } from "react";
 
@@ -16,6 +16,7 @@ export default function CreateAgent() {
   const [isStrategyModalOpen, setIsStrategyModalOpen] = useState(false);
   const [playedAudio, setPlayedAudio] = useState<Set<string>>(new Set());
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
   // Global Audio Reference for Exclusive Playback
   const currentAudio = useRef<HTMLAudioElement | null>(null);
@@ -189,9 +190,7 @@ export default function CreateAgent() {
   }, [currentStep]);
 
   return (
-    <div className="min-h-screen bg-cover bg-center bg-no-repeat relative overflow-hidden" style={{ backgroundImage: "url('/home-bg.jpg')" }}>
-      {/* Mobile Dark Overlay for Better Text Contrast */}
-      <div className="absolute inset-0 bg-black/30 md:bg-black/0 pointer-events-none" />
+    <div className="min-h-screen bg-cover bg-center bg-no-repeat relative md:overflow-hidden overflow-y-auto" style={{ backgroundImage: "url('/home-bg.jpg')" }}>
       {/* Premium Navigation Header */}
       <header className="fixed top-0 left-0 right-0 z-50 bg-black/40 backdrop-blur-md border-b border-white/10">
         <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
@@ -216,41 +215,108 @@ export default function CreateAgent() {
             </motion.span>
           </div>
           
-          {/* Navigation Group: Dual Portal Entry Points */}
-          <div className="flex items-center space-x-2 sm:space-x-4 flex-wrap">
-            {/* Client Portal */}
-            <div className="relative backdrop-blur-sm bg-white/10 border border-white/20 rounded-lg px-2 py-1 sm:px-4 sm:py-2">
+          {/* Navigation Group: Desktop + Mobile Hamburger */}
+          <div className="flex items-center space-x-2 sm:space-x-4">
+            {/* Desktop Navigation */}
+            <div className="hidden sm:flex items-center space-x-4 flex-wrap">
+              {/* Client Portal */}
+              <div className="relative backdrop-blur-sm bg-white/10 border border-white/20 rounded-lg px-4 py-2">
+                <Link 
+                  href="/"
+                  className="px-4 py-2 border border-gray-300/50 text-gray-600 font-medium rounded-lg hover:bg-gray-50 transition-colors duration-200 text-sm"
+                >
+                  CLIENT PORTAL
+                </Link>
+                <span className="absolute -top-6 -right-2 bg-gray-100 text-gray-500 text-xs px-2 py-1 rounded">
+                  Coming Soon
+                </span>
+              </div>
+              
+              {/* Reseller Portal */}
               <Link 
-                href="/"
-                className="px-2 py-1 sm:px-4 sm:py-2 border border-gray-300/50 text-gray-600 font-medium rounded-lg hover:bg-gray-50 transition-colors duration-200 text-xs sm:text-sm"
+                href="/auth"
+                className="px-6 py-2 border border-[#FFD700] text-white font-semibold rounded-lg hover:bg-[#FFD700]/10 transition-colors duration-200 text-sm"
               >
-                CLIENT PORTAL
+                RESELLER ACCESS
               </Link>
-              <span className="absolute -top-5 -right-1 sm:-top-6 sm:-right-2 bg-gray-100 text-gray-500 text-[10px] sm:text-xs px-1 sm:px-2 py-1 rounded">
-                Coming Soon
-              </span>
             </div>
             
-            {/* Reseller Portal */}
-            <Link 
-              href="/auth"
-              className="px-3 py-1 sm:px-6 sm:py-2 border border-[#FFD700] text-white font-semibold rounded-lg hover:bg-[#FFD700]/10 transition-colors duration-200 text-xs sm:text-sm"
+            {/* Mobile Hamburger Menu */}
+            <button
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+              className="sm:hidden p-2 text-white hover:text-[#FFD700] transition-colors"
             >
-              RESELLER ACCESS
-            </Link>
+              <Menu className="w-6 h-6" />
+            </button>
           </div>
         </div>
+        
+        {/* Mobile Menu Dropdown */}
+        {isMobileMenuOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="sm:hidden bg-black/80 backdrop-blur-md border-t border-white/10"
+          >
+            <div className="px-6 py-4 space-y-3">
+              {/* Client Portal */}
+              <div className="relative backdrop-blur-sm bg-white/10 border border-white/20 rounded-lg px-4 py-2">
+                <Link 
+                  href="/"
+                  className="block px-4 py-2 border border-gray-300/50 text-gray-600 font-medium rounded-lg hover:bg-gray-50 transition-colors duration-200 text-sm"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                >
+                  CLIENT PORTAL
+                </Link>
+                <span className="absolute -top-5 -right-2 bg-gray-100 text-gray-500 text-xs px-2 py-1 rounded">
+                  Coming Soon
+                </span>
+              </div>
+              
+              {/* Reseller Portal */}
+              <Link 
+                href="/auth"
+                className="block"
+                onClick={() => setIsMobileMenuOpen(false)}
+              >
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  className="w-full px-6 py-2 border border-[#FFD700] text-white font-semibold rounded-lg hover:bg-[#FFD700]/10 transition-colors duration-200 text-sm"
+                >
+                  RESELLER ACCESS
+                </motion.button>
+              </Link>
+            </div>
+          </motion.div>
+        )}
       </header>
 
+      {/* Ticker Tape - Positioned below header for luxury scroll */}
+      <div className="relative z-30 mt-24 bg-black/60 backdrop-blur-sm border-y border-[#FFD700]/10 overflow-hidden">
+        <div className="flex whitespace-nowrap animate-scroll">
+          <span className="inline-block px-4 py-2 text-[#FFD700]/80 text-xs font-mono tracking-wider">
+            NEURAL ASSEMBLY LAB • AI AGENT CREATION • ADVANCED SYNTHESIS • COGNITIVE MAPPING • KNOWLEDGE INJECTION • 
+          </span>
+          <span className="inline-block px-4 py-2 text-[#FFD700]/80 text-xs font-mono tracking-wider">
+            NEURAL ASSEMBLY LAB • AI AGENT CREATION • ADVANCED SYNTHESIS • COGNITIVE MAPPING • KNOWLEDGE INJECTION • 
+          </span>
+          <span className="inline-block px-4 py-2 text-[#FFD700]/80 text-xs font-mono tracking-wider">
+            NEURAL ASSEMBLY LAB • AI AGENT CREATION • ADVANCED SYNTHESIS • COGNITIVE MAPPING • KNOWLEDGE INJECTION • 
+          </span>
+        </div>
+      </div>
+
       {/* Agent Assembly Lab */}
-      <div className="min-h-screen md:h-screen flex md:items-center md:justify-center p-4 md:p-8 relative z-10 overflow-y-auto">
+      <div className="min-h-screen flex items-center justify-center p-8 relative z-10">
         <div className="w-full max-w-4xl mx-auto">
           {/* Main Lab Card */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, ease: "easeOut" }}
-            className="relative backdrop-blur-3xl bg-black/40 border border-[#FFD700]/10 rounded-2xl p-4 md:p-8 shadow-2xl shadow-[#FFD700]/20"
+            className="relative backdrop-blur-3xl bg-black/40 border border-[#FFD700]/10 rounded-2xl p-8 shadow-2xl shadow-[#FFD700]/20"
           >
             {/* EXIT LAB Button - Top Right */}
             <motion.button
@@ -310,8 +376,127 @@ export default function CreateAgent() {
               </div>
             </div>
 
-            {/* Step Content */}
-            <div className="space-y-8">
+            {/* Mobile: Horizontal Carousel */}
+            <div className="block md:hidden overflow-x-auto snap-x snap-mandatory -mx-4 px-4 pb-4">
+              <div className="flex flex-row space-x-4" style={{ width: 'max-content', display: 'flex' }}>
+                {/* Personality Matrix Card */}
+                <div className="w-[85vw] flex-shrink-0 snap-center">
+                  <div className="space-y-3">
+                    <h3 className="text-[#FFD700] text-lg font-light mb-2 flex items-center">
+                      <Zap className="w-5 h-5 mr-2" />
+                      Personality Matrix
+                    </h3>
+                    <p className="text-white/40 font-thin mb-3 text-sm">
+                      Configure cognitive parameters for your AI agent's behavioral patterns.
+                    </p>
+                    
+                    {/* Cognitive Parameters */}
+                    <div className="grid grid-cols-1 gap-3">
+                      <div className="space-y-2">
+                        <label className="text-[#FFD700] text-xs font-medium block mb-1">Cognitive Bias</label>
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          defaultValue="50"
+                          className="w-full h-0.5 bg-[#FFD700]/15 border border-[#FFD700]/20 rounded-full appearance-none cursor-pointer"
+                        />
+                        <div className="flex justify-between text-xs text-white/60 mt-1">
+                          <span>Neutral</span>
+                          <span>Biased</span>
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <label className="text-[#FFD700] text-xs font-medium block mb-1">Reasoning Depth</label>
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          defaultValue="75"
+                          className="w-full h-0.5 bg-[#FFD700]/15 border border-[#FFD700]/20 rounded-full appearance-none cursor-pointer"
+                        />
+                        <div className="flex justify-between text-xs text-white/60 mt-1">
+                          <span>Surface</span>
+                          <span>Deep</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Voice Blueprint Card */}
+                <div className="w-[85vw] flex-shrink-0 snap-center">
+                  <div className="space-y-3">
+                    <h3 className="text-[#FFD700] text-lg font-bold mb-2 flex items-center">
+                      <Mic className="w-5 h-5 mr-2" />
+                      Voice Blueprint
+                    </h3>
+                    <p className="text-white/70 mb-3 text-sm">
+                      Select synthesis protocols for your AI agent's voice generation.
+                    </p>
+                    
+                    {/* Synthesis Models */}
+                    <div className="grid grid-cols-1 gap-2">
+                      {[
+                        { name: 'Model Alpha', desc: 'Premium synthesis with advanced neural processing', icon: '⚡' },
+                        { name: 'Model Sigma', desc: 'Enhanced vocal range with emotional intelligence', icon: '🎯' }
+                      ].map((model, index) => (
+                        <div
+                          key={index}
+                          className="relative bg-black/40 border border-[#FFD700]/30 rounded-lg p-3 cursor-pointer hover:border-[#FFD700]/50 hover:bg-[#FFD700]/10 transition-all duration-300"
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center space-x-2">
+                              <span className="text-xl">{model.icon}</span>
+                              <span className="text-white font-bold text-sm">{model.name}</span>
+                            </div>
+                          </div>
+                          <p className="text-white/60 text-xs">{model.desc}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Knowledge Injection Card */}
+                <div className="w-[85vw] flex-shrink-0 snap-center">
+                  <div className="space-y-3">
+                    <h3 className="text-[#FFD700] text-lg font-bold mb-2 flex items-center">
+                      <Upload className="w-5 h-5 mr-2" />
+                      Knowledge Injection
+                    </h3>
+                    <p className="text-white/70 mb-3 text-sm">
+                      Upload documents to enhance your AI agent's knowledge base.
+                    </p>
+                    
+                    {/* Drag and Drop Zone */}
+                    <div
+                      className="border-2 border-dashed border-[#FFD700]/50 rounded-xl p-4 text-center hover:border-[#FFD700] transition-all duration-300 relative overflow-hidden"
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.currentTarget.classList.add('border-[#FFD700]', 'bg-[#FFD700]/10');
+                      }}
+                      onDragLeave={(e) => {
+                        e.preventDefault();
+                        e.currentTarget.classList.remove('border-[#FFD700]', 'bg-[#FFD700]/10');
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        e.currentTarget.classList.remove('border-[#FFD700]', 'bg-[#FFD700]/10');
+                      }}
+                    >
+                      <Upload className="w-8 h-8 text-[#FFD700]/50 mx-auto mb-2" />
+                      <p className="text-white/60 mb-1 text-sm">Drag and drop your documents here</p>
+                      <p className="text-white/40 text-xs">or click to browse</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Desktop: Step Content */}
+            <div className="hidden md:block space-y-8">
               {/* Step 1: Personality Matrix */}
               {currentStep === 1 && (
                 <motion.div
@@ -329,7 +514,7 @@ export default function CreateAgent() {
                   </p>
                   
                   {/* Cognitive Parameters */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     <div className="space-y-4">
                       <label className="text-[#FFD700] text-sm font-medium block mb-2">Cognitive Bias</label>
                       <input
@@ -380,7 +565,7 @@ export default function CreateAgent() {
                   </p>
                   
                   {/* Synthesis Models */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {[
                       { name: 'Model Alpha', desc: 'Premium synthesis with advanced neural processing', icon: '⚡' },
                       { name: 'Model Sigma', desc: 'Enhanced vocal range with emotional intelligence', icon: '🎯' }
@@ -423,7 +608,7 @@ export default function CreateAgent() {
                   
                   {/* Drag and Drop Zone with Pulsing Gold Glow */}
                   <div
-                    className="border-2 border-dashed border-[#FFD700]/50 rounded-xl p-6 md:p-12 text-center hover:border-[#FFD700] transition-all duration-300 relative overflow-hidden"
+                    className="border-2 border-dashed border-[#FFD700]/50 rounded-xl p-12 text-center hover:border-[#FFD700] transition-all duration-300 relative overflow-hidden"
                     onDragOver={(e) => {
                       e.preventDefault();
                       e.currentTarget.classList.add('border-[#FFD700]', 'bg-[#FFD700]/10');
@@ -448,7 +633,7 @@ export default function CreateAgent() {
                         repeat: Infinity,
                         ease: "easeInOut"
                       }}
-                      className="absolute inset-0 bg-gradient-to-r from-[#FFD700]/20 via-[#FFD700]/10 to-[#FFD700]/20 rounded-xl"
+                      className="absolute inset-0 bg-gradient-to-r from-[#FFD700]/10 to-[#FFD700]/5 rounded-xl"
                     />
                     
                     <motion.div
@@ -456,11 +641,9 @@ export default function CreateAgent() {
                       transition={{ duration: 2, repeat: Infinity }}
                       className="relative z-10"
                     >
-                      <Upload className="w-16 h-16 mb-6 text-[#FFD700] mx-auto" />
-                      <p className="text-xl font-bold mb-3 text-white">Drag & Drop Knowledge Vectors</p>
-                      <p className="text-sm text-white/60">
-                        PDFs, documents, or data files for neural processing
-                      </p>
+                      <Upload className="w-16 h-16 text-[#FFD700]/50 mx-auto mb-4 relative z-10" />
+                      <p className="text-white/60 mb-2 relative z-10">Drag and drop your documents here</p>
+                      <p className="text-white/40 text-sm relative z-10">or click to browse</p>
                     </motion.div>
                   </div>
                 </motion.div>
@@ -596,20 +779,6 @@ export default function CreateAgent() {
           </motion.div>
         </motion.div>
       )}
-
-      {/* Fixed Bottom Bar - Create Your Agent Tab */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 bg-black/60 backdrop-blur-md border-t border-[#FFD700]/20 md:hidden">
-        <div className="p-4">
-          <motion.button
-            onClick={() => window.location.href = '/create-agent'}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            className="w-full px-6 py-4 bg-[#FFD700] border border-[#FFD700] rounded-lg text-black font-bold hover:bg-[#FFD700]/90 hover:border-[#FFD700]/90 hover:shadow-[0_0_20px_rgba(255,215,0,0.4)] transition-all duration-300 shadow-lg shadow-[#FFD700]/50"
-          >
-            CREATE YOUR AGENT
-          </motion.button>
-        </div>
-      </div>
     </div>
   );
 }
