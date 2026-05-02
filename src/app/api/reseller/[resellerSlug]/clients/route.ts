@@ -1,15 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createClient as createServiceClient } from '@supabase/supabase-js';
+import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
+
+// Production Excellence: Zod schema for parameter validation
+const ResellerSlugSchema = z.object({
+  resellerSlug: z.string().min(1).regex(/^[a-zA-Z0-9-_]+$/, {
+    message: 'Reseller slug must contain only alphanumeric characters, hyphens, and underscores'
+  })
+});
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ resellerSlug: string }> }
 ) {
   try {
-    const { resellerSlug } = await params;
+    const paramsData = await params;
+    
+    // Validate resellerSlug parameter
+    const validationResult = ResellerSlugSchema.safeParse(paramsData);
+    if (!validationResult.success) {
+      console.error('[ResellerClients] Parameter validation error:', validationResult.error.flatten());
+      return NextResponse.json({ 
+        error: 'Invalid reseller slug', 
+        details: validationResult.error.flatten() 
+      }, { status: 400 });
+    }
+
+    const { resellerSlug } = validationResult.data;
     
     // First try with user session (for RLS compliance)
     const supabase = await createClient();

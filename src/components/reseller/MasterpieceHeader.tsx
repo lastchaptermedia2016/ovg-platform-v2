@@ -1,6 +1,8 @@
 'use client';
 
 import { Mic } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { SignOutButton } from './SignOutButton';
 
 interface MasterpieceHeaderProps {
   isListening?: boolean;
@@ -40,9 +42,25 @@ export function MasterpieceHeader({
       `}</style>
       
       <nav className="w-full flex justify-between items-center px-6 py-2 backdrop-blur-md bg-black/60 border border-white/5 rounded-2xl pointer-events-none">
-        {/* Left Side - Gold 3D-styled lettering */}
-        <div className="text-[9px] font-bold tracking-[0.6em] text-white/40 uppercase animate-signature-pulse pointer-events-auto">
-          POWERED BY PIERRE
+        {/* Left Side - POWERED BY PIERRE AI */}
+        <div className="flex items-center space-x-2 pointer-events-auto">
+          <span className="text-white/60 text-[10px] font-light tracking-wider uppercase">
+            POWERED BY PIERRE
+          </span>
+          <motion.span
+            animate={{
+              scale: [1, 1.1, 1],
+              opacity: [0.8, 1, 0.8]
+            }}
+            transition={{
+              duration: 2,
+              repeat: Infinity,
+              ease: "easeInOut"
+            }}
+            className="text-[#FFD700] text-[10px] font-bold tracking-wider uppercase drop-shadow-[0_0_15px_rgba(255,215,0,0.5)]"
+          >
+            AI
+          </motion.span>
         </div>
 
         {/* Center: Voice Status Indicator - Clickable Mic - Glass Box with Gemstone Effect */}
@@ -109,13 +127,15 @@ export function MasterpieceHeader({
         </div>
 
         {/* Right Side */}
-        <div className="flex items-center pointer-events-auto">
-          <span className="text-[#FFD700] font-black text-lg animate-pulse-gold">
-            AI
+        <div className="flex items-center gap-3 pointer-events-auto">
+          <SignOutButton />
+          <div className="h-3 w-[1px] bg-white/20" />
+          <span className="text-white/80 text-[10px] font-medium tracking-wider uppercase">
+            OVG-Engage
           </span>
-          <div className="h-3 w-[1px] bg-white/20 mx-4" />
-          <span className="text-white/90 font-light tracking-[0.4em] text-[9px] uppercase">
-            RESELLER DASHBOARD
+          <div className="h-3 w-[1px] bg-white/20" />
+          <span className="text-cyan-400 text-[10px] font-bold tracking-wider uppercase">
+            RESELLER
           </span>
         </div>
       </nav>

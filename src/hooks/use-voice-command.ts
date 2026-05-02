@@ -66,6 +66,8 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   const abortControllerRef = useRef<AbortController | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const isProcessingRef = useRef(false);
+  const ttsAudioContextRef = useRef<AudioContext | null>(null);
+  const ttsAudioSourceRef = useRef<AudioBufferSourceNode | null>(null);
 
   // Cleanup function
   const cleanup = useCallback(() => {
@@ -81,6 +83,22 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     }
     audioContextRef.current = null;
     analyserRef.current = null;
+
+    // Production Excellence: Enhanced TTS audio context cleanup
+    if (ttsAudioSourceRef.current) {
+      try {
+        ttsAudioSourceRef.current.stop();
+        ttsAudioSourceRef.current.disconnect();
+      } catch (e) {
+        // Ignore errors during cleanup
+      }
+      ttsAudioSourceRef.current = null;
+    }
+
+    if (ttsAudioContextRef.current?.state !== 'closed') {
+      ttsAudioContextRef.current?.close();
+    }
+    ttsAudioContextRef.current = null;
 
     // Stop all tracks
     streamRef.current?.getTracks().forEach(track => track.stop());
@@ -237,10 +255,29 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
 
       const audioBuffer = await ttsResponse.arrayBuffer();
       
-      // Play audio
+      // Production Excellence: Enhanced TTS audio playback with proper memory management
       setIsSpeaking(true);
+      
+      // Clean up any existing TTS audio context
+      if (ttsAudioContextRef.current?.state !== 'closed') {
+        ttsAudioContextRef.current?.close();
+      }
+      if (ttsAudioSourceRef.current) {
+        try {
+          ttsAudioSourceRef.current.stop();
+          ttsAudioSourceRef.current.disconnect();
+        } catch (e) {
+          // Ignore errors during cleanup
+        }
+      }
+      
+      // Create new audio context for TTS
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      ttsAudioContextRef.current = audioContext;
+      
       const audioSource = audioContext.createBufferSource();
+      ttsAudioSourceRef.current = audioSource;
+      
       const audioBufferData = await audioContext.decodeAudioData(audioBuffer);
       
       audioSource.buffer = audioBufferData;
@@ -248,7 +285,18 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       
       audioSource.onended = () => {
         setIsSpeaking(false);
+        // Clean up TTS audio resources
+        try {
+          audioSource.stop();
+          audioSource.disconnect();
+        } catch (e) {
+          // Ignore errors during cleanup
+        }
         audioContext.close();
+        
+        // Clear refs
+        ttsAudioSourceRef.current = null;
+        ttsAudioContextRef.current = null;
       };
       
       audioSource.start();

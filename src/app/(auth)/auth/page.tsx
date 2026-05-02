@@ -1,9 +1,18 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
+import { motion, AnimatePresence } from 'framer-motion';
+
+// Production Excellence: Stable Neural Link Messages
+const NEURAL_MESSAGES = [
+  "Neural Link: Establishing secure connection...",
+  "Hannah: Preparing your intelligent workspace...",
+  "AI Core: Optimizing brand architecture...",
+  "System Ready: Your reseller platform awaits..."
+];
 
 export default function AuthPage() {
   const [email, setEmail] = useState('');
@@ -12,9 +21,76 @@ export default function AuthPage() {
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [currentGreeting, setCurrentGreeting] = useState(0);
+  const [displayedText, setDisplayedText] = useState('');
+  const [isTyping, setIsTyping] = useState(true);
   
   const router = useRouter();
   const supabase = createClient();
+
+  // Production Excellence: Memoized messages for stability
+  const greetings = useMemo(() => NEURAL_MESSAGES, []);
+
+  // Production Excellence: Live slug generation
+  const generateSlug = (name: string): string => {
+    return name.toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '') // Remove special characters
+      .replace(/\s+/g, '-') // Replace spaces with hyphens
+      .replace(/-+/g, '-') // Replace multiple hyphens with single
+      .trim() || 'your-company';
+  };
+
+  // Production Excellence: Typewriter Effect Implementation
+  useEffect(() => {
+    const currentMessage = greetings[currentGreeting];
+    let currentIndex = 0;
+    let typingInterval: NodeJS.Timeout;
+    let deleteTimeout: NodeJS.Timeout;
+
+    const typeMessage = () => {
+      if (currentIndex <= currentMessage.length) {
+        setDisplayedText(currentMessage.slice(0, currentIndex));
+        currentIndex++;
+        typingInterval = setTimeout(typeMessage, 50);
+      } else {
+        setIsTyping(false);
+        // Wait before starting next message
+        deleteTimeout = setTimeout(() => {
+          setIsTyping(true);
+          setCurrentGreeting((prev) => (prev + 1) % greetings.length);
+        }, 3000);
+      }
+    };
+
+    typeMessage();
+
+    return () => {
+      clearTimeout(typingInterval);
+      clearTimeout(deleteTimeout);
+    };
+  }, [currentGreeting, greetings]);
+
+  // Production Excellence: Active session guard for auto-redirect
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (session) {
+          console.log("OVG-PLATFORM-V2: Active session detected, auto-redirecting to dashboard");
+          
+          // Get user's reseller slug from metadata or fetch from database
+          const userSlug = session.user.user_metadata?.reseller_slug || 'acme-corp';
+          router.push(`/reseller/${userSlug}/clients`);
+        }
+      } catch (error) {
+        console.error("OVG-PLATFORM-V2: Session check error:", error);
+      }
+    };
+
+    checkSession();
+  }, [router, supabase]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -58,19 +134,39 @@ export default function AuthPage() {
     setIsLoading(true);
     setError(null);
 
-    // Validate passwords match
+    // Validate passwords match and company name provided
     if (password !== confirmPassword) {
       setError('Passwords do not match');
       setIsLoading(false);
       return;
     }
 
-    try {
-      console.log("OVG-PLATFORM-V2: Sign up attempt started");
+    if (!companyName.trim()) {
+      setError('Company name is required for reseller accounts');
+      setIsLoading(false);
+      return;
+    }
 
-      const { data: { session }, error: authError } = await supabase.auth.signUp({
+    try {
+      console.log("OVG-PLATFORM-V2: Reseller sign up attempt started");
+
+      // Generate slug from company name for database trigger
+      const slug = companyName.toLowerCase()
+        .replace(/[^a-z0-9\s-]/g, '') // Remove special characters
+        .replace(/\s+/g, '-') // Replace spaces with hyphens
+        .replace(/-+/g, '-') // Replace multiple hyphens with single
+        .trim();
+
+      const { data, error: authError } = await supabase.auth.signUp({
         email,
         password,
+        options: {
+          data: {
+            company_name: companyName.trim(),
+            role: 'reseller',
+            reseller_slug: slug,
+          }
+        }
       });
 
       if (authError) {
@@ -79,9 +175,16 @@ export default function AuthPage() {
         return;
       }
 
-      if (session) {
-        console.log("OVG-PLATFORM-V2: Sign up successful, redirecting to dashboard");
-        router.push('/clients');
+      // Production Excellence: Duplicate detection
+      if (data.user && (!data.user.identities || data.user.identities.length === 0)) {
+        console.log("OVG-PLATFORM-V2: Duplicate account detected");
+        setError('An account with this email already exists. Please sign in.');
+        return;
+      }
+
+      if (data.session) {
+        console.log("OVG-PLATFORM-V2: Reseller account created successfully, redirecting to dashboard");
+        router.push(`/reseller/${slug}/clients`);
       } else {
         console.log("OVG-PLATFORM-V2: Sign up requires email confirmation");
         setError('Please check your email to confirm your account.');
@@ -96,9 +199,55 @@ export default function AuthPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-black via-gray-900 to-black flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <div className="bg-black/50 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+    <div className="min-h-screen relative flex flex-col justify-center p-4">
+      {/* Production Excellence: Raw Background Image - No Overlays */}
+      <div 
+        className="absolute inset-0 bg-cover bg-center bg-no-repeat"
+        style={{
+          backgroundImage: "url('/reseller-bg.jpg')",
+          backgroundSize: 'cover',
+        }}
+      />
+      
+      {/* Production Excellence: Fixed Branding Header */}
+      <header className="fixed top-0 left-0 right-0 z-20 bg-black/40 backdrop-blur-md border-b border-white/10">
+        <div className="max-w-7xl mx-auto px-6 py-3 flex justify-between items-center">
+          {/* Left Branding: POWERED BY PIERRE AI */}
+          <div className="flex items-center space-x-2">
+            <span className="text-white/60 text-[10px] font-light tracking-wider uppercase">
+              POWERED BY PIERRE
+            </span>
+            <motion.span
+              animate={{
+                scale: [1, 1.1, 1],
+                opacity: [0.8, 1, 0.8]
+              }}
+              transition={{
+                duration: 2,
+                repeat: Infinity,
+                ease: "easeInOut"
+              }}
+              className="text-[#FFD700] text-[10px] font-bold tracking-wider uppercase drop-shadow-[0_0_15px_rgba(255,215,0,0.5)]"
+            >
+              AI
+            </motion.span>
+          </div>
+          
+          {/* Right Branding: OVG-Engage RESELLER */}
+          <div className="flex items-center space-x-4">
+            <span className="text-white/80 text-[10px] font-medium tracking-wider uppercase">
+              OVG-Engage
+            </span>
+            <div className="w-px h-3 bg-white/20" />
+            <span className="text-cyan-400 text-[10px] font-bold tracking-wider uppercase">
+              RESELLER
+            </span>
+          </div>
+        </div>
+      </header>
+      
+      <div className="w-full max-w-md relative z-10 mt-16">
+        <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl overflow-hidden">
           {/* Header */}
           <div className="p-8 text-center">
             <div className="mb-6">
@@ -106,15 +255,44 @@ export default function AuthPage() {
                 <span className="text-white text-2xl font-bold">OVG</span>
               </div>
             </div>
-            <h1 className="text-2xl font-light text-white mb-2">
-              {mode === 'signin' ? 'Welcome Back' : 'Create Account'}
-            </h1>
-            <p className="text-white/60 text-sm">
-              {mode === 'signin' 
-                ? 'Sign in to access your reseller dashboard'
-                : 'Sign up to start managing your clients'
-              }
-            </p>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.8, ease: "easeInOut" }}
+              className="mb-4"
+            >
+              <h1 className="text-2xl font-light text-white mb-2">
+                {mode === 'signin' ? 'Welcome Back' : 'Create Account'}
+              </h1>
+              <div className="flex items-center justify-center">
+                <p className="text-cyan-400 text-sm font-mono drop-shadow-[0_0_10px_rgba(0,255,255,0.5)] drop-shadow-[0_0_20px_rgba(0,255,255,0.3)]">
+                  {displayedText}
+                </p>
+                {isTyping && (
+                  <motion.span
+                    animate={{ opacity: [1, 0, 1] }}
+                    transition={{ duration: 0.8, repeat: Infinity }}
+                    className="ml-1 text-cyan-400 text-sm font-mono drop-shadow-[0_0_10px_rgba(0,255,255,0.5)] drop-shadow-[0_0_20px_rgba(0,255,255,0.3)]"
+                  >
+                    |
+                  </motion.span>
+                )}
+              </div>
+            </motion.div>
+            
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 0.5, duration: 0.8 }}
+              className="mt-4"
+            >
+              <p className="text-white/60 text-sm">
+                {mode === 'signin' 
+                  ? 'Sign in to access your reseller dashboard'
+                  : 'Sign up to start managing your clients'
+                }
+              </p>
+            </motion.div>
           </div>
 
           {/* Mode Toggle */}
@@ -180,21 +358,53 @@ export default function AuthPage() {
               </div>
 
               {mode === 'signup' && (
-                <div>
-                  <label className="block text-sm font-medium text-white/80 mb-2">
-                    Confirm Password
-                  </label>
-                  <input
-                    type="password"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    autoComplete="new-password"
-                    className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-cyan-400 focus:bg-white/10 transition-all duration-200"
-                    placeholder="Confirm your password"
-                    required
-                    disabled={isLoading}
-                  />
-                </div>
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-white/80 mb-2">
+                      Company Name
+                    </label>
+                    <input
+                      type="text"
+                      value={companyName}
+                      onChange={(e) => setCompanyName(e.target.value)}
+                      autoComplete="organization"
+                      className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-cyan-400 focus:bg-white/10 transition-all duration-200"
+                      placeholder="Enter your company name"
+                      required
+                      disabled={isLoading}
+                    />
+                    {companyName && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.3, ease: "easeOut" }}
+                        className="mt-2 inline-flex items-center px-3 py-1 rounded-full bg-gradient-to-r from-cyan-500/20 to-blue-500/20 border border-cyan-400/30 shadow-lg shadow-cyan-400/20"
+                      >
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 bg-cyan-400 rounded-full animate-pulse shadow-[0_0_8px_rgba(6,182,212,0.8)]" />
+                          <span className="text-xs text-cyan-300 font-mono">
+                            reseller/{generateSlug(companyName)}
+                          </span>
+                        </div>
+                      </motion.div>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-white/80 mb-2">
+                      Confirm Password
+                    </label>
+                    <input
+                      type="password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      autoComplete="new-password"
+                      className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:outline-none focus:border-cyan-400 focus:bg-white/10 transition-all duration-200"
+                      placeholder="Confirm your password"
+                      required
+                      disabled={isLoading}
+                    />
+                  </div>
+                </>
               )}
 
               {error && (
