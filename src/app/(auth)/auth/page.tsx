@@ -71,16 +71,59 @@ export default function AuthPage() {
     };
   }, [currentGreeting, greetings]);
 
-  // Production Excellence: Active session guard for auto-redirect
+  // Production Excellence: Active session guard with metadata fix
   useEffect(() => {
     const checkSession = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         
         if (session) {
-          console.log("OVG-PLATFORM-V2: Active session detected, auto-redirecting to dashboard");
+          console.log("OVG-PLATFORM-V2: Active session detected, checking metadata");
           
-          // Get user's reseller slug from metadata or fetch from database
+          // Check if user has reseller_slug metadata
+          if (!session.user.user_metadata?.reseller_slug) {
+            console.log("OVG-PLATFORM-V2: User missing reseller_slug, attempting to fix metadata");
+            
+            // Try to fix metadata automatically
+            try {
+              const response = await fetch('/api/auth/fix-metadata', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+              });
+              
+              if (response.ok) {
+                const data = await response.json();
+                console.log("OVG-PLATFORM-V2: Tenant created, slug:", data.slug);
+                
+                // If client-side update is needed, update user metadata
+                if (data.needsClientUpdate) {
+                  const { error: updateError } = await supabase.auth.updateUser({
+                    data: { 
+                      user_metadata: { 
+                        reseller_slug: data.slug,
+                        role: 'reseller'
+                      } 
+                    }
+                  });
+                  
+                  if (updateError) {
+                    console.error("OVG-PLATFORM-V2: Failed to update client metadata:", updateError);
+                    // Still redirect - tenant record exists
+                  } else {
+                    console.log("OVG-PLATFORM-V2: Client metadata updated successfully");
+                  }
+                }
+                
+                console.log("OVG-PLATFORM-V2: Redirecting to dashboard:", data.slug);
+                router.push(`/reseller/${data.slug}/clients`);
+                return;
+              }
+            } catch (fixError) {
+              console.error("OVG-PLATFORM-V2: Failed to auto-fix metadata:", fixError);
+            }
+          }
+          
+          // Get user's reseller slug from metadata or use fallback
           const userSlug = session.user.user_metadata?.reseller_slug || 'acme-corp';
           router.push(`/reseller/${userSlug}/clients`);
         }
@@ -200,7 +243,7 @@ export default function AuthPage() {
 
   return (
     <div className="min-h-screen relative flex flex-col justify-center p-4">
-      {/* Production Excellence: Raw Background Image - No Overlays */}
+      {/* Production Excellence: Original Background Image - No Overlays */}
       <div 
         className="absolute inset-0 bg-cover bg-center bg-no-repeat"
         style={{

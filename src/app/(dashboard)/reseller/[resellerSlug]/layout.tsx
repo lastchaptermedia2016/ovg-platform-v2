@@ -1,14 +1,81 @@
 import { ReactNode } from "react";
+import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
 import { BrandingFooter } from "@/components/reseller/BrandingFooter";
 
-export default function ResellerLayout({
+// Production Excellence: Critical Security - Server-side Authorization Check
+async function verifyResellerAccess(resellerSlug: string) {
+  try {
+    const supabase = await createClient();
+    
+    // Get authenticated user
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    
+    if (authError || !user) {
+      console.error("OVG-PLATFORM-V2: AUTH ERROR - No authenticated user found");
+      return { authorized: false, redirectTo: "/auth" };
+    }
+    
+    // Extract user's reseller_slug from metadata
+    const userResellerSlug = user.user_metadata?.reseller_slug;
+    
+    if (!userResellerSlug) {
+      console.log("OVG-PLATFORM-V2: User missing reseller_slug metadata - redirecting to fix");
+      
+      // Generate default slug and redirect to auth page for metadata fix
+      const defaultSlug = user.email?.split('@')[0]?.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-') || 'dashboard';
+      console.log("OVG-PLATFORM-V2: User needs metadata fix, redirecting to auth");
+      return { authorized: false, redirectTo: "/auth" };
+    }
+    
+    // Critical Security: Compare URL slug with user's authorized slug
+    if (userResellerSlug !== resellerSlug) {
+      console.error("OVG-PLATFORM-V2: SECURITY BREACH ATTEMPT - User", user.id, 
+        "tried to access reseller", resellerSlug, "but is authorized for", userResellerSlug);
+      return { authorized: false, redirectTo: `/reseller/${userResellerSlug}/clients` };
+    }
+    
+    // Additional verification: Check if user exists in tenants table (may be missing for legacy users)
+    const { data: tenantData, error: tenantError } = await supabase
+      .from("tenants")
+      .select("id, reseller_id")
+      .eq("reseller_id", user.id)
+      .single();
+    
+    if (tenantError || !tenantData) {
+      console.log("OVG-PLATFORM-V2: User missing from tenants table - will be auto-created");
+      // Don't fail - the auth page will handle tenant creation
+      return { authorized: true, redirectTo: null };
+    }
+    
+    console.log("OVG-PLATFORM-V2: Security check passed for user", user.id, "reseller", resellerSlug);
+    return { authorized: true, redirectTo: null };
+    
+  } catch (error) {
+    console.error("OVG-PLATFORM-V2: CRITICAL SECURITY ERROR:", error);
+    return { authorized: false, redirectTo: "/auth" };
+  }
+}
+
+export default async function ResellerLayout({
   children,
+  params,
 }: {
   children: ReactNode;
+  params: Promise<{ resellerSlug: string }>;
 }) {
+  // Production Excellence: Execute security check before any rendering
+  const { resellerSlug } = await params;
+  const securityCheck = await verifyResellerAccess(resellerSlug);
+  
+  // Critical Security: Redirect unauthorized access immediately
+  if (!securityCheck.authorized && securityCheck.redirectTo) {
+    redirect(securityCheck.redirectTo);
+  }
+  
   return (
     <>
-      {/* Fixed Background Lock */}
+      {/* Fixed Background Lock - Original Background */}
       <div 
         className="fixed top-0 left-0 w-[100vw] h-[100vh] z-[-10]"
         style={{
