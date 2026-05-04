@@ -6,9 +6,6 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { motion, AnimatePresence } from 'framer-motion';
 
-// Pre-load Strategy: Global audio instance for instant playback
-const authAudio = new Audio('/ElevenLabs6.mp3');
-authAudio.preload = 'auto';
 
 // Production Excellence: Stable Neural Link Messages
 const NEURAL_MESSAGES = [
@@ -75,6 +72,7 @@ export default function AuthPage() {
     };
   }, [currentGreeting, greetings]);
 
+  
   // Production Excellence: Active session guard with metadata fix
   useEffect(() => {
     const checkSession = async () => {

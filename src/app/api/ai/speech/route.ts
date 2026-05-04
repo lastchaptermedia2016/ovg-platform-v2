@@ -2,7 +2,9 @@ import Groq from "groq-sdk";
 
 export const dynamic = 'force-dynamic'; // Prevents build-time API key errors
 
-console.log("OVG-PLATFORM-V2: Voice identity updated to Hannah.");
+if (typeof window !== 'undefined') {
+  console.log("OVG-PLATFORM-V2: Voice identity updated to Hannah.");
+}
 
 export async function POST(req: Request) {
   try {

@@ -679,10 +679,12 @@ export default function CreateAgent() {
 
               <div className="space-y-3">
                 <motion.button
-                  onClick={async () => {
-                    // Trigger Protocol: Play audio first
-                    const audio = new Audio('/ElevenLabs6.mp3');
-                    await audio.play();
+                  onClick={() => {
+                    // Safe Trigger: Play audio with client-side check
+                    if (typeof window !== 'undefined') {
+                      const audio = new Audio('/ElevenLabs6.mp3');
+                      audio.play().catch(e => console.error("Audio block:", e));
+                    }
                     // Seamless Transition: Navigate after audio starts
                     setTimeout(() => router.push('/auth'), 150);
                   }}
@@ -694,10 +696,12 @@ export default function CreateAgent() {
                 </motion.button>
                 
                 <motion.button
-                  onClick={async () => {
-                    // Trigger Protocol: Play audio first
-                    const audio = new Audio('/ElevenLabs6.mp3');
-                    await audio.play();
+                  onClick={() => {
+                    // Safe Trigger: Play audio with client-side check
+                    if (typeof window !== 'undefined') {
+                      const audio = new Audio('/ElevenLabs6.mp3');
+                      audio.play().catch(e => console.error("Audio block:", e));
+                    }
                     // Seamless Transition: Navigate after audio starts
                     setTimeout(() => router.push('/auth'), 150);
                   }}
