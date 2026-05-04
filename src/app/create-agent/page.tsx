@@ -466,7 +466,7 @@ export default function CreateAgent() {
             </div>
 
             {/* Navigation Buttons */}
-            <div className="flex justify-between items-center pt-8">
+            <div className="flex flex-col sm:flex-row justify-between items-center pt-8 space-y-4 sm:space-y-0 sm:space-x-4">
               <div className="flex space-x-4">
                 <button
                   onClick={() => setCurrentStep(Math.max(1, currentStep - 1))}
@@ -482,7 +482,7 @@ export default function CreateAgent() {
                   onClick={() => setCurrentStep(currentStep + 1)}
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
-                  className="px-8 py-4 bg-[#FFD700] border border-[#FFD700] rounded-lg text-black font-black hover:bg-[#FFD700]/90 hover:border-[#FFD700]/90 hover:shadow-[0_0_20px_rgba(255,215,0,0.4)] transition-all duration-300 shadow-lg shadow-[#FFD700]/50"
+                  className="w-full px-8 py-4 bg-[#FFD700] border border-[#FFD700] rounded-lg text-black text-sm font-black hover:bg-[#FFD700]/90 hover:border-[#FFD700]/90 hover:shadow-[0_0_20px_rgba(255,215,0,0.4)] transition-all duration-300 shadow-lg shadow-[#FFD700]/50"
                 >
                   DEPLOY AGENT TO INFRASTRUCTURE
                 </motion.button>
