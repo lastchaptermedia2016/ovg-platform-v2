@@ -16,12 +16,52 @@ export default function CreateAgent() {
   const [isStrategyModalOpen, setIsStrategyModalOpen] = useState(false);
   const [playedAudio, setPlayedAudio] = useState<Set<string>>(new Set());
   const [showAuthModal, setShowAuthModal] = useState(false);
-  
+  const [showUnmuteHint, setShowUnmuteHint] = useState(false);
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
+
   // Global Audio Reference for Exclusive Playback
   const currentAudio = useRef<HTMLAudioElement | null>(null);
-  
+  const audioContext = useRef<AudioContext | null>(null);
+
   // State Guard: Prevent standalone Step 1 audio during initialization
   const isInitialBoot = useRef(true);
+
+  // Initialize Audio Context and setup iPad compatibility
+  useEffect(() => {
+    // Initialize Web Audio API
+    audioContext.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    
+    // Resume audio context on user interaction
+    const unlockAudio = async () => {
+      if (audioContext.current && audioContext.current.state === 'suspended') {
+        try {
+          await audioContext.current.resume();
+          setAudioUnlocked(true);
+          setShowUnmuteHint(false);
+        } catch (error) {
+          console.log('Audio context resume failed:', error);
+          setShowUnmuteHint(true);
+        }
+      }
+    };
+
+    // Add event listeners for user interaction
+    const handleUserInteraction = () => {
+      unlockAudio();
+      // Play a silent audio to unlock hardware
+      const silentAudio = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAAAQAEAAEAfAAAQAQABAAgAZGF0YQAAAAA=');
+      silentAudio.volume = 0;
+      silentAudio.play().catch(() => {});
+    };
+
+    window.addEventListener('touchstart', handleUserInteraction, { once: true });
+    window.addEventListener('click', handleUserInteraction, { once: true });
+
+    return () => {
+      window.removeEventListener('touchstart', handleUserInteraction);
+      window.removeEventListener('click', handleUserInteraction);
+    };
+  }, []);
 
   // Global Exit & Silence Hook
   const handleGlobalExit = () => {
@@ -98,33 +138,50 @@ export default function CreateAgent() {
         };
       }
       
-      audio.play().then(() => {
-        // Update console feed
-        setStatusText(consoleMessage);
-        // Mark as played
-        setPlayedAudio(prev => new Set(prev).add(audioKey));
-        
-        // Trigger modal if specified (for deploy stage)
-        if (triggerModal) {
-          setTimeout(() => {
+      // Enhanced audio play with iPad compatibility
+      const playAudio = async () => {
+        try {
+          // Check if audio context is available and resume if needed
+          if (audioContext.current && audioContext.current.state === 'suspended') {
+            await audioContext.current.resume();
+          }
+          
+          await audio.play();
+          
+          // Update console feed
+          setStatusText(consoleMessage);
+          // Mark as played
+          setPlayedAudio(prev => new Set(prev).add(audioKey));
+          setShowUnmuteHint(false);
+          
+          // Trigger modal if specified (for deploy stage)
+          if (triggerModal) {
+            setTimeout(() => {
+              setShowAuthModal(true);
+            }, 500);
+          }
+        } catch (error) {
+          console.log(`Audio playback failed for ${audioKey}:`, error);
+          // Show unmute hint for iPad users
+          setShowUnmuteHint(true);
+          // Still update console and mark as played to prevent retries
+          setStatusText(consoleMessage);
+          setPlayedAudio(prev => new Set(prev).add(audioKey));
+          
+          if (triggerModal) {
             setShowAuthModal(true);
-          }, 500);
+          }
         }
-      }).catch(error => {
-        console.log(`Audio playback failed for ${audioKey}:`, error);
-        // Still update console and mark as played to prevent retries
-        setStatusText(consoleMessage);
-        setPlayedAudio(prev => new Set(prev).add(audioKey));
-        
-        if (triggerModal) {
-          setShowAuthModal(true);
-        }
-      });
+      };
+      
+      // Call the enhanced play function
+      playAudio();
     } catch (error) {
       console.log(`Audio system error for ${audioKey}:`, error);
       // Ensure UI remains functional
       setStatusText(consoleMessage);
       setPlayedAudio(prev => new Set(prev).add(audioKey));
+      setShowUnmuteHint(true);
       
       if (triggerModal) {
         setShowAuthModal(true);
@@ -190,6 +247,25 @@ export default function CreateAgent() {
 
   return (
     <div className="min-h-screen bg-cover bg-center bg-no-repeat relative overflow-hidden" style={{ backgroundImage: "url('/home-bg.jpg')" }}>
+      {/* Unmute Hint for iPad Users */}
+      {showUnmuteHint && (
+        <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 bg-black/80 backdrop-blur-md border border-[#FFD700]/30 rounded-lg p-4 max-w-sm">
+          <div className="flex items-center space-x-3">
+            <div className="text-[#FFD700] text-2xl">🔊</div>
+            <div className="flex-1">
+              <p className="text-white text-sm font-medium">Audio Unlocked</p>
+              <p className="text-white/70 text-xs">Check your device's mute switch and volume</p>
+            </div>
+            <button
+              onClick={() => setShowUnmuteHint(false)}
+              className="text-white/60 hover:text-white transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+      
       {/* Premium Navigation Header */}
       <header className="relative sm:fixed sm:top-0 sm:left-0 sm:right-0 z-50 bg-black/40 backdrop-blur-md border-b border-white/10">
         <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
