@@ -22,9 +22,32 @@ export default function CreateAgent() {
   // Global Audio Reference for Exclusive Playback
   const currentAudio = useRef<HTMLAudioElement | null>(null);
   const audioContext = useRef<AudioContext | null>(null);
+  const audioPreloaded = useRef(false);
 
   // State Guard: Prevent standalone Step 1 audio during initialization
   const isInitialBoot = useRef(true);
+
+  // Audio file paths with absolute URLs for iPad Safari compatibility
+  const audioFiles = {
+    tab: '/ElevenLabs1.mp3',
+    step1: '/ElevenLabs2.mp3',
+    step2: '/ElevenLabs3.mp3',
+    step3: '/ElevenLabs4.mp3',
+    deploy: '/ElevenLabs5.mp3'
+  };
+
+  // Prime audio objects on first interaction
+  const primeAudioObjects = () => {
+    if (audioPreloaded.current) return;
+    
+    Object.values(audioFiles).forEach(filePath => {
+      const audio = new Audio(filePath);
+      audio.preload = 'auto';
+      audio.load(); // Pre-fetch buffer for iPad
+    });
+    
+    audioPreloaded.current = true;
+  };
 
   // Initialize Audio Context and setup iPad compatibility
   useEffect(() => {
@@ -48,6 +71,7 @@ export default function CreateAgent() {
     // Add event listeners for user interaction
     const handleUserInteraction = () => {
       unlockAudio();
+      primeAudioObjects(); // Prime audio objects for iPad
       // Play a silent audio to unlock hardware
       const silentAudio = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAAAQAEAAEAfAAAQAQABAAgAZGF0YQAAAAA=');
       silentAudio.volume = 0;
@@ -107,7 +131,9 @@ export default function CreateAgent() {
     }
 
     try {
-      const audio = new Audio(audioFile);
+      // Use absolute path from audioFiles object for iPad Safari compatibility
+      const absoluteAudioFile = audioFiles[audioKey as keyof typeof audioFiles] || audioFile;
+      const audio = new Audio(absoluteAudioFile);
       audio.volume = 0.8;
       
       // Store in global ref
@@ -564,7 +590,13 @@ export default function CreateAgent() {
                 </motion.button>
               ) : (
                 <motion.button
-                  onClick={() => playChainedAudio('deploy', '/ElevenLabs5.mp3', '> AUTHENTICATION REQUIRED...', true)}
+                  onClick={async () => {
+                    // Handle suspended context for iPad
+                    if (audioContext.current && audioContext.current.state === 'suspended') {
+                      await audioContext.current.resume();
+                    }
+                    playChainedAudio('deploy', audioFiles.deploy, '> AUTHENTICATION REQUIRED...', true);
+                  }}
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                   className="px-8 py-4 bg-[#FFD700] border border-[#FFD700] rounded-lg text-black font-black hover:bg-[#FFD700]/90 hover:border-[#FFD700]/90 hover:shadow-[0_0_20px_rgba(255,215,0,0.4)] transition-all duration-300 shadow-lg shadow-[#FFD700]/50"
