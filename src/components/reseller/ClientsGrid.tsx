@@ -69,9 +69,7 @@ export function ClientsGridInternal({
   }) => void;
   onSTTResult?: (tenantId: string, text: string) => void;
 }) {
-  // CONSOLE SUPREMACY: Detect event bubbling
-  console.log('--- DOM CLICK DETECTED ---');
-  
+    
   // Props change tracking removed for production
   
   const router = useRouter();
@@ -253,15 +251,7 @@ export function ClientsGridInternal({
   const [hudLoading, setHudLoading] = useState(true);
   const [criticalAlertsCount, setCriticalAlertsCount] = useState(0);
 
-  // GLOBAL SNIFFER: Intercept all DOM clicks to reveal what's being clicked
-  useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      console.log('DOM HIT:', e.target);
-    };
-    window.addEventListener('click', handleClick);
-    return () => window.removeEventListener('click', handleClick);
-  }, []);
-
+  
   // Report stats to parent
   useEffect(() => {
     onStatsUpdate?.({
@@ -619,8 +609,7 @@ export function ClientsGridInternal({
 
     // Retry logic: Listen for auth state changes
     const { data: { subscription } } = supabase.current.auth.onAuthStateChange((event, session) => {
-      console.log('Auth state changed:', event, session?.user?.id);
-      
+            
       if (event === 'SIGNED_IN' && session) {
         setHasSession(true);
         setSessionLoading(false);
@@ -833,8 +822,7 @@ export function ClientsGridInternal({
 
       const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
       
-      console.log('DEBUG: Attempting fetch from table tenant_logs with tenant scope...');
-      
+            
       // Get tenant_ids for this reseller to scope query
       let tenantIds: string[] = [];
       const { data: rData, error: rErr } = await supabase
@@ -940,8 +928,7 @@ export function ClientsGridInternal({
 
       // Verify authentication state
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      console.log('OVG-PLATFORM-V2: Auth state:', { hasSession: !!session, userId: session?.user?.id, sessionError });
-
+      
       if (!session) {
         console.warn('OVG-PLATFORM-V2: No authenticated session - RLS will block queries');
         setLoading(false);

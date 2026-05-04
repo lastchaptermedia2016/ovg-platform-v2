@@ -678,25 +678,35 @@ export default function CreateAgent() {
               </div>
 
               <div className="space-y-3">
-                <Link href="/auth" className="block">
-                  <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    className="w-full px-6 py-3 bg-[#FFD700] border border-[#FFD700] rounded-lg text-black font-black hover:bg-[#FFD700]/90 hover:border-[#FFD700]/90 transition-all duration-300"
-                  >
-                    SIGN IN
-                  </motion.button>
-                </Link>
+                <motion.button
+                  onClick={async () => {
+                    // Trigger Protocol: Play audio first
+                    const audio = new Audio('/ElevenLabs6.mp3');
+                    await audio.play();
+                    // Seamless Transition: Navigate after audio starts
+                    setTimeout(() => router.push('/auth'), 150);
+                  }}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  className="w-full px-6 py-3 bg-[#FFD700] border border-[#FFD700] rounded-lg text-black font-black hover:bg-[#FFD700]/90 hover:border-[#FFD700]/90 transition-all duration-300"
+                >
+                  SIGN IN
+                </motion.button>
                 
-                <Link href="/auth" className="block">
-                  <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    className="w-full px-6 py-3 bg-transparent border border-[#FFD700]/50 rounded-lg text-[#FFD700] font-medium hover:bg-[#FFD700]/10 hover:border-[#FFD700] transition-all duration-300"
-                  >
-                    CREATE ACCOUNT
-                  </motion.button>
-                </Link>
+                <motion.button
+                  onClick={async () => {
+                    // Trigger Protocol: Play audio first
+                    const audio = new Audio('/ElevenLabs6.mp3');
+                    await audio.play();
+                    // Seamless Transition: Navigate after audio starts
+                    setTimeout(() => router.push('/auth'), 150);
+                  }}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  className="w-full px-6 py-3 bg-transparent border border-[#FFD700]/50 rounded-lg text-[#FFD700] font-medium hover:bg-[#FFD700]/10 hover:border-[#FFD700] transition-all duration-300"
+                >
+                  CREATE ACCOUNT
+                </motion.button>
               </div>
             </div>
           </motion.div>

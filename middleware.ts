@@ -5,6 +5,15 @@ import { createClient } from "./src/lib/supabase/server";
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // 0. Asset Exclusion: Allow public assets and audio files to bypass auth
+  if (pathname.startsWith("/_next") || 
+      pathname.startsWith("/api") || 
+      pathname.includes(".") || 
+      pathname.includes("ElevenLabs") ||
+      pathname.startsWith("/public")) {
+    return NextResponse.next();
+  }
+
   // 1. Centralized Identity Gate: Protect /reseller/* routes
   if (pathname.startsWith("/reseller/")) {
     try {

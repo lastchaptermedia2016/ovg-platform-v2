@@ -1,17 +1,21 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { motion, AnimatePresence } from 'framer-motion';
 
+// Pre-load Strategy: Global audio instance for instant playback
+const authAudio = new Audio('/ElevenLabs6.mp3');
+authAudio.preload = 'auto';
+
 // Production Excellence: Stable Neural Link Messages
 const NEURAL_MESSAGES = [
-  "Neural Link: Establishing secure connection...",
-  "Hannah: Preparing your intelligent workspace...",
-  "AI Core: Optimizing brand architecture...",
-  "System Ready: Your reseller platform awaits..."
+  "OVG Engage: Neural Link establishing secure connection...",
+  "Hannah: Preparing your OVG Engage workspace...",
+  "AI Core: Optimizing OVG Engage platform...",
+  "System Ready: OVG Engage reseller platform awaits..."
 ];
 
 export default function AuthPage() {
@@ -294,8 +298,8 @@ export default function AuthPage() {
           {/* Header */}
           <div className="p-8 text-center">
             <div className="mb-6">
-              <div className="w-16 h-16 bg-gradient-to-br from-cyan-400 to-blue-600 rounded-full mx-auto flex items-center justify-center">
-                <span className="text-white text-2xl font-bold">OVG</span>
+              <div className="px-12 py-4 bg-gradient-to-br from-cyan-400 to-blue-600 rounded-full mx-auto flex items-center justify-center shadow-lg shadow-cyan-400/50">
+                <span className="text-white font-bold tracking-widest">OVG ENGAGE</span>
               </div>
             </div>
             <motion.div
