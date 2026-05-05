@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { mapVisualStyleToPersona } from '@/lib/voice-visual-harmony';
 import { createClient } from '@/lib/supabase/client';
 
-type Step = 'command' | 'draft' | 'confirm';
+type Step = 'command' | 'draft' | 'review' | 'confirm';
 type VoiceEntryStep = 0 | 1 | 2 | 3 | 4; // Multi-step voice entry
 
 interface DraftData {
@@ -20,9 +20,10 @@ interface DraftData {
 interface UniversalCommandModalProps {
   onClose: () => void;
   resellerSlug?: string;
+  onClientCreated?: () => void;
 }
 
-export function UniversalCommandModal({ onClose, resellerSlug }: UniversalCommandModalProps) {
+export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }: UniversalCommandModalProps) {
   const [step, setStep] = useState<Step>('command');
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -45,7 +46,24 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
   
   // Field highlighting states for real-time feedback
   const [highlightedField, setHighlightedField] = useState<'name' | 'email' | 'industry' | 'mobile' | 'website' | 'vibe' | null>(null);
+  
+  // Stateful Interaction: Track current conversation step for Hannah to know which field she's interviewing
+  const [conversationStep, setConversationStep] = useState<'greeting' | 'name' | 'industry' | 'email' | 'mobile' | 'website' | 'vibe' | 'review' | 'complete'>('greeting');
+  
+  // Validation Check: Track missing fields to prevent AI from repeating questions
+  const [missingFields, setMissingFields] = useState<Set<string>>(new Set(['name', 'industry', 'email', 'mobile', 'website', 'vibe']));
+  
   const [voiceEntryData, setVoiceEntryData] = useState({
+    name: '',
+    industry: '',
+    email: '',
+    mobile: '',
+    website: '',
+    vibe: ''
+  });
+  
+  // Explicit Confirmation UI: Editable review data
+  const [reviewData, setReviewData] = useState({
     name: '',
     industry: '',
     email: '',
@@ -58,45 +76,214 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // Production Excellence: Industry normalization and mapping
+  // Production Excellence: Allowed industry enum values
+  const ALLOWED_INDUSTRIES = [
+    'AUTOMOTIVE',
+    'RETAIL', 
+    'HEALTHCARE',
+    'INSURANCE',
+    'GENERAL BUSINESS'
+  ] as const;
+
+  // Production Excellence: Industry normalization and fuzzy matching
   const normalizeIndustry = (industry: string): string => {
-    if (!industry) return 'GENERAL BUSINESS';
+    const upperIndustry = industry.toUpperCase().trim();
     
-    // Convert to lowercase and strip whitespace
-    const normalized = industry.toLowerCase().trim();
+    // Exact match
+    if (ALLOWED_INDUSTRIES.includes(upperIndustry as any)) {
+      return upperIndustry;
+    }
     
-    // Industry mapper for common misspellings and variations
-    const industryMap: Record<string, string> = {
-      // Insurance variations
-      'insurans': 'insurance',
-      'insur': 'insurance',
-      'ins': 'insurance',
-      
-      // Automotive variations
-      'auto': 'automotive',
-      'car': 'automotive',
-      'vehicle': 'automotive',
-      
-      // Retail variations
-      'store': 'retail',
-      'shop': 'retail',
-      'shopping': 'retail',
-      
-      // Healthcare variations
-      'health': 'healthcare',
-      'medical': 'healthcare',
-      'hospital': 'healthcare',
-      'clinic': 'healthcare',
-      
-      // General business variations
-      'business': 'general business',
-      'company': 'general business',
-      'service': 'general business',
-      'professional': 'general business',
+    // Fuzzy Matching: Snap common variations to exact enum values
+    const fuzzyMap: Record<string, string> = {
+      'INSURANCE': 'INSURANCE',
+      'INSURE': 'INSURANCE',
+      'INSURENS': 'INSURANCE',
+      'INSUR': 'INSURANCE',
+      'AUTO': 'AUTOMOTIVE',
+      'CAR': 'AUTOMOTIVE',
+      'VEHICLE': 'AUTOMOTIVE',
+      'AUTOMOTIVE': 'AUTOMOTIVE',
+      'RETAIL': 'RETAIL',
+      'STORE': 'RETAIL',
+      'SHOP': 'RETAIL',
+      'HEALTH': 'HEALTHCARE',
+      'MEDICAL': 'HEALTHCARE',
+      'HEALTHCARE': 'HEALTHCARE',
+      'HEALTH CARE': 'HEALTHCARE',
+      'GENERAL': 'GENERAL BUSINESS',
+      'BUSINESS': 'GENERAL BUSINESS',
+      'GENERAL BUSINESS': 'GENERAL BUSINESS',
+      'OTHER': 'GENERAL BUSINESS'
     };
     
-    // Return mapped value or original normalized
-    return industryMap[normalized] || normalized.toUpperCase();
+    // Check fuzzy map
+    for (const [key, value] of Object.entries(fuzzyMap)) {
+      if (upperIndustry.includes(key)) {
+        return value;
+      }
+    }
+    
+    return 'GENERAL BUSINESS';
+  };
+
+  // Website Parameter Transformer: Normalize website URLs with dot com replacement and space removal
+  const normalizeWebsite = (website: string): string => {
+    if (!website) return '';
+    
+    let normalized = website
+      .replace(/\s+dot\s+com/gi, '.com')  // "dot com" -> ".com"
+      .replace(/\s+dot\s+/gi, '.')           // "dot" -> "."
+      .replace(/\s+/g, '')                   // Remove all spaces
+      .toLowerCase()
+      .trim();
+    
+    // Ensure protocol if missing
+    if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
+      normalized = `https://${normalized}`;
+    }
+    
+    return normalized;
+  };
+
+  // Keyword Delimiters: Multi-pass parser to split raw SST string at keywords
+  const parseWithKeywordDelimiters = (transcript: string): { name: string; industry?: string; email?: string; mobile?: string; website?: string } => {
+    const lowerTranscript = transcript.toLowerCase();
+    const keywords = ['industry', 'email', 'mobile', 'phone', 'website'];
+    
+    let name = transcript;
+    let industry: string | undefined;
+    let email: string | undefined;
+    let mobile: string | undefined;
+    let website: string | undefined;
+    
+    // Multi-pass: Find all keyword positions
+    const keywordPositions: { keyword: string; index: number }[] = [];
+    for (const keyword of keywords) {
+      const index = lowerTranscript.indexOf(keyword);
+      if (index !== -1) {
+        keywordPositions.push({ keyword, index });
+      }
+    }
+    
+    // Sort by position to process in order
+    keywordPositions.sort((a, b) => a.index - b.index);
+    
+    // Extract fields based on keyword positions
+    for (let i = 0; i < keywordPositions.length; i++) {
+      const { keyword, index } = keywordPositions[i];
+      const nextKeyword = keywordPositions[i + 1];
+      
+      // Extract value after current keyword until next keyword or end
+      const startIndex = index + keyword.length;
+      const endIndex = nextKeyword ? nextKeyword.index : transcript.length;
+      const value = transcript.substring(startIndex, endIndex).trim();
+      
+      // Assign value to appropriate field
+      if (keyword === 'industry') {
+        industry = value;
+      } else if (keyword === 'email') {
+        email = value;
+      } else if (keyword === 'mobile' || keyword === 'phone') {
+        mobile = value;
+      } else if (keyword === 'website') {
+        website = value;
+      }
+    }
+    
+    // Delimiter Enforcement: Extract name as everything before the first keyword
+    if (keywordPositions.length > 0) {
+      name = transcript.substring(0, keywordPositions[0].index).trim();
+    }
+    
+    // Strip Command Prefixes: Remove phrases like "Client Name," "Company is," or "Name is"
+    const commandPrefixes = [
+      /^(client name|company name|name is|company is|the name is|the company is|the client name is)/i,
+      /^(create client|add client|new client)/i,
+      /^(my company|our company|the company)/i
+    ];
+    
+    for (const prefix of commandPrefixes) {
+      name = name.replace(prefix, '').trim();
+    }
+    
+    // Punctuation Scrubbing: Strip trailing commas and special characters
+    name = name.replace(/[,\.;:!?\-\—\–]+$/, '').trim();
+    
+    return { name, industry, email, mobile, website };
+  };
+
+  // Verbal-to-Data Transformers: Sanitize SST strings for website_url and email fields
+  const sanitizeWebsiteUrl = (website: string): string | null => {
+    if (!website || website.trim() === '') return null;
+    
+    let sanitized = website
+      .replace(/\s+dot\s+com/gi, '.com')  // "dot com" -> ".com"
+      .replace(/\s+dot\s+/gi, '.')           // "dot" -> "."
+      .replace(/\s+at\s+/gi, '@')           // " at " -> "@"
+      .replace(/\s+/g, '')                   // Strip all internal whitespace
+      .toLowerCase()
+      .trim();
+    
+    // Validation Logic: Check if it looks like a domain
+    if (!sanitized.includes('.')) {
+      return null;
+    }
+    
+    // Ensure protocol
+    if (!sanitized.startsWith('http://') && !sanitized.startsWith('https://')) {
+      sanitized = `https://${sanitized}`;
+    }
+    
+    return sanitized;
+  };
+
+  const sanitizeEmail = (email: string): string | null => {
+    if (!email || email.trim() === '') return null;
+    
+    let sanitized = email
+      .replace(/\s+at\s+/gi, '@')           // " at " -> "@"
+      .replace(/\s+dot\s+/gi, '.')           // " dot " -> "."
+      .replace(/\s+/g, '')                   // Strip all internal whitespace
+      .toLowerCase()
+      .trim();
+    
+    // Validation Logic: Basic email validation
+    if (!sanitized.includes('@') || !sanitized.includes('.')) {
+      return null;
+    }
+    
+    return sanitized;
+  };
+
+  // Validation Logic: Fail-safe to return null for missing/invalid fields
+  const validateField = (value: string | null | undefined): string | null => {
+    if (!value || value.trim() === '' || value === '---' || value === '...' || value === 'null') {
+      return null;
+    }
+    return value.trim();
+  };
+
+  // LLM-Driven Response Generation: Generate natural response for Hannah to speak
+  const generateHannahResponse = async (context: string, field: string, value?: string): Promise<string> => {
+    try {
+      const response = await fetch('/api/ai/generate-response', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ context, field, value }),
+      });
+
+      if (!response.ok) {
+        console.error('Failed to generate Hannah response:', response.statusText);
+        return 'Got it.'; // Fallback to default response
+      }
+
+      const data = await response.json();
+      return data.response || 'Got it.';
+    } catch (error) {
+      console.error('Error generating Hannah response:', error);
+      return 'Got it.'; // Fallback to default response
+    }
   };
 
   // Cleanup effect for media streams and audio resources
@@ -227,7 +414,10 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
 
       if (!response.ok) throw new Error('STT failed');
       const { text } = await response.json();
-      setTranscript(text);
+      setTranscript(text); // ← still fine for UI display
+
+      // ✅ Pass `text` directly — never `transcript` (stale state)
+      await processCommand(text);
     } catch (err) {
       setError('Transcription failed — please try again');
     } finally {
@@ -309,7 +499,27 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
       return;
     }
     
-    // Extract name and industry using Groq
+    // Keyword Delimiters: Apply look-ahead parser to prevent context leakage
+    const parsed = parseWithKeywordDelimiters(transcript);
+    
+    // Fix 1: Always send full transcript to Groq
+    const cleanedTranscript = transcript.trim();
+    
+    // Fix 2: Parser only overrides Groq when it found explicit keyword delimiters
+    const parserFoundDelimiters = transcript.toLowerCase().includes('industry') ||
+                                   transcript.toLowerCase().includes('email') ||
+                                   transcript.toLowerCase().includes('mobile') ||
+                                   transcript.toLowerCase().includes('website');
+    
+    console.log("OVG-PLATFORM-V2: Keyword delimiter parsing:", {
+      original: transcript,
+      parsedName: parsed.name,
+      parsedIndustry: parsed.industry,
+      cleaned: cleanedTranscript,
+      parserFoundDelimiters
+    });
+    
+    // Extract name and industry using Groq with cleaned transcript
     try {
       const response = await fetch('/api/ai/extract-client-info', {
         method: 'POST',
@@ -317,33 +527,63 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.access_token}`
         },
-        body: JSON.stringify({ transcript, fields: ['name', 'industry'] }),
+        body: JSON.stringify({ transcript: cleanedTranscript, fields: ['name', 'industry'] }),
       });
       
       const data = await response.json();
       
-      if (data.name) {
-        setVoiceEntryData(prev => ({ ...prev, name: data.name }));
-        setClientName(data.name);
+      const finalName = parserFoundDelimiters 
+        ? (parsed.name?.replace(/^[\s,]+/, '').trim() || data.name)
+        : data.name;  // ← Groq wins for natural speech
+
+      const finalIndustry = (parserFoundDelimiters && parsed.industry?.trim()) 
+        ? parsed.industry.trim() 
+        : data.industry;
+      
+      if (finalName) {
+        setVoiceEntryData(prev => ({ ...prev, name: finalName }));
+        setClientName(finalName);
+        
+        // Validation Check: Update missingFields immediately
+        setMissingFields(prev => {
+          const updated = new Set(prev);
+          updated.delete('name');
+          return updated;
+        });
       }
       
-      if (data.industry) {
-        const normalizedIndustry = normalizeIndustry(data.industry);
-        setVoiceEntryData(prev => ({ ...prev, industry: normalizedIndustry }));
-        setIndustry(normalizedIndustry);
-        console.log("OVG-PLATFORM-V2: Industry normalized from", data.industry, "to", normalizedIndustry);
+      if (finalIndustry) {
+        setVoiceEntryData(prev => ({ ...prev, industry: finalIndustry }));
+        setIndustry(finalIndustry);
+        setMissingFields(prev => {
+          const updated = new Set(prev);
+          updated.delete('industry');
+          return updated;
+        });
       }
       
       if (data.name && data.industry) {
-        await speak(`${data.name} in the ${data.industry} sector, check.`);
+        // Stateful Interaction: Update conversation step
+        setConversationStep('name');
+        
+        // LLM-Driven Response Generation: Generate natural response
+        const response = await generateHannahResponse('Creating client profile', 'name and industry', `${data.name} in ${data.industry}`);
+        await speak(response);
+        
         setVoiceEntryStep(1);
         setHighlightedField('email');
-        await speak("Now, what's their email address?");
+        setConversationStep('email');
+        
+        // Generate natural prompt for next field
+        const nextPrompt = await generateHannahResponse('Moving to next field', 'email');
+        await speak(nextPrompt);
       } else {
-        await speak("I need both the client name and industry. Can you provide both?");
+        const errorResponse = await generateHannahResponse('Missing information', 'name and industry');
+        await speak(errorResponse);
       }
     } catch (err) {
-      await speak("I didn't catch that. Please tell me the client name and industry.");
+      const errorResponse = await generateHannahResponse('Error processing input', 'name and industry');
+      await speak(errorResponse);
     }
   };
 
@@ -376,24 +616,38 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
     if (emails && emails.length > 0) {
       let email = emails[0];
       
-      // Format email properly (capitalize first letter of domain if needed)
-      const [localPart, domain] = email.split('@');
-      if (domain) {
-        const domainParts = domain.split('.');
-        email = `${localPart}@${domainParts.map(part => part).join('.')}`;
+      // Verbal-to-Data Transformers: Use sanitizeEmail function
+      const finalEmail = sanitizeEmail(email);
+      console.log("OVG-PLATFORM-V2: Email sanitized:", finalEmail);
+      
+      if (finalEmail) {
+        setVoiceEntryData(prev => ({ ...prev, email: finalEmail }));
+        setClientEmail(finalEmail);
+        
+        // Validation Check: Update missingFields immediately
+        setMissingFields(prev => {
+          const updated = new Set(prev);
+          updated.delete('email');
+          return updated;
+        });
+      } else {
+        console.log("OVG-PLATFORM-V2: Email validation failed, returning null");
       }
       
-      setVoiceEntryData(prev => ({ ...prev, email }));
-      setClientEmail(email);
+      // LLM-Driven Response Generation: Generate natural confirmation
+      const response = await generateHannahResponse('Email captured', 'email', finalEmail || undefined);
+      await speak(response);
       
-      // Hannah's confirmation with proper email reading
-      const readableEmail = email.replace('@', ' at ').replace(/\./g, ' dot ');
-      await speak(`${readableEmail}, got it.`);
       setVoiceEntryStep(2);
       setHighlightedField('mobile');
-      await speak("What's website address?");
+      setConversationStep('mobile');
+      
+      // Generate natural prompt for next field
+      const nextPrompt = await generateHannahResponse('Moving to next field', 'mobile');
+      await speak(nextPrompt);
     } else {
-      await speak("I didn't catch an email address. Can you repeat it?");
+      const errorResponse = await generateHannahResponse('Missing information', 'email');
+      await speak(errorResponse);
     }
   };
 
@@ -425,17 +679,21 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
     console.log("OVG-PLATFORM-V2: Regex matching against transcript:", cleanTranscript);
     
     // Enhanced URL extraction - case insensitive, supports raw domains, hyphens, and STT artifacts
+    // Also handles "dot com" phrases spoken in natural language
     const fuzzyUrlRegex = /\b[a-z0-9.-]+\.[a-z]{2,}\b/gi; // 'i' flag for case insensitive
     const standardUrlRegex = /https?:\/\/[^\s]+/gi;
     
-    // Try standard URL first, then fuzzy
+    // First, normalize "dot com" phrases to actual ".com"
+    const normalizedTranscript = cleanTranscript.replace(/\s+dot\s+com/gi, '.com').replace(/\s+dot\s+/gi, '.');
+    
+    // Try standard URL first, then fuzzy on normalized transcript
     let urls = transcript.match(standardUrlRegex);
     let isFuzzyMatch = false;
     
     if (!urls || urls.length === 0) {
-      urls = cleanTranscript.match(fuzzyUrlRegex);
+      urls = normalizedTranscript.match(fuzzyUrlRegex);
       isFuzzyMatch = true;
-      console.log("OVG-PLATFORM-V2: Fuzzy URL regex result:", urls);
+      console.log("OVG-PLATFORM-V2: Fuzzy URL regex result (normalized):", urls);
     } else {
       console.log("OVG-PLATFORM-V2: Standard URL regex result:", urls);
     }
@@ -444,46 +702,51 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
     let hasMobile = false;
     
     if (phones && phones.length > 0) {
-      const phone = phones[0];
+      const phone = phones[0] || '';
       setVoiceEntryData(prev => ({ ...prev, mobile: phone }));
       setMobile(phone);
-      await speak(`Mobile: ${phone}.`);
+      console.log("OVG-PLATFORM-V2: Mobile field updated in state:", phone);
+      
+      // Validation Check: Update missingFields immediately
+      setMissingFields(prev => {
+        const updated = new Set(prev);
+        updated.delete('mobile');
+        return updated;
+      });
+      
+      // LLM-Driven Response Generation: Generate natural confirmation
+      const mobileResponse = await generateHannahResponse('Mobile captured', 'mobile', phone);
+      await speak(mobileResponse);
       hasMobile = true;
     }
     
     if (urls && urls.length > 0) {
-      let website = urls[0];
+      let website = urls[0] || '';
       
-      // Production Excellence: cleanDomain helper for STT cleanup
-      const cleanDomain = (domain: string): string => {
-        // Remove trailing periods, spaces, and common STT artifacts
-        return domain
-          .replace(/[.\s]+$/, '') // Remove trailing dots and spaces
-          .replace(/^\s+/, '') // Remove leading spaces
-          .trim();
-      };
+      // Verbal-to-Data Transformers: Use sanitizeWebsiteUrl function
+      const finalWebsite = sanitizeWebsiteUrl(website);
+      console.log("OVG-PLATFORM-V2: Website sanitized:", finalWebsite);
       
-      const cleanedWebsite = cleanDomain(website);
-      console.log("OVG-PLATFORM-V2: Cleaned website domain:", cleanedWebsite);
-      
-      // Auto-normalization: prepend https:// if missing
-      let finalWebsite = cleanedWebsite;
-      if (!cleanedWebsite.startsWith('http://') && !cleanedWebsite.startsWith('https://')) {
-        finalWebsite = `https://${cleanedWebsite}`;
-      }
-      
-      setVoiceEntryData(prev => ({ ...prev, website: finalWebsite }));
-      setWebsite(finalWebsite);
-      
-      // Audio confirmation for fuzzy matches
-      if (isFuzzyMatch) {
-        const cleanWebsite = finalWebsite.replace('https://', '').replace('http://', '');
-        await speak(`Got ${cleanWebsite}!`);
+      if (finalWebsite) {
+        setVoiceEntryData(prev => ({ ...prev, website: finalWebsite }));
+        setWebsite(finalWebsite);
+        console.log("OVG-PLATFORM-V2: Website field updated in state:", finalWebsite);
+        
+        // Validation Check: Update missingFields immediately
+        setMissingFields(prev => {
+          const updated = new Set(prev);
+          updated.delete('website');
+          return updated;
+        });
+        
+        // LLM-Driven Response Generation: Generate natural confirmation
+        const websiteResponse = await generateHannahResponse('Website captured', 'website', finalWebsite);
+        await speak(websiteResponse);
+        
+        hasWebsite = true;
       } else {
-        await speak(`Website: ${finalWebsite}.`);
+        console.log("OVG-PLATFORM-V2: Website validation failed, returning null");
       }
-      
-      hasWebsite = true;
     }
     
     // Production Excellence: Persistence - Check existing values before validation
@@ -521,6 +784,9 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
     } else {
       await speak("I didn't catch a phone number or website. Can you provide at least one?");
     }
+    
+    // State Persistence: Log final state after processing
+    console.log("OVG-PLATFORM-V2: Final voiceEntryData state after contact processing:", voiceEntryData);
   };
 
   const processVibe = async (transcript: string) => {
@@ -544,6 +810,13 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
       setVoiceEntryData(prev => ({ ...prev, vibe: transcript }));
       setSystemPrompt(transcript);
       
+      // Validation Check: Update missingFields immediately
+      setMissingFields(prev => {
+        const updated = new Set(prev);
+        updated.delete('vibe');
+        return updated;
+      });
+      
       await speak(`Perfect! I've detected a ${personaTone} personality for this ${voiceEntryData.industry.toLowerCase()} business.`);
       
       // Check if all fields are complete
@@ -563,33 +836,50 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
   const completeVoiceEntry = async () => {
     setHighlightedField(null);
     
-    // Create draft data
-    const draft = {
-      clientName: voiceEntryData.name,
-      clientEmail: voiceEntryData.email,
+    // Populate review data with voice entry data for user confirmation
+    setReviewData({
+      name: voiceEntryData.name,
       industry: voiceEntryData.industry.toUpperCase(),
+      email: voiceEntryData.email,
       mobile: voiceEntryData.mobile,
       website: voiceEntryData.website,
-      systemPrompt: voiceEntryData.vibe,
+      vibe: voiceEntryData.vibe
+    });
+    
+    setIsVoiceEntryMode(false);
+    
+    // The Big Reveal - show review step for explicit confirmation
+    await speak(`I've drafted the full profile for ${voiceEntryData.name}. Please review the details and correct any errors before I save this to your database.`);
+    
+    setStep('review');
+  };
+
+  const handleReviewConfirm = () => {
+    // Create draft data from review data
+    const draft = {
+      clientName: reviewData.name,
+      clientEmail: reviewData.email,
+      industry: reviewData.industry,
+      mobile: reviewData.mobile,
+      website: reviewData.website,
+      systemPrompt: reviewData.vibe,
       parsedFromVoice: true,
     };
     
     setDraftData(draft);
-    setIsVoiceEntryMode(false);
-    
-    // The Big Reveal
-    await speak(`I've drafted the full profile for ${voiceEntryData.name}. It looks sharp. Should I save this and start the branding rationale?`);
-    
-    setStep('draft');
+    setStep('confirm');
   };
 
-  const processCommand = async () => {
-    console.log('processCommand fired, transcript:', transcript);
-    if (!transcript.trim()) return;
+  const processCommand = async (manualTranscript?: string) => {
+    // Final Validation: Guard clause to ensure empty state updates never hit the API
+    const activeTranscript = manualTranscript || transcript;
+    if (!activeTranscript || !activeTranscript.trim()) return;
+    
+    console.log('processCommand fired, transcript:', activeTranscript);
     setIsProcessing(true);
     setError(null);
 
-    const lowerTranscript = transcript.toLowerCase();
+    const lowerTranscript = activeTranscript.toLowerCase();
     const isDeleteCommand = lowerTranscript.includes('delete') || 
                             lowerTranscript.includes('remove') || 
                             lowerTranscript.includes('deactivate');
@@ -602,30 +892,43 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
     try {
       if (isIdentityQuestion) {
         await speak("I'm Hannah, your Pierre AI assistant. I'm here to help you create and manage clients with intelligent voice commands.");
-        setTranscript('');
+        if (!manualTranscript) setTranscript(''); // Only clear state if not using manual transcript
         return;
       }
 
       if (isVoiceEntryMode) {
-        await processVoiceEntryStep(transcript);
+        await processVoiceEntryStep(activeTranscript);
       } else if (isDeleteCommand) {
-        await handleDeleteCommand(transcript);
+        await handleDeleteCommand(activeTranscript);
       } else {
-        await handleCreateCommand(transcript);
+        await handleCreateCommand(activeTranscript);
       }
     } finally {
       setIsProcessing(false);
     }
   };
 
+  const processCommandWithTranscript = async (transcriptArg: string) => {
+    await processCommand(transcriptArg);
+  };
+
   const handleCreateCommand = async (command: string) => {
     try {
-      const response = await fetch('/api/ai/create-client', {
+      // Validate resellerSlug before making API call
+    if (!resellerSlug) {
+      console.error('OVG-PLATFORM-V2: Critical - No resellerSlug provided to UniversalCommandModal');
+      setError('Reseller context missing. Please refresh the page and try again.');
+      return;
+    }
+
+    console.log('OVG-PLATFORM-V2: Creating client with reseller context:', { resellerSlug, command });
+
+    const response = await fetch('/api/ai/create-client', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           voiceCommand: command,
-          resellerSlug: resellerSlug || 'acme-corp',
+          resellerSlug: resellerSlug,
           parseOnly: true,
         }),
       });
@@ -697,6 +1000,38 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
         setIsProcessing(false);
         return;
       }
+
+      // Payload Enforcement: Get resellerId explicitly for foreign key assignment
+      let resellerId = null;
+      if (resellerSlug) {
+        try {
+          const { data: resellerData, error: resellerError } = await supabase
+            .from('resellers')
+            .select('id')
+            .eq('slug', resellerSlug)
+            .single();
+          
+          if (resellerError || !resellerData) {
+            console.error('OVG-PLATFORM-V2: Failed to get resellerId:', resellerError);
+            await speak("I'm having trouble verifying your reseller account. Please try again.");
+            setIsProcessing(false);
+            return;
+          }
+          
+          resellerId = resellerData.id;
+          console.log('OVG-PLATFORM-V2: ResellerId resolved for payload:', { resellerSlug, resellerId });
+        } catch (err) {
+          console.error('OVG-PLATFORM-V2: Exception getting resellerId:', err);
+          await speak("There was an error preparing your client data. Please try again.");
+          setIsProcessing(false);
+          return;
+        }
+      } else {
+        console.error('OVG-PLATFORM-V2: No resellerSlug provided for payload enforcement');
+        await speak("Reseller context is missing. Please refresh the page and try again.");
+        setIsProcessing(false);
+        return;
+      }
       
       const response = await fetch('/api/ai/create-client', {
         method: 'POST',
@@ -705,16 +1040,17 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
           'Authorization': `Bearer ${session.access_token}`
         },
         body: JSON.stringify({
-          resellerSlug: resellerSlug || 'acme-corp',
+          resellerSlug: resellerSlug,
+          resellerId: resellerId, // Payload Enforcement: Explicit foreign key assignment
           parseOnly: false,
           clientData: {
-            name: draftData.clientName,
-            industry: normalizeIndustry(draftData.industry),
-            email: draftData.clientEmail,
-            mobile: mobile,
-            website: website,
-            systemPrompt: systemPrompt,
-            reseller_id: session.user.id, // Tenant association
+            name: validateField(draftData.clientName) || 'Unknown Client', // Validation Logic: Fail-safe for name
+            industry: normalizeIndustry(validateField(draftData.industry) || 'GENERAL BUSINESS'),
+            email: validateField(draftData.clientEmail), // Validation Logic: Returns null if invalid
+            mobile: validateField(mobile),  // Schema Enforcement: Use camelCase key matching API schema
+            website: validateField(website),  // Schema Enforcement: Use camelCase key matching API schema
+            systemPrompt: validateField(systemPrompt), // Validation Logic: Returns null if invalid
+            reseller_id: resellerId, // Explicit foreign key in client data as well
           },
         }),
       });
@@ -726,6 +1062,12 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
       const hasContactDetails = mobile || website;
       const contactMessage = hasContactDetails ? ' with their contact information' : '';
       await speak(`${draftData.clientName} has been successfully added${contactMessage}.`);
+      
+      // Reset UI filters by calling parent callback
+      if (onClientCreated) {
+        onClientCreated();
+      }
+      
       onClose();
     } catch (err: any) {
       setError(err.message || 'Failed to create client');
@@ -895,7 +1237,7 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
 
               <div className="flex justify-end">
                 <button
-                  onClick={processCommand}
+                  onClick={() => processCommand(transcript)}
                   disabled={!transcript || isProcessing || isSpeaking}
                   className="px-6 py-2 text-xs font-light tracking-[0.2em] bg-cyan-500/20 border border-cyan-500/30 rounded-lg text-cyan-300 uppercase hover:bg-cyan-500/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
@@ -995,6 +1337,99 @@ export function UniversalCommandModal({ onClose, resellerSlug }: UniversalComman
                 </button>
                 <button onClick={() => setStep('confirm')} className="px-6 py-2 text-xs font-light tracking-[0.2em] bg-cyan-500/20 border border-cyan-500/30 rounded-lg text-cyan-300 uppercase hover:bg-cyan-500/30 transition-all">
                   Review & Confirm
+                </button>
+              </div>
+            </div>
+          )}
+
+          {step === 'review' && (
+            <div className="space-y-6">
+              <div className="text-center space-y-2">
+                <h3 className="text-sm font-light tracking-[0.2em] text-white uppercase">Review Client Details</h3>
+                <p className="text-xs text-white/60">Please correct any errors before saving to database</p>
+              </div>
+              
+              <div className="backdrop-blur-xl bg-white/[0.01] border border-white/10 rounded-lg p-4 space-y-3">
+                {/* Client Name Input */}
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Client Name</span>
+                  <input
+                    type="text"
+                    value={reviewData.name}
+                    onChange={(e) => setReviewData({...reviewData, name: e.target.value})}
+                    className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
+                  />
+                </div>
+                {/* Industry Select */}
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Industry</span>
+                  <select
+                    value={reviewData.industry}
+                    onChange={(e) => setReviewData({...reviewData, industry: e.target.value})}
+                    className="text-xs text-white bg-black/30 border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
+                  >
+                    {['AUTOMOTIVE', 'RETAIL', 'HEALTHCARE', 'INSURANCE', 'GENERAL BUSINESS'].map(i => (
+                      <option key={i} value={i}>{i.charAt(0) + i.slice(1).toLowerCase()}</option>
+                    ))}
+                  </select>
+                </div>
+                {/* Email Input */}
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Email</span>
+                  <input
+                    type="email"
+                    value={reviewData.email}
+                    onChange={(e) => setReviewData({...reviewData, email: e.target.value})}
+                    className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
+                  />
+                </div>
+                {/* Mobile Number Input */}
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Mobile</span>
+                  <input
+                    type="tel"
+                    value={reviewData.mobile}
+                    onChange={(e) => setReviewData({...reviewData, mobile: e.target.value})}
+                    placeholder="+1234567890"
+                    className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
+                  />
+                </div>
+                {/* Website Input */}
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Website</span>
+                  <input
+                    type="url"
+                    value={reviewData.website}
+                    onChange={(e) => setReviewData({...reviewData, website: e.target.value})}
+                    placeholder="https://example.com"
+                    className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
+                  />
+                </div>
+                {/* Vibe Input */}
+                <div className="flex flex-col gap-2">
+                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Vibe / Personality</span>
+                  <textarea
+                    value={reviewData.vibe}
+                    onChange={(e) => setReviewData({...reviewData, vibe: e.target.value})}
+                    placeholder="Describe the client's vibe (e.g., 'innovative tech startup')"
+                    rows={2}
+                    className="text-xs text-white bg-black/30 border border-white/20 focus:border-cyan-500/50 outline-none rounded p-2 resize-none"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-between">
+                <button
+                  onClick={() => {
+                    setStep('command');
+                    setTranscript('');
+                  }}
+                  className="px-6 py-2 text-xs font-light tracking-[0.2em] text-white/60 uppercase hover:text-white transition-colors"
+                >
+                  Start Over
+                </button>
+                <button onClick={handleReviewConfirm} className="px-6 py-2 text-xs font-light tracking-[0.2em] bg-cyan-500/20 border border-cyan-500/30 rounded-lg text-cyan-300 uppercase hover:bg-cyan-500/30 transition-all">
+                  Confirm & Save
                 </button>
               </div>
             </div>

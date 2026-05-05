@@ -69,6 +69,15 @@ export function ClientsGridInternal({
   }) => void;
   onSTTResult?: (tenantId: string, text: string) => void;
 }) {
+  // Debug: Log resellerSlug prop on component mount
+  console.log('OVG-PLATFORM-V2: ClientsGrid mounted with resellerSlug:', {
+    resellerSlug,
+    type: typeof resellerSlug,
+    isEmpty: !resellerSlug,
+    isUndefined: resellerSlug === undefined,
+    isNull: resellerSlug === null,
+    length: resellerSlug?.length
+  });
     
   // Props change tracking removed for production
   
@@ -286,9 +295,10 @@ export function ClientsGridInternal({
   
   // Handle new client added
   const handleClientAdded = useCallback(() => {
-    console.log('[Grid] New client added, refreshing...');
-    fetchTenants();
-  }, []);
+    console.log('[Grid] New client added, clearing cache and refreshing...');
+    setAllTenants([]); // Clear cache to force fresh fetch
+    fetchTenants({ offlineOnly: false, filterParam: 'ALL', resellerSlugParam: resellerSlug });
+  }, [resellerSlug]);
   
   // STRICT TYPE GUARDS: Runtime validation for data attributes
   const isValidActionType = (value: string | null): value is 'ai' | 'sms' | 'vin' | 'signal' => {
@@ -923,8 +933,29 @@ export function ClientsGridInternal({
     offlineOnly?: boolean; filterParam?: string; resellerSlugParam?: string;
   } = {}) => {
     try {
+      // Critical Guard: Prevent execution if resellerSlug is undefined
+      if (!resellerSlugParam || resellerSlugParam === undefined || resellerSlugParam === null) {
+        console.error('OVG-PLATFORM-V2: Critical - fetchTenants called with invalid resellerSlug:', {
+          resellerSlugParam,
+          type: typeof resellerSlugParam,
+          isEmpty: !resellerSlugParam,
+          isUndefined: resellerSlugParam === undefined,
+          isNull: resellerSlugParam === null
+        });
+        setAllTenants([]);
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
       const supabase = createSupabaseClient();
+
+      // Debug: Log the incoming resellerSlug parameter
+      console.log('OVG-PLATFORM-V2: fetchTenants called with valid slug:', { 
+        resellerSlugParam, 
+        type: typeof resellerSlugParam,
+        length: resellerSlugParam.length
+      });
 
       // Verify authentication state
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
@@ -935,29 +966,107 @@ export function ClientsGridInternal({
         return;
       }
 
-      const cutoffIso = new Date(Date.now() - OFFLINE_THRESHOLD_MS).toISOString();
+      // Time Constraints: cutoffIso removed to ensure all records are pulled
+      // const cutoffIso = new Date(Date.now() - OFFLINE_THRESHOLD_MS).toISOString();
 
-      // 1) Get reseller UUID from slug
+      // 1) Get reseller UUID from slug - Strict Data Isolation
       let resellerId: string | null = null;
-      if (resellerSlugParam) {
-        const { data: rData, error: rErr } = await supabase
-          .from('resellers')
-          .select('id')
-          .eq('slug', resellerSlugParam)
-          .maybeSingle();
-        
-        console.log('OVG-PLATFORM-V2: Reseller lookup:', { resellerSlugParam, rData, rErr: rErr?.message });
-        
-        if (rErr) {
-          console.error('OVG-PLATFORM-V2: Reseller lookup failed:', rErr);
-          // RLS or auth issue likely
-          if (rErr.code === 'PGRST116') {
-            console.warn('OVG-PLATFORM-V2: Reseller not found or RLS blocking access');
-          }
-        } else if (rData?.id) {
-          resellerId = rData.id;
-        }
+      if (!resellerSlugParam) {
+        console.error('OVG-PLATFORM-V2: Critical - No resellerSlug parameter provided');
+        setAllTenants([]);
+        setLoading(false);
+        return;
       }
+
+      const { data: rData, error: rErr } = await supabase
+        .from('resellers')
+        .select('id')
+        .eq('slug', resellerSlugParam)
+        .maybeSingle();
+      
+      console.log('OVG-PLATFORM-V2: Strict reseller lookup for:', { resellerSlugParam, rData, rErr: rErr?.message });
+      
+      if (rErr || !rData?.id) {
+        console.error('OVG-PLATFORM-V2: Reseller not found:', { resellerSlugParam, error: rErr?.message });
+        
+        // Try to create the reseller record for any valid slug
+        if (resellerSlugParam && resellerSlugParam.length > 0) {
+          console.log('OVG-PLATFORM-V2: Attempting to create reseller record for:', resellerSlugParam);
+          
+          // Validation Check: Ensure slug meets format requirements
+          const slugValidation = {
+            length: resellerSlugParam.length,
+            hasSpecialChars: /[^a-z0-9-]/.test(resellerSlugParam),
+            startsWithNumber: /^\d/.test(resellerSlugParam),
+            endsWithHyphen: /-$/.test(resellerSlugParam),
+            hasConsecutiveHyphens: /--/.test(resellerSlugParam)
+          };
+          
+          console.log('OVG-PLATFORM-V2: Slug validation:', slugValidation);
+          
+          if (slugValidation.hasSpecialChars || slugValidation.startsWithNumber || slugValidation.endsWithHyphen || slugValidation.hasConsecutiveHyphens) {
+            console.error('OVG-PLATFORM-V2: Slug validation failed:', slugValidation);
+            setAllTenants([]);
+            setLoading(false);
+            return;
+          }
+          
+          try {
+            // Generate reseller name from slug (capitalize words)
+            const resellerName = resellerSlugParam
+              .split('-')
+              .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+              .join(' ');
+            
+            console.log('OVG-PLATFORM-V2: Generated reseller name:', resellerName);
+            
+            // Use API endpoint with service role permissions instead of direct database insert
+            const response = await fetch('/api/resellers/create', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                slug: resellerSlugParam,
+                name: resellerName
+              })
+            });
+            
+            const result = await response.json();
+            
+            if (!response.ok) {
+              console.error('OVG-PLATFORM-V2: API failed to create reseller:', result);
+              setAllTenants([]);
+              setLoading(false);
+              return;
+            }
+            
+            console.log('OVG-PLATFORM-V2: API response:', result);
+            
+            if (result.reseller?.id) {
+              resellerId = result.reseller.id;
+              console.log('OVG-PLATFORM-V2: Successfully created reseller via API:', result.reseller);
+            } else {
+              console.error('OVG-PLATFORM-V2: API response missing reseller ID:', result);
+              setAllTenants([]);
+              setLoading(false);
+              return;
+            }
+          } catch (apiErr) {
+            console.error('OVG-PLATFORM-V2: Exception calling reseller creation API:', apiErr);
+            setAllTenants([]);
+            setLoading(false);
+            return;
+          }
+        } else {
+          // For other slugs, show clean slate
+          setAllTenants([]);
+          setLoading(false);
+          return;
+        }
+      } else {
+        resellerId = rData.id;
+      }
+      
+      console.log('OVG-PLATFORM-V2: Reseller ID confirmed:', { resellerSlugParam, resellerId });
 
       // 2) Build tenants query
       let q = supabase
@@ -977,7 +1086,7 @@ export function ClientsGridInternal({
       // if (offlineOnly) q = q.or(`last_seen.is.null,last_seen.lt.${cutoffIso}`);
 
       const { data, error } = await q;
-      console.log('fetchTenants response:', { cutoffIso, filterParam, resellerSlugParam, dataLength: data?.length ?? 0, error });
+      console.log('fetchTenants response:', { filterParam, resellerSlugParam, dataLength: data?.length ?? 0, error });
 
       if (error) throw error;
 
@@ -1141,27 +1250,45 @@ export function ClientsGridInternal({
         if (visibleClients.length === 0) {
           return (
             <div className="backdrop-blur-xl bg-white/[0.02] border border-white/10 rounded-lg p-12 text-center">
+              {/* OVG Engage Branding */}
+              <div className="mb-6">
+                <div className="px-8 py-3 bg-gradient-to-br from-cyan-400 to-blue-600 rounded-full mx-auto flex items-center justify-center shadow-lg shadow-cyan-400/50 max-w-xs">
+                  <span className="text-white font-bold tracking-widest text-sm">OVG ENGAGE</span>
+                </div>
+              </div>
+              
+              {/* Clean Slate Message */}
+              <div className="text-lg font-light text-white mb-4">
+                Clean Slate
+              </div>
               <div className="text-xs text-white/40 tracking-[0.2em] uppercase mb-2">
                 {filter === 'all' || filter === 'ALL' 
-                  ? 'No clients yet' 
+                  ? 'Your client portfolio is ready' 
                   : `No ${filter.charAt(0).toUpperCase() + filter.slice(1).toLowerCase()} Clients Onboarded`
                 }
               </div>
-              <div className="text-xs text-white/20 mb-4">
+              <div className="text-xs text-white/20 mb-6">
                 {filter === 'all' || filter === 'ALL' 
-                  ? 'Add your first client to get started' 
+                  ? 'Begin building your intelligent client ecosystem' 
                   : 'Expand your portfolio in this category'
                 }
               </div>
+              
+              {/* Action Button */}
               <button
                 onClick={() => setShowAddClientModal(true)}
-                className="px-6 py-2 bg-[#0097b2]/20 border border-[#0097b2]/50 rounded-full text-xs tracking-widest uppercase text-[#0097b2] hover:bg-[#0097b2]/30 hover:border-[#0097b2] transition-all duration-300"
+                className="px-8 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 border border-cyan-500/50 rounded-full text-xs tracking-widest uppercase text-white hover:from-cyan-600 hover:to-blue-700 hover:border-cyan-400 transition-all duration-300 shadow-lg shadow-cyan-400/30"
               >
                 {filter === 'all' || filter === 'ALL' 
                   ? 'Add Your First Client' 
                   : `Add Your First ${filter.charAt(0).toUpperCase() + filter.slice(1).toLowerCase()} Client`
                 }
               </button>
+              
+              {/* Subtle hint */}
+              <div className="mt-6 text-xs text-white/10 tracking-[0.15em] uppercase">
+                Powered by OVG Engage Intelligence
+              </div>
             </div>
           );
         }
@@ -1225,7 +1352,19 @@ export function ClientsGridInternal({
       )}
 
       {showAddClientModal && (
-        <UniversalCommandModal onClose={() => setShowAddClientModal(false)} />
+        <UniversalCommandModal 
+          onClose={() => setShowAddClientModal(false)} 
+          resellerSlug={resellerSlug}
+          onClientCreated={() => {
+            console.log('OVG-PLATFORM-V2: Client created successfully, adding delay before fetch');
+            // Add 500ms delay to allow database to settle (race condition fix)
+            setTimeout(() => {
+              console.log('OVG-PLATFORM-V2: Delay complete, fetching tenants with ALL filter');
+              // Reset UI filters to 'ALL' so user can see the new card
+              fetchTenants({ offlineOnly: false, filterParam: 'ALL', resellerSlugParam: resellerSlug });
+            }, 500);
+          }}
+        />
       )}
     </div>
   );

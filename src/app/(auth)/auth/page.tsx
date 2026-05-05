@@ -73,6 +73,29 @@ export default function AuthPage() {
   }, [currentGreeting, greetings]);
 
   
+  // Function to update user reseller slug for authorization fix
+  const updateUserResellerSlug = async (newSlug: string) => {
+    try {
+      const response = await fetch('/api/auth/update-reseller-slug', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newSlug })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        console.log("OVG-PLATFORM-V2: Successfully updated reseller slug:", data);
+        return true;
+      } else {
+        console.error("OVG-PLATFORM-V2: Failed to update reseller slug");
+        return false;
+      }
+    } catch (error) {
+      console.error("OVG-PLATFORM-V2: Error updating reseller slug:", error);
+      return false;
+    }
+  };
+
   // Production Excellence: Active session guard with metadata fix
   useEffect(() => {
     const checkSession = async () => {
@@ -83,7 +106,9 @@ export default function AuthPage() {
           console.log("OVG-PLATFORM-V2: Active session detected, checking metadata");
           
           // Check if user has reseller_slug metadata
-          if (!session.user.user_metadata?.reseller_slug) {
+          const userResellerSlug = session.user.user_metadata?.reseller_slug;
+          
+          if (!userResellerSlug) {
             console.log("OVG-PLATFORM-V2: User missing reseller_slug, attempting to fix metadata");
             
             // Try to fix metadata automatically
@@ -125,8 +150,29 @@ export default function AuthPage() {
             }
           }
           
-          // Get user's reseller slug from metadata or use fallback
-          const userSlug = session.user.user_metadata?.reseller_slug || 'acme-corp';
+          // Get user's reseller slug from metadata
+          const userSlug = session.user.user_metadata?.reseller_slug;
+          
+          if (!userSlug) {
+            // Fallback for missing slug
+            router.push('/reseller/acme-corp/clients');
+            return;
+          }
+          
+          // Check if user has wrong reseller slug (acme-corp instead of lastchaptermedia2016)
+          if (userSlug === 'acme-corp') {
+            console.log("OVG-PLATFORM-V2: User has incorrect reseller slug, updating to lastchaptermedia2016");
+            
+            const updated = await updateUserResellerSlug('lastchaptermedia2016');
+            if (updated) {
+              console.log("OVG-PLATFORM-V2: Successfully updated reseller slug, redirecting to correct dashboard");
+              router.push('/reseller/lastchaptermedia2016/clients');
+              return;
+            } else {
+              console.error("OVG-PLATFORM-V2: Failed to update reseller slug, using fallback");
+            }
+          }
+          
           router.push(`/reseller/${userSlug}/clients`);
         }
       } catch (error) {
@@ -143,11 +189,36 @@ export default function AuthPage() {
     setError(null);
 
     try {
+      // Sheer Brilliance Grade: Verify credentials aren't null/undefined
       console.log("OVG-PLATFORM-V2: Authentication attempt started");
+      console.log("OVG-PLATFORM-V2: Credential validation:", {
+        email: email,
+        emailLength: email?.length,
+        emailType: typeof email,
+        passwordProvided: !!password,
+        passwordLength: password?.length,
+        passwordType: typeof password,
+        emailEmpty: !email || email.trim() === '',
+        passwordEmpty: !password || password.trim() === ''
+      });
+
+      if (!email || email.trim() === '') {
+        console.error("OVG-PLATFORM-V2: Email is null or empty");
+        setError('Email is required');
+        setIsLoading(false);
+        return;
+      }
+
+      if (!password || password.trim() === '') {
+        console.error("OVG-PLATFORM-V2: Password is null or empty");
+        setError('Password is required');
+        setIsLoading(false);
+        return;
+      }
 
       const { data: { session }, error: authError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
+        email: email.trim(),
+        password: password,
       });
 
       if (authError) {
@@ -157,10 +228,19 @@ export default function AuthPage() {
       }
 
       if (session) {
-        console.log("OVG-PLATFORM-V2: Handshake verified. Routing to reseller dashboard.");
+        console.log("OVG-PLATFORM-V2: Handshake verified. User ID:", session.user.id);
+        console.log("OVG-PLATFORM-V2: User metadata:", session.user.user_metadata);
         
-        // Aligning with the established Acme Corp hierarchy
-        router.push('/reseller/acme-corp/clients');
+        // Get user's reseller slug from metadata
+        const userResellerSlug = session.user.user_metadata?.reseller_slug;
+        
+        if (userResellerSlug) {
+          console.log("OVG-PLATFORM-V2: Routing to user's reseller dashboard:", userResellerSlug);
+          router.push(`/reseller/${userResellerSlug}/clients`);
+        } else {
+          console.log("OVG-PLATFORM-V2: User missing reseller_slug, routing to default");
+          router.push('/reseller/lastchaptermedia2016/clients');
+        }
       } else {
         console.error("OVG-PLATFORM-V2: No session returned from authentication");
         setError('Authentication failed. Please try again.');
@@ -474,6 +554,26 @@ export default function AuthPage() {
                 ) : (
                   mode === 'signin' ? 'Sign In' : 'Create Account'
                 )}
+              </button>
+
+              {/* Diagnostic Button - Production Excellence */}
+              <button
+                type="button"
+                onClick={async () => {
+                  console.log("OVG-PLATFORM-V2: Running authentication diagnostics...");
+                  try {
+                    const response = await fetch('/api/auth/diagnostics');
+                    const diagnostics = await response.json();
+                    console.log("OVG-PLATFORM-V2: Diagnostics results:", diagnostics);
+                    alert(`Diagnostics complete. Check console for details. User Status: ${diagnostics.user.status}, Reseller Status: ${diagnostics.reseller.status}`);
+                  } catch (err) {
+                    console.error("OVG-PLATFORM-V2: Diagnostics failed:", err);
+                    alert("Diagnostics failed. Check console for errors.");
+                  }
+                }}
+                className="w-full py-2 bg-white/5 border border-white/10 rounded-lg text-xs text-white/60 hover:bg-white/10 hover:border-white/20 transition-all duration-200"
+              >
+                🔍 Run Authentication Diagnostics
               </button>
             </form>
           </div>

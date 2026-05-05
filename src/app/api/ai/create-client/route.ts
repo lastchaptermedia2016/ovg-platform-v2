@@ -19,6 +19,7 @@ const ALLOWED_INDUSTRIES = [
 const CreateClientRequestSchema = z.object({
   voiceCommand: z.string().optional(),
   resellerSlug: z.string().min(1),
+  resellerId: z.string().uuid().optional(), // Payload Enforcement: Explicit resellerId
   parseOnly: z.boolean().default(false),
   clientData: z.object({
     name: z.string().min(1),
@@ -29,24 +30,59 @@ const CreateClientRequestSchema = z.object({
     mobile: z.string().nullable().optional(),
     website: z.string().nullable().optional(), // Flexible URL validation - will be normalized
     systemPrompt: z.string().nullable().optional(),
+    reseller_id: z.string().uuid().optional(), // Payload Enforcement: Explicit foreign key in client data
   }).optional(),
 });
 
 type CreateClientRequest = z.infer<typeof CreateClientRequestSchema>;
 
-// Helper function to normalize URLs
+// Helper function to normalize URLs with soft validation
 const normalizeUrl = (url: string | null | undefined): string | null => {
   if (!url || url.trim() === '') return null;
   
-  const cleanUrl = url.trim();
+  let cleanUrl = url.trim();
+  
+  // Validation Logic: Soften regex to handle raw SST text gracefully
+  // Remove common STT artifacts and normalize "dot com" phrases
+  cleanUrl = cleanUrl
+    .replace(/\s+dot\s+com/gi, '.com')
+    .replace(/\s+dot\s+/gi, '.')
+    .replace(/\s+/g, '')
+    .toLowerCase();
   
   // If already has protocol, return as-is
   if (cleanUrl.startsWith('http://') || cleanUrl.startsWith('https://')) {
     return cleanUrl;
   }
   
+  // Validation Logic: Check if it looks like a domain (has at least one dot)
+  if (!cleanUrl.includes('.')) {
+    console.log('[CreateClient] Website does not contain a dot, treating as invalid:', cleanUrl);
+    return null;
+  }
+  
   // Add https:// for domains without protocol
   return `https://${cleanUrl}`;
+};
+
+// Sanitize Inputs: String formatter to prevent database crashes from raw SST text
+const sanitizeString = (value: string | null | undefined): string | null => {
+  if (!value || value.trim() === '') return null;
+  
+  return value
+    .trim()
+    .replace(/[\x00-\x1F\x7F]/g, '') // Remove control characters
+    .substring(0, 500); // Limit length to prevent overflow
+};
+
+const sanitizeMobile = (mobile: string | null | undefined): string | null => {
+  if (!mobile || mobile.trim() === '') return null;
+  
+  // Remove all non-numeric characters except + for country code
+  return mobile
+    .trim()
+    .replace(/[^\d+]/g, '')
+    .substring(0, 20); // Limit length for phone numbers
 };
 
 const SYSTEM_PROMPT = `You are a client onboarding assistant. Extract client details from the user's voice command.
@@ -92,7 +128,7 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
     
-    const { voiceCommand, resellerSlug, parseOnly = false, clientData } = validationResult.data;
+    const { voiceCommand, resellerSlug, resellerId: explicitResellerId, parseOnly = false, clientData } = validationResult.data;
 
     if (!resellerSlug) {
       return NextResponse.json({ error: 'resellerSlug is required' }, { status: 400 });
@@ -100,15 +136,39 @@ export async function POST(request: NextRequest) {
 
     const supabase = await createSupabaseClient();
 
-    // Resolve reseller slug to UUID
-    const { data: reseller, error: resellerError } = await supabase
-      .from('resellers')
-      .select('id')
-      .eq('slug', resellerSlug)
-      .single();
+    // Payload Enforcement: Use explicit resellerId if provided, otherwise resolve from slug
+    let resellerId = explicitResellerId;
+    let reseller = null;
 
-    if (resellerError || !reseller) {
-      return NextResponse.json({ error: 'Reseller not found' }, { status: 404 });
+    if (!resellerId) {
+      // Resolve reseller slug to UUID (fallback logic)
+      const { data: resellerData, error: resellerError } = await supabase
+        .from('resellers')
+        .select('id')
+        .eq('slug', resellerSlug)
+        .single();
+
+      if (resellerError || !resellerData) {
+        return NextResponse.json({ error: 'Reseller not found' }, { status: 404 });
+      }
+      
+      resellerId = resellerData.id;
+      reseller = resellerData;
+    } else {
+      console.log('OVG-PLATFORM-V2: Using explicit resellerId from payload:', { resellerId, resellerSlug });
+      // Verify the explicit resellerId matches the slug
+      const { data: resellerData, error: verifyError } = await supabase
+        .from('resellers')
+        .select('id')
+        .eq('slug', resellerSlug)
+        .eq('id', resellerId)
+        .single();
+      
+      if (verifyError || !resellerData) {
+        return NextResponse.json({ error: 'Reseller ID and slug mismatch' }, { status: 400 });
+      }
+      
+      reseller = resellerData;
     }
 
     // MODE 1: Insert confirmed clientData directly (from handleConfirm)
@@ -132,36 +192,81 @@ export async function POST(request: NextRequest) {
       // Normalize website URL before database insertion
       const normalizedWebsite = normalizeUrl(clientData.website);
       
+      // Sanitize Inputs: Apply string formatters to prevent database crashes
+      const sanitizedName = sanitizeString(clientData.name);
+      const sanitizedEmail = sanitizeString(clientData.email);
+      const sanitizedMobile = sanitizeMobile(clientData.mobile);
+      const sanitizedSystemPrompt = sanitizeString(clientData.systemPrompt);
+      
       console.log('[CreateClient] Inserting client with service role:', {
-        name: clientData.name,
+        name: sanitizedName,
         industry: clientData.industry,
-        mobile: clientData.mobile,
+        mobile: sanitizedMobile,
         website: normalizedWebsite,
-        systemPrompt: clientData.systemPrompt,
-        resellerId: reseller.id,
+        systemPrompt: sanitizedSystemPrompt,
+        resellerId: resellerId,
+        resellerSlug: resellerSlug,
+        resellerIdType: typeof resellerId,
+        resellerIdLength: resellerId?.length
+      });
+
+      // NULL Prevention Guard: Validate required fields before insert
+      const missingFields: string[] = [];
+      if (!sanitizedName || sanitizedName.trim() === '') missingFields.push('name');
+      if (!clientData.industry || clientData.industry.trim() === '') missingFields.push('industry');
+      if (!sanitizedEmail || sanitizedEmail.trim() === '') missingFields.push('email');
+
+      if (missingFields.length > 0) {
+        console.error('[CreateClient] NULL Prevention Guard: Missing required fields:', missingFields);
+        return NextResponse.json({
+          error: 'Missing required fields',
+          missingFields: missingFields,
+          message: `Partner, I missed the ${missingFields.join(', ')}—could you say that again?`
+        }, { status: 400 });
+      }
+
+      const insertPayload = {
+        tenant_id: crypto.randomUUID(),
+        name: sanitizedName,
+        industry: clientData.industry,
+        email: sanitizedEmail,           // ✅ Now safe because the column exists
+        mobile_number: sanitizedMobile,  // ✅ Matches database column
+        website_url: normalizedWebsite,  // ✅ Matches database column
+        reseller_id: resellerId,         // ✅ Verified UUID: 284931b2...
+        system_prompt: sanitizedSystemPrompt,
+        created_at: new Date().toISOString(),
+        is_active: true,
+        show_ovg_branding: true,
+        pricing_tier_key: 'basic',
+        custom_assets: {}
+      };
+
+      console.log('[CreateClient] Final database insert payload:', {
+        ...insertPayload,
+        resellerIdConfirmed: insertPayload.reseller_id
       });
 
       const { data: newTenant, error: insertError } = await serviceClient
         .from('tenants')
-        .insert({
-          tenant_id: crypto.randomUUID(),
-          name: clientData.name,
-          industry: clientData.industry,
-          reseller_id: reseller.id, // Ensure reseller_id from active session
-          is_active: true,
-          show_ovg_branding: true,
-          pricing_tier_key: 'basic',
-          custom_assets: {},
-          mobile_number: clientData.mobile || null,
-          website_url: normalizedWebsite,
-          system_prompt: clientData.systemPrompt || null,
-        })
+        .insert(insertPayload)
         .select('id, name, industry')
         .single();
 
       if (insertError) {
         console.error('[CreateClient] Insert error:', insertError);
-        return NextResponse.json({ error: 'Failed to create client', details: insertError.message }, { status: 500 });
+        console.error('[CreateClient] Error details:', {
+          code: insertError.code,
+          message: insertError.message,
+          details: insertError.details,
+          hint: insertError.hint,
+          isPGRSTError: insertError.code?.includes('PGRST') || false
+        });
+        return NextResponse.json({ 
+          error: 'Failed to create client', 
+          details: insertError.message,
+          errorCode: insertError.code,
+          isPGRSTError: insertError.code?.includes('PGRST') || false
+        }, { status: 500 });
       }
 
       // 🎨 AUTO-BRANDING: Generate AI branding based on industry and vibe

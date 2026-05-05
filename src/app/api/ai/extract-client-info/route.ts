@@ -13,13 +13,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Transcript and fields are required' }, { status: 400 });
     }
 
-    // Create prompt for Groq to extract specific fields
+    // Create prompt for Groq to extract specific fields with semantic mapping
     const fieldDescriptions = {
-      name: 'client business name',
-      industry: 'industry sector (e.g., technology, healthcare, finance, retail, automotive, etc.)',
-      email: 'email address',
-      mobile: 'phone number',
-      website: 'website URL',
+      name: 'client business name (exact business name)',
+      industry: 'industry sector (must be one of: AUTOMOTIVE, RETAIL, HEALTHCARE, INSURANCE, GENERAL BUSINESS)',
+      email: 'email address (with @ and domain)',
+      mobile: 'phone number (in E.164 format with + country code if possible)',
+      website: 'website URL (with proper domain format, normalize "dot com" to ".com")',
       vibe: 'business personality or description'
     };
 
@@ -28,12 +28,19 @@ export async function POST(request: Request) {
 Fields to extract:
 ${fields.map((field: string) => `- ${field}: ${fieldDescriptions[field as keyof typeof fieldDescriptions] || field}`).join('\n')}
 
+Semantic Mapping Rules:
+- For website: Normalize "dot com" to ".com", remove spaces, ensure proper domain format
+- For mobile: Format to E.164 (+1 for US numbers if country code missing)
+- For industry: Map to exact enum values: AUTOMOTIVE, RETAIL, HEALTHCARE, INSURANCE, GENERAL BUSINESS
+- For name: Extract exact business name, no generic terms
+
 Return ONLY a JSON object with the extracted fields. If a field is not found, omit it from the JSON. Do not include any explanations or additional text.
 
 Example format:
 {
   "name": "Acme Corp",
-  "industry": "technology"
+  "industry": "GENERAL BUSINESS",
+  "website": "acmecorp.com"
 }`;
 
     const response = await groq.chat.completions.create({

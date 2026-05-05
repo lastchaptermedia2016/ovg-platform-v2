@@ -71,32 +71,13 @@ export async function GET(
     }
 
     // Fetch all active clients for this reseller
-    let clients, clientsError;
-    
-    try {
-      const result = await supabase
-        .from('tenants')
-        .select('id, name, industry, is_active, branding_colors, custom_assets, created_at')
-        .eq('reseller_id', reseller.id)
-        .eq('is_active', true)
-        .order('created_at', { ascending: false });
-      clients = result.data;
-      clientsError = result.error;
-    } catch (e) {
-      console.log('User session failed for clients, trying service client');
-    }
-
-    // If user session fails, use service client
-    if (clientsError || !clients) {
-      const result = await serviceClient
-        .from('tenants')
-        .select('id, name, industry, is_active, branding_colors, custom_assets, created_at')
-        .eq('reseller_id', reseller.id)
-        .eq('is_active', true)
-        .order('created_at', { ascending: false });
-      clients = result.data;
-      clientsError = result.error;
-    }
+    // Skip user session - RLS returns empty array instead of error, blocking fallback
+    const { data: clients, error: clientsError } = await serviceClient
+      .from('tenants')
+      .select('id, name, category, is_active, branding_colors, custom_assets, created_at')
+      .eq('reseller_id', reseller.id)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false });
 
     if (clientsError) {
       return NextResponse.json({ error: clientsError.message }, { status: 500 });

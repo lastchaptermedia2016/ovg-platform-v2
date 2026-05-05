@@ -28,27 +28,16 @@ async function verifyResellerAccess(resellerSlug: string) {
       return { authorized: false, redirectTo: "/auth" };
     }
     
-    // Critical Security: Compare URL slug with user's authorized slug
+    // Hierarchy-First Auth: Compare URL slug with user's authorized slug
     if (userResellerSlug !== resellerSlug) {
       console.error("OVG-PLATFORM-V2: SECURITY BREACH ATTEMPT - User", user.id, 
         "tried to access reseller", resellerSlug, "but is authorized for", userResellerSlug);
       return { authorized: false, redirectTo: `/reseller/${userResellerSlug}/clients` };
     }
     
-    // Additional verification: Check if user exists in tenants table (may be missing for legacy users)
-    const { data: tenantData, error: tenantError } = await supabase
-      .from("tenants")
-      .select("id, reseller_id")
-      .eq("reseller_id", user.id)
-      .single();
-    
-    if (tenantError || !tenantData) {
-      console.log("OVG-PLATFORM-V2: User missing from tenants table - will be auto-created");
-      // Don't fail - the auth page will handle tenant creation
-      return { authorized: true, redirectTo: null };
-    }
-    
-    console.log("OVG-PLATFORM-V2: Security check passed for user", user.id, "reseller", resellerSlug);
+    // Establish Identity: If slugs match, user is authorized as Reseller Admin
+    // Grant access directly without checking tenants table (decoupled from tenant data)
+    console.log("OVG-PLATFORM-V2: Hierarchy-First Auth passed for user", user.id, "reseller", resellerSlug);
     return { authorized: true, redirectTo: null };
     
   } catch (error) {
