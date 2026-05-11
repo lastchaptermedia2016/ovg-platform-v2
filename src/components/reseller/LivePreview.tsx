@@ -5,26 +5,12 @@ import { MessageSquare, X, Send } from 'lucide-react';
 import { useBrandKit } from '@/contexts/BrandKitContext';
 
 export function LivePreview() {
-  const { template, botPersonality, headerUrl, footerUrl, primaryColor, secondaryColor } = useBrandKit();
+  const { template, botPersonality, primaryColor } = useBrandKit();
   const [isOpen, setIsOpen] = useState(false);
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState([
     { role: 'bot', text: template === 'automotive' ? 'Welcome! I can help you browse our inventory, schedule test drives, and discuss trade-in options. What vehicle are you interested in today?' : 'Hello! How can I assist you today?' }
   ]);
-
-  const getGreeting = () => {
-    if (template === 'automotive') {
-      return 'Welcome! I can help you browse our inventory, schedule test drives, and discuss trade-in options.';
-    }
-    switch (botPersonality) {
-      case 'aggressive':
-        return "Let's get you the best deal today! What are you looking for?";
-      case 'informational':
-        return 'I\'m here to help you learn more about our products and services.';
-      default:
-        return 'Hello! How can I assist you today?';
-    }
-  };
 
   const handleSend = () => {
     if (!message.trim()) return;

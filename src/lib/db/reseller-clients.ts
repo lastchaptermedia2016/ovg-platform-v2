@@ -6,6 +6,10 @@ export interface ResellerClient {
   tenant_id: string;
   reseller_id: string;
   name: string;
+  industry: string | null;
+  email: string | null;
+  mobile: string | null;
+  website: string | null;
   branding_colors: {
     primary: string;
     secondary: string;
@@ -25,14 +29,16 @@ export interface ResellerClient {
 
 export async function getResellerClients(resellerId: string): Promise<ResellerClient[]> {
   // Stub implementation - replace with actual database query
+  console.log('[DB Stub] Fetching clients for reseller:', resellerId);
   return [];
 }
 
 export async function createResellerClient(client: Omit<ResellerClient, 'id' | 'created_at' | 'updated_at'>): Promise<ResellerClient> {
   // Stub implementation - replace with actual database insert
   return {
-    ...client,
     id: Math.random().toString(36),
+    ...client,
+    is_active: true,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   };
@@ -40,10 +46,12 @@ export async function createResellerClient(client: Omit<ResellerClient, 'id' | '
 
 export async function updateResellerClient(id: string, updates: Partial<ResellerClient>): Promise<ResellerClient | null> {
   // Stub implementation - replace with actual database update
+  console.log('[DB Stub] Updating reseller client:', { id, updates });
   return null;
 }
 
 export async function deleteResellerClient(id: string): Promise<boolean> {
   // Stub implementation - replace with actual database delete
+  console.log('[DB Stub] Deleting reseller client:', id);
   return true;
 }

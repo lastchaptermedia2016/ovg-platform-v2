@@ -101,23 +101,23 @@ function ParticleCanvas() {
   return <canvas ref={canvasRef} className="fixed inset-0 z-0 pointer-events-none" />;
 }
 
+const blackBoxMessages = [
+  "Hannah: Neural pathways calibrating...",
+  "Black Box: Quantum processing matrix initialized",
+  "System: Cognitive protocols engaged",
+  "AI Core: Synthesis sequence activated",
+  "Phoenix: Rising from the ashes of legacy systems",
+  "Network: Distributed intelligence online",
+  "Protocol: Advanced reasoning models loaded",
+  "Matrix: Real-time inference engine ready",
+];
+
 export default function Home() {
   const [displayText, setDisplayText] = useState("");
   const [statusText, setStatusText] = useState("");
   const [currentStatusIndex, setCurrentStatusIndex] = useState(0);
   const [isTypingStatus, setIsTypingStatus] = useState(true);
   const fullText = "OVG Platform v2: Phoenix Rising";
-
-  const blackBoxMessages = [
-    "Hannah: Neural pathways calibrating...",
-    "Black Box: Quantum processing matrix initialized",
-    "System: Cognitive protocols engaged",
-    "AI Core: Synthesis sequence activated",
-    "Phoenix: Rising from the ashes of legacy systems",
-    "Network: Distributed intelligence online",
-    "Protocol: Advanced reasoning models loaded",
-    "Matrix: Real-time inference engine ready",
-  ];
 
   useEffect(() => {
     let index = 0;

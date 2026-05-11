@@ -11,6 +11,22 @@ import { useResilientVoice } from '@/hooks/use-resilient-voice';
 import { CaptionsHUD } from '@/components/voice/CaptionsHUD';
 import { formatCurrency } from '@/utils/formatters';
 
+// Type definitions
+interface BulkConfirmation {
+  show: boolean;
+  count: number;
+  targetIds: string[];
+  payload: Record<string, unknown>;
+}
+
+interface AICommandResponse {
+  actionType: string;
+  targetIds: string[];
+  payload: Record<string, unknown>;
+  summary: string;
+  success?: boolean;
+}
+
 // Memoized to prevent unnecessary re-renders
 const useCategoryMap = () => useMemo(() => ({
   ALL: 'ALL',
@@ -62,7 +78,7 @@ export default function ClientsPage() {
   const [selectedClientName, setSelectedClientName] = useState<string>('');
   const [commandInput, setCommandInput] = useState('');
   const [inputFlash, setInputFlash] = useState(false);
-  const [bulkConfirmation, setBulkConfirmation] = useState<{ show: boolean; count: number; targetIds: string[]; payload: any } | null>(null);
+  const [bulkConfirmation, setBulkConfirmation] = useState<BulkConfirmation | null>(null);
   const [successRipple, setSuccessRipple] = useState(false);
   const [isAwaitingVoiceConfirm, setIsAwaitingVoiceConfirm] = useState(false);
   const confirmationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -95,7 +111,6 @@ export default function ClientsPage() {
   const {
     isListening,
     isProcessing,
-    volumeLevel,
     transcript: voiceTranscript,
     startListening,
     stopListening,
@@ -162,7 +177,7 @@ export default function ClientsPage() {
         { theme: { primary: '#0097b2' }, behavior: { prompt: 'Default' } },
         selectedTenantId ? { tenantId: selectedTenantId, category: activeFilter } : { category: activeFilter },
         activeSlug,
-        (response: { actionType: string; targetIds: string[]; payload: any; summary: string; success?: boolean } | undefined) => {
+        (response: AICommandResponse | undefined) => {
           // Handle bulk command response
           if (response?.actionType === 'BULK' && response?.targetIds?.length > 1) {
             setBulkConfirmation({
@@ -197,7 +212,7 @@ export default function ClientsPage() {
   });
 
   // Resilient 4-phase Voice Integration (Groq → ElevenLabs → Browser → Silent)
-  const { isPlaying: isVoicePlaying, isSilentMode, captions, playVoice: speakVoice, stopVoice, clearCaptions } = useResilientVoice();
+  const { isPlaying: isVoicePlaying, isSilentMode, captions, playVoice: speakVoice } = useResilientVoice();
 
   // 🔷 Production Excellence: Track TTS communication state for HUD
   const isCommunicating = isVoicePlaying;
@@ -249,14 +264,6 @@ export default function ClientsPage() {
 
   // Ref to debounce the offline toggle
   const offlineToggleTimeout = useRef<NodeJS.Timeout | null>(null);
-
-  // Sync URL to state - ONLY for category
-  useEffect(() => {
-    if (categoryParam !== activeFilter) {
-      setActiveFilter(categoryParam);
-      setShowOfflineOnly(false);
-    }
-  }, [categoryParam]);
 
   const handleFilterChange = useCallback((newFilter: string) => {
     const upperFilter = newFilter.toUpperCase();
@@ -324,7 +331,7 @@ export default function ClientsPage() {
       activeSlug
     );
     setCommandInput('');
-  }, [selectedTenantId, commandInput, activeFilter, resellerSlug]);
+  }, [selectedTenantId, commandInput, activeFilter, resellerSlug, handleCommandSubmit]);
 
   return (
     <div className="w-full">

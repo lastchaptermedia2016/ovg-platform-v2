@@ -17,13 +17,30 @@ interface AudioResponse {
   arrayBuffer(): Promise<ArrayBuffer>;
 }
 
+interface GroqCompletionOptions {
+  model?: string;
+  messages?: Array<{ role: string; content: string }>;
+  temperature?: number;
+  max_tokens?: number;
+  stream?: boolean;
+  [key: string]: unknown;
+}
+
+interface GroqAudioSpeechOptions {
+  model?: string;
+  input?: string;
+  voice?: string;
+  response_format?: string;
+  [key: string]: unknown;
+}
+
 interface GroqInterface {
   completions: {
-    create(options: any): ChatCompletionStream;
+    create(options: GroqCompletionOptions): ChatCompletionStream;
   };
   audio: {
     speech: {
-      create(options: any): Promise<AudioResponse>;
+      create(options: GroqAudioSpeechOptions): Promise<AudioResponse>;
     };
   };
 }
@@ -31,14 +48,14 @@ interface GroqInterface {
 // Mock implementation - replace with actual Groq SDK
 export const groq: GroqInterface = {
   completions: {
-    async *create(options: any): AsyncGenerator<ChatCompletionChunk> {
+    async *create(): AsyncGenerator<ChatCompletionChunk> {
       // Stub - replace with actual Groq API call
       yield { choices: [{ delta: { content: 'This is a mock response from the stubbed groq implementation.' } }] };
     }
   },
   audio: {
     speech: {
-      async create(options: any): Promise<AudioResponse> {
+      async create(): Promise<AudioResponse> {
         // Stub - replace with actual Groq TTS API call
         return {
           async arrayBuffer() {

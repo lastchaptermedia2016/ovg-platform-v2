@@ -26,7 +26,7 @@ export function ResellerProvider({
   resellerSlug 
 }: ResellerProviderProps) {
   const [branding, setBranding] = useState<BrandingData | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [_isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     async function fetchResellerBranding() {

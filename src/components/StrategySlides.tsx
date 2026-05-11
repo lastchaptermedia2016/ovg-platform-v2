@@ -106,7 +106,7 @@ export default function StrategySlides({ isOpen, onClose }: StrategySlidesProps)
               </button>
               
               <div className="text-[#FFD700] text-xs font-mono tracking-widest">
-                PHASE {String(currentSlide + 1).padStart(2, '0')} // {String(totalSlides).padStart(2, '0')}
+                {'PHASE ' + String(currentSlide + 1).padStart(2, '0') + ' // ' + String(totalSlides).padStart(2, '0')}
               </div>
               
               <button
@@ -121,7 +121,7 @@ export default function StrategySlides({ isOpen, onClose }: StrategySlidesProps)
             {/* Slide Counter - Space Mono */}
             <div className="absolute bottom-4 right-20 bg-black/60 backdrop-blur-sm border border-[#FFD700]/10 px-4 py-2 rounded-full">
               <span className="text-[#FFD700] text-sm font-mono tracking-widest">
-                PHASE {String(currentSlide + 1).padStart(2, '0')} // {String(totalSlides).padStart(2, '0')}
+                {'PHASE ' + String(currentSlide + 1).padStart(2, '0') + ' // ' + String(totalSlides).padStart(2, '0')}
               </span>
             </div>
 

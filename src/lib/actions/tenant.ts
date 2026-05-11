@@ -18,7 +18,7 @@ export async function getTenantData(slug: string): Promise<Tenant | null> {
     // Runtime validation with Zod to ensure DB schema matches TypeScript types
     const validatedTenant = TenantSchema.parse(data);
     return validatedTenant;
-  } catch (error) {
+  } catch {
     return null;
   }
 }

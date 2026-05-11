@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
@@ -19,17 +19,7 @@ export default function SignInPage() {
   const [error, setError] = useState<string | null>(null);
   const autoLoginFired = useRef(false);
 
-  useEffect(() => {
-    if (isDevelopment && !autoLoginFired.current) {
-      autoLoginFired.current = true;
-      const timer = setTimeout(() => {
-        handleSignIn(TEST_CREDENTIALS.email, TEST_CREDENTIALS.password);
-      }, 500);
-      return () => clearTimeout(timer);
-    }
-  }, []);
-
-  const handleSignIn = async (emailToUse: string, passwordToUse: string) => {
+  const handleSignIn = useCallback(async (emailToUse: string, passwordToUse: string) => {
     setIsLoading(true);
     setError(null);
 
@@ -72,7 +62,17 @@ export default function SignInPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [router]);
+
+  useEffect(() => {
+    if (isDevelopment && !autoLoginFired.current) {
+      autoLoginFired.current = true;
+      const timer = setTimeout(() => {
+        handleSignIn(TEST_CREDENTIALS.email, TEST_CREDENTIALS.password);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [handleSignIn]);
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();

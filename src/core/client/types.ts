@@ -44,7 +44,7 @@ export interface ClientPolicy {
   id: string;
   client_id: string;
   policy_type: string;
-  policy_data: Record<string, any>;
+  policy_data: Record<string, unknown>;
   created_at: string;
 }
 

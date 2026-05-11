@@ -1,0 +1,23 @@
+# OVG Platform Production Excellence Rules
+
+## General Principles
+- All code must be "production excellence" grade: no quick fixes or sloppy logic.
+- Prefer modular, scalable components under 300 lines.
+- Always use strict TypeScript types; avoid 'any' at all costs.
+
+## State & React Hooks
+- NEVER call setState synchronously within an effect body (prevents cascading renders).
+- All functions passed to useEffect or as props MUST be wrapped in useCallback.
+- Every useEffect and useCallback must have a complete dependency array.
+
+## Performance & Next.js
+- Use the Next.js <Image /> component instead of native <img> tags for optimization.
+- Ensure all components are optimized for Core Web Vitals.
+
+## Error Handling & Logging
+- Prefix unused catch variables with an underscore (e.g., `_err`).
+- Do not leave console.log statements in production code.
+
+## Verification Workflow
+- After every file modification, you MUST run `npm run lint` on the affected file.
+- If linting fails, self-correct immediately before reporting completion.

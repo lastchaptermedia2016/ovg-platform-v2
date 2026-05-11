@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ClientBrandingStudio } from '@/components/reseller/ClientBrandingStudio';
+import type { Client } from '@/types';
 
 export default function ResellerBrandingPage() {
   const params = useParams();
@@ -10,7 +11,7 @@ export default function ResellerBrandingPage() {
   const resellerSlug = params.resellerSlug as string;
 
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
-  const [clients, setClients] = useState<any[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -19,14 +20,14 @@ export default function ResellerBrandingPage() {
       try {
         const response = await fetch(`/api/reseller/${resellerSlug}/clients`);
         if (!response.ok) throw new Error('Failed to fetch clients');
-        const data = await response.json();
+        const data = await response.json() as Client[];
         setClients(data);
         if (data.length > 0) {
           setSelectedClientId(data[0].id);
         }
         console.log("OVG-PLATFORM-V2: Reseller branding studio initialized for", resellerSlug);
-      } catch (err: any) {
-        setError(err.message);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unknown error');
       } finally {
         setIsLoading(false);
       }

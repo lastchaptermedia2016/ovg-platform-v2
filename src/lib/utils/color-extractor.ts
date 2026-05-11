@@ -17,7 +17,7 @@ export interface ExtractedColors {
   accent: string;
 }
 
-export async function extractBrandColors(url: string): Promise<ExtractedColors> {
+export async function extractBrandColors(): Promise<ExtractedColors> {
   // TODO: Implement actual color extraction
   // This will involve:
   // - Fetching the website HTML

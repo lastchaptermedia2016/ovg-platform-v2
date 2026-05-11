@@ -1,37 +1,56 @@
+
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useSyncExternalStore } from 'react';
 import { MasterpieceHeader } from './MasterpieceHeader';
 
-interface ResellerHUDClientProps {
-  reseller: any;
-  clients: any[];
-  clientCount: number;
-  branding: any;
+export interface Reseller {
+  id: string;
+  name: string;
+  slug: string;
+  [key: string]: unknown;
 }
 
-export function ResellerHUDClient({
-  reseller,
-  clients,
-  clientCount,
-  branding,
-}: ResellerHUDClientProps) {
-  const [mounted, setMounted] = useState(false);
+export interface ClientBasic {
+  id: string;
+  name: string;
+  [key: string]: unknown;
+}
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+export interface BrandingData {
+  logo_url?: string;
+  primary_color?: string;
+  [key: string]: unknown;
+}
 
-  if (!mounted) {
+interface ResellerHUDClientProps {
+  reseller: Reseller;
+  clients: ClientBasic[];
+  clientCount: number;
+  branding: BrandingData;
+}
+
+function useHydrated() {
+  return useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  );
+}
+
+export function ResellerHUDClient(props: ResellerHUDClientProps) {
+  const { reseller, clients, clientCount, branding } = props;
+  const isMounted = useHydrated();
+
+  if (!reseller || !clients || !clientCount || !branding) return null;
+
+  if (!isMounted) {
     return <div className="fixed inset-0 z-[99999]" />;
   }
 
   return (
     <div className="fixed inset-0 overflow-hidden">
-      {/* Command Strip Header */}
       <MasterpieceHeader />
-
-      {/* Content Area */}
       <div className="absolute top-32 left-12 right-12 bottom-12 z-10">
       </div>
     </div>

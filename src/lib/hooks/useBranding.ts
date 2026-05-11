@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 export interface BrandingOptions {
   primaryColor?: string;
@@ -8,13 +8,7 @@ export interface BrandingOptions {
 }
 
 export function useBranding(options?: BrandingOptions | null) {
-  const [branding, setBranding] = useState<BrandingOptions | null>(null);
+  const [branding] = useState<BrandingOptions | null>(options ?? null);
 
-  useEffect(() => {
-    if (options) {
-      setBranding(options);
-    }
-  }, [options]);
-
-  return { branding, setBranding };
+  return { branding };
 }

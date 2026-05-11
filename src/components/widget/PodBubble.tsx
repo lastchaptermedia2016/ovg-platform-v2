@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import PodPanel from "@/features/widget/components/PodPanel";
 
@@ -11,6 +11,14 @@ export interface PodBubbleProps {
   name?: string;
 }
 
+function useHydrated() {
+  return useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  );
+}
+
 export default function PodBubble({
   tenantId,
   brandingColor = "#0097b2",
@@ -18,11 +26,7 @@ export default function PodBubble({
   name,
 }: PodBubbleProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [isMounted, setIsMounted] = useState(false);
-
-  useEffect(() => {
-    setIsMounted(true);
-  }, []);
+  const isMounted = useHydrated();
 
   // Return null on server to prevent hydration mismatch
   if (!isMounted) {

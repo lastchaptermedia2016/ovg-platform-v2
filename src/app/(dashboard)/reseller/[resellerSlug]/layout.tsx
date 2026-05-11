@@ -21,9 +21,6 @@ async function verifyResellerAccess(resellerSlug: string) {
     
     if (!userResellerSlug) {
       console.log("OVG-PLATFORM-V2: User missing reseller_slug metadata - redirecting to fix");
-      
-      // Generate default slug and redirect to auth page for metadata fix
-      const defaultSlug = user.email?.split('@')[0]?.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-') || 'dashboard';
       console.log("OVG-PLATFORM-V2: User needs metadata fix, redirecting to auth");
       return { authorized: false, redirectTo: "/auth" };
     }

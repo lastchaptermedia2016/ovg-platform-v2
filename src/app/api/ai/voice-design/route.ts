@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { command, currentConfig } = validation.data;
+    const { command } = validation.data;
 
     const SYSTEM_PROMPT = `You are "Hannah," the AI Voice Assistant for OVG Platform's Branding Studio.
 
@@ -143,10 +143,11 @@ Rules:
       },
     });
 
-  } catch (error: any) {
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Failed to parse voice command';
     console.error('❌ Voice Design Error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to parse voice command' },
+      { error: errorMessage },
       { status: 500 }
     );
   }

@@ -32,7 +32,7 @@ export async function middleware(request: NextRequest) {
       const response = NextResponse.next();
       response.headers.set("x-user-id", session.user.id);
       return response;
-    } catch (err) {
+    } catch {
       // If session check fails, redirect to unified auth page
       const authUrl = new URL('/auth', request.url);
       authUrl.searchParams.set('redirectTo', pathname);

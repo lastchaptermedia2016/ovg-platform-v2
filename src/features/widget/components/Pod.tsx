@@ -1,6 +1,6 @@
 import React from 'react';
-import PodBubble from '@/components/widget/PodBubble';
+import PodBubble, { PodBubbleProps } from '@/components/widget/PodBubble';
 
-export default function Pod(props: any) {
+export default function Pod(props: PodBubbleProps) {
   return <PodBubble {...props} />;
 }

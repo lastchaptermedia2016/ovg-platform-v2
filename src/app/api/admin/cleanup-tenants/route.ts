@@ -57,7 +57,7 @@ export async function POST(request: Request) {
     console.log('OVG-PLATFORM-V2: Successfully deleted tenants:', deletedTenants);
 
     // Database Cleanup: Remove test entries that might cause conflicts
-    let testEntriesDeleted = [];
+    const testEntriesDeleted = [];
     if (cleanupTestEntries) {
       const testPatterns = ['WhiteChapter', 'OVG test', 'test client', 'Test', 'lastchaptermedia2016'];
       for (const pattern of testPatterns) {

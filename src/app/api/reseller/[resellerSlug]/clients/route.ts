@@ -51,7 +51,7 @@ export async function GET(
         .single();
       reseller = result.data;
       resellerError = result.error;
-    } catch (e) {
+    } catch {
       console.log('User session failed, trying service client');
     }
 
@@ -85,8 +85,9 @@ export async function GET(
 
     return NextResponse.json(clients || []);
 
-  } catch (error: any) {
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[API] reseller clients error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }

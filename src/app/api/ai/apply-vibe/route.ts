@@ -167,10 +167,11 @@ Generate a complete widget configuration that captures this aesthetic. Be creati
       },
     });
 
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Failed to apply AI vibe';
     console.error('❌ Apply Vibe error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to apply AI vibe' },
+      { error: errorMessage },
       { status: 500 }
     );
   }

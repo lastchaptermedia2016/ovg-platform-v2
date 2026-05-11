@@ -1,7 +1,7 @@
 // Client Domain Actions (Server-Side Business Logic)
 
 import { createClient as createSupabaseClient } from '@/lib/supabase/server';
-import { Client, ClientPolicy, ClientMetrics, ClientTenant } from './types';
+import { Client } from './types';
 
 /**
  * Get client inventory for a dealership

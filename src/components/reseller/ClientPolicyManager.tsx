@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Image from 'next/image';
 import { updateTenantPolicy } from '@/lib/db/tenant-actions';
 import { uploadBrandingAsset } from '@/lib/services/media';
 import { Upload, X, Check } from 'lucide-react';
@@ -111,7 +112,7 @@ export function ClientPolicyManager({
       <div className="flex items-center justify-between p-4 bg-slate-950/40 border border-white/10 rounded-lg" style={{ backdropFilter: 'blur(12px)' }}>
         <div>
           <h4 className="font-medium text-white">Show OVG Branding</h4>
-          <p className="text-sm text-white/70">Display OGV branding elements on this client's interface</p>
+          <p className="text-sm text-white/70">Display OGV branding elements on this client&apos;s interface</p>
         </div>
         <div className="flex items-center gap-3">
           <span
@@ -163,7 +164,10 @@ export function ClientPolicyManager({
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {(['header', 'footer'] as const).map((type) => (
+          {(['header', 'footer'] as const).map((type) => {
+            const previewUrl = customAssets[`${type}_url`];
+
+            return (
             <div key={type} className="space-y-2">
               <label className="block text-sm font-medium text-white">
                 {type === 'header' ? 'Header Image' : 'Footer Image'}
@@ -191,11 +195,14 @@ export function ClientPolicyManager({
                   }}
                 />
 
-                {customAssets[`${type}_url`] ? (
+                {previewUrl ? (
                   <div className="relative">
-                    <img
-                      src={customAssets[`${type}_url`]!}
+                    <Image
+                      src={previewUrl}
                       alt={`${type} preview`}
+                      width={640}
+                      height={96}
+                      unoptimized
                       className="w-full h-24 object-cover rounded"
                     />
                     <button
@@ -222,7 +229,7 @@ export function ClientPolicyManager({
                 )}
               </div>
             </div>
-          ))}
+          )})}
         </div>
       </div>
 

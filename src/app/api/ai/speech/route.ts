@@ -42,8 +42,9 @@ export async function POST(req: Request) {
         "Content-Length": buffer.length.toString(),
       },
     });
-  } catch (error: any) {
-    console.error("❌ [API] Speech generation failed:", error.message);
-    return new Response(JSON.stringify({ error: error.message }), { status: 500 });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error("❌ [API] Speech generation failed:", errorMessage);
+    return new Response(JSON.stringify({ error: errorMessage }), { status: 500 });
   }
 }

@@ -24,6 +24,12 @@ interface UniversalCommandModalProps {
 }
 
 export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }: UniversalCommandModalProps) {
+  const getErrorMessage = (err: unknown): string => {
+    if (err instanceof Error) return err.message;
+    if (typeof err === 'string') return err;
+    return 'An unknown error occurred.';
+  };
+
   const [step, setStep] = useState<Step>('command');
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -37,7 +43,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmitting] = useState(false);
 
   // Multi-step voice entry state
   const [voiceEntryStep, setVoiceEntryStep] = useState<VoiceEntryStep>(0);
@@ -48,10 +54,10 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
   const [highlightedField, setHighlightedField] = useState<'name' | 'email' | 'industry' | 'mobile' | 'website' | 'vibe' | null>(null);
   
   // Stateful Interaction: Track current conversation step for Hannah to know which field she's interviewing
-  const [conversationStep, setConversationStep] = useState<'greeting' | 'name' | 'industry' | 'email' | 'mobile' | 'website' | 'vibe' | 'review' | 'complete'>('greeting');
+  const [, setConversationStep] = useState<'greeting' | 'name' | 'industry' | 'email' | 'mobile' | 'website' | 'vibe' | 'review' | 'complete'>('greeting');
   
   // Validation Check: Track missing fields to prevent AI from repeating questions
-  const [missingFields, setMissingFields] = useState<Set<string>>(new Set(['name', 'industry', 'email', 'mobile', 'website', 'vibe']));
+  const [, setMissingFields] = useState<Set<string>>(new Set(['name', 'industry', 'email', 'mobile', 'website', 'vibe']));
   
   const [voiceEntryData, setVoiceEntryData] = useState({
     name: '',
@@ -90,7 +96,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
     const upperIndustry = industry.toUpperCase().trim();
     
     // Exact match
-    if (ALLOWED_INDUSTRIES.includes(upperIndustry as any)) {
+    if ((ALLOWED_INDUSTRIES as readonly string[]).includes(upperIndustry)) {
       return upperIndustry;
     }
     
@@ -128,24 +134,6 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
   };
 
   // Website Parameter Transformer: Normalize website URLs with dot com replacement and space removal
-  const normalizeWebsite = (website: string): string => {
-    if (!website) return '';
-    
-    let normalized = website
-      .replace(/\s+dot\s+com/gi, '.com')  // "dot com" -> ".com"
-      .replace(/\s+dot\s+/gi, '.')           // "dot" -> "."
-      .replace(/\s+/g, '')                   // Remove all spaces
-      .toLowerCase()
-      .trim();
-    
-    // Ensure protocol if missing
-    if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
-      normalized = `https://${normalized}`;
-    }
-    
-    return normalized;
-  };
-
   // Keyword Delimiters: Multi-pass parser to split raw SST string at keywords
   const parseWithKeywordDelimiters = (transcript: string): { name: string; industry?: string; email?: string; mobile?: string; website?: string } => {
     const lowerTranscript = transcript.toLowerCase();
@@ -241,7 +229,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
   const sanitizeEmail = (email: string): string | null => {
     if (!email || email.trim() === '') return null;
     
-    let sanitized = email
+    const sanitized = email
       .replace(/\s+at\s+/gi, '@')           // " at " -> "@"
       .replace(/\s+dot\s+/gi, '.')           // " dot " -> "."
       .replace(/\s+/g, '')                   // Strip all internal whitespace
@@ -302,7 +290,15 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
 
   // Sync draftData to local state when in review step (race condition mitigation)
   useEffect(() => {
-    if (draftData && step === 'draft') {
+    if (!draftData || step !== 'draft') {
+      return;
+    }
+
+    let active = true;
+
+    Promise.resolve().then(() => {
+      if (!active) return;
+
       setClientName(draftData.clientName);
       setClientEmail(draftData.clientEmail);
       setIndustry(draftData.industry);
@@ -311,7 +307,11 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
       setSystemPrompt(draftData.systemPrompt);
       console.log("OVG-PLATFORM-V2: CRM fields successfully integrated into UI and API.");
       console.log("OVG-PLATFORM-V2: Personality and Analytics modules initialized.");
-    }
+    });
+
+    return () => {
+      active = false;
+    };
   }, [draftData, step]);
 
   const speak = async (text: string, metadata?: { resellerSlug?: string }) => {
@@ -378,7 +378,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
       
       // Start heartbeat pulsate animation when Hannah begins listening
       document.body.classList.add('animate-heartbeat-pulse-infinite');
-    } catch (err) {
+    } catch {
       setError('Microphone access denied');
     }
   };
@@ -418,7 +418,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
 
       // ✅ Pass `text` directly — never `transcript` (stale state)
       await processCommand(text);
-    } catch (err) {
+    } catch {
       setError('Transcription failed — please try again');
     } finally {
       setIsProcessing(false);
@@ -488,7 +488,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
     
     // Session injection: ensure authenticated session before API calls
     const supabase = createClient();
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    const { data: { session } } = await supabase.auth.getSession();
     
     // Verify we have an authenticated session, not anonymous
     if (!session || !session.user) {
@@ -581,7 +581,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
         const errorResponse = await generateHannahResponse('Missing information', 'name and industry');
         await speak(errorResponse);
       }
-    } catch (err) {
+    } catch {
       const errorResponse = await generateHannahResponse('Error processing input', 'name and industry');
       await speak(errorResponse);
     }
@@ -592,7 +592,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
     
     // Session injection: ensure authenticated session before API calls
     const supabase = createClient();
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    const { data: { session } } = await supabase.auth.getSession();
     
     // Verify we have an authenticated session, not anonymous
     if (!session || !session.user) {
@@ -604,7 +604,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
     }
     
     // Normalization: Clean transcript for natural speech patterns
-    let cleanEmail = transcript.toLowerCase()
+    const cleanEmail = transcript.toLowerCase()
       .replace(/\s+at\s+/g, '@')
       .replace(/\s+dot\s+/g, '.')
       .replace(/\s+/g, '');
@@ -614,7 +614,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
     const emails = cleanEmail.match(emailRegex);
     
     if (emails && emails.length > 0) {
-      let email = emails[0];
+      const email = emails[0];
       
       // Verbal-to-Data Transformers: Use sanitizeEmail function
       const finalEmail = sanitizeEmail(email);
@@ -657,7 +657,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
     
     // Session injection: ensure authenticated session before API calls
     const supabase = createClient();
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    const { data: { session } } = await supabase.auth.getSession();
     
     // Verify we have an authenticated session, not anonymous
     if (!session || !session.user) {
@@ -688,11 +688,9 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
     
     // Try standard URL first, then fuzzy on normalized transcript
     let urls = transcript.match(standardUrlRegex);
-    let isFuzzyMatch = false;
     
     if (!urls || urls.length === 0) {
       urls = normalizedTranscript.match(fuzzyUrlRegex);
-      isFuzzyMatch = true;
       console.log("OVG-PLATFORM-V2: Fuzzy URL regex result (normalized):", urls);
     } else {
       console.log("OVG-PLATFORM-V2: Standard URL regex result:", urls);
@@ -721,7 +719,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
     }
     
     if (urls && urls.length > 0) {
-      let website = urls[0] || '';
+      const website = urls[0] || '';
       
       // Verbal-to-Data Transformers: Use sanitizeWebsiteUrl function
       const finalWebsite = sanitizeWebsiteUrl(website);
@@ -824,7 +822,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
         setVoiceEntryStep(4);
         await completeVoiceEntry();
       }
-    } catch (err) {
+    } catch {
       setVoiceEntryData(prev => ({ ...prev, vibe: transcript }));
       setSystemPrompt(transcript);
       await speak("Got it. Let me finalize the profile.");
@@ -908,10 +906,6 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
     }
   };
 
-  const processCommandWithTranscript = async (transcriptArg: string) => {
-    await processCommand(transcriptArg);
-  };
-
   const handleCreateCommand = async (command: string) => {
     try {
       // Validate resellerSlug before making API call
@@ -961,8 +955,8 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
       setStep('draft');
       const contactDetails = (data.parsed.mobile || data.parsed.website) ? ' with contact details' : '';
       await speak(`I've drafted ${data.parsed.name} as a ${data.parsed.industry} client${contactDetails}. Please review and confirm.`);
-    } catch (err: any) {
-      setError(err.message || 'Failed to process command');
+    } catch (err: unknown) {
+      setError(getErrorMessage(err) || 'Failed to process command');
     }
   };
 
@@ -979,8 +973,8 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
 
       await speak(`${data.clientName} has been successfully removed.`);
       onClose();
-    } catch (err: any) {
-      setError(err.message || 'Could not identify client to delete. Please specify the exact client name.');
+    } catch (err: unknown) {
+      setError(getErrorMessage(err) || 'Could not identify client to delete. Please specify the exact client name.');
     }
   };
 
@@ -993,7 +987,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
       
       // Session injection: ensure authenticated session before API calls
       const supabase = createClient();
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      const { data: { session } } = await supabase.auth.getSession();
       
       if (!session) {
         await speak("I'm having trouble connecting to your secure vault. Please ensure you're logged in so I can save this for you.");
@@ -1069,8 +1063,8 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
       }
       
       onClose();
-    } catch (err: any) {
-      setError(err.message || 'Failed to create client');
+    } catch (err: unknown) {
+      setError(getErrorMessage(err) || 'Failed to create client');
     } finally {
       setIsProcessing(false);
     }

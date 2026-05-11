@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { ClientBrandingStudio } from '@/components/reseller/ClientBrandingStudio';
+import type { Client, Tenant } from '@/types';
 
 export default function ClientBrandingPage() {
   const params = useParams();
@@ -11,8 +12,8 @@ export default function ClientBrandingPage() {
   const clientId = params.clientId as string;
 
   const [isLoading, setIsLoading] = useState(true);
-  const [clientData, setClientData] = useState<any>(null);
-  const [allClients, setAllClients] = useState<any[]>([]);
+  const [clientData, setClientData] = useState<Tenant | null>(null);
+  const [allClients, setAllClients] = useState<Client[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -21,18 +22,18 @@ export default function ClientBrandingPage() {
         // Fetch current client data
         const clientResponse = await fetch(`/api/tenants/${clientId}`);
         if (!clientResponse.ok) throw new Error('Failed to fetch client data');
-        const clientData = await clientResponse.json();
-        setClientData(clientData);
+        const clientDataResult = await clientResponse.json() as Tenant;
+        setClientData(clientDataResult);
 
         // Fetch all reseller clients
         const clientsResponse = await fetch(`/api/reseller/${resellerSlug}/clients`);
         if (!clientsResponse.ok) throw new Error('Failed to fetch clients');
-        const clientsData = await clientsResponse.json();
-        setAllClients(clientsData);
+        const clientsDataResult = await clientsResponse.json() as Client[];
+        setAllClients(clientsDataResult);
 
-        console.log("OVG-PLATFORM-V2: Client branding studio initialized for", clientData.name);
-      } catch (err: any) {
-        setError(err.message);
+        console.log("OVG-PLATFORM-V2: Client branding studio initialized for", clientDataResult.name);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unknown error');
       } finally {
         setIsLoading(false);
       }
@@ -46,6 +47,17 @@ export default function ClientBrandingPage() {
   const handleClientChange = (newClientId: string) => {
     router.push(`/reseller/${resellerSlug}/clients/${newClientId}/branding`);
   };
+
+  const initialBrandingConfig = clientData
+    ? {
+        branding: {
+          headerBackground: clientData.branding_colors?.primary || '#0097b2',
+          footerBackground: clientData.branding_colors?.secondary || '#050a14',
+          headerImage: clientData.custom_assets?.header_url || '',
+          footerImage: clientData.custom_assets?.footer_url || '',
+        },
+      }
+    : {};
 
   if (isLoading) {
     return (
@@ -73,7 +85,7 @@ export default function ClientBrandingPage() {
         <ClientBrandingStudio
           clientId={clientId}
           resellerSlug={resellerSlug}
-          initialConfig={clientData?.tenant_config || {}}
+          initialConfig={initialBrandingConfig}
           planTier={clientData?.pricing_tier_key || 'standard'}
           clients={allClients}
           onClientChange={handleClientChange}

@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
 
     let fullText = "";
     let audioBase64 = "";
-    let voiceUsed = "hannah";
+    const voiceUsed = "hannah";
 
     for await (const chunk of processUserMessage(message, tenantId)) {
       if (chunk.type === "text") {

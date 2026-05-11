@@ -1,10 +1,10 @@
-// @ts-nocheck - Supabase type inference issue with custom table intent_alerts
 /**
  * Supabase Realtime Alert System
  */
 
 import { createClient } from "@supabase/supabase-js";
-import { IntentType } from "@/lib/intent-detection";
+
+export type IntentType = "lead_capture" | "booking" | "question" | "complaint" | "general";
 
 export interface AlertPayload {
   conversation_id: string;
@@ -42,7 +42,8 @@ export async function broadcastIntentAlert(payload: AlertPayload): Promise<boole
   try {
     const supabase = getSupabaseClient();
     
-    const insertPayload: any = {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const insertPayload: Record<string, any> = {
       conversation_id: payload.conversation_id,
       tenant_id: payload.tenant_id,
       intent_type: payload.intent_type,
@@ -60,7 +61,8 @@ export async function broadcastIntentAlert(payload: AlertPayload): Promise<boole
       insertPayload.reseller_id = payload.reseller_id;
     }
     
-    const { error } = await (supabase.from("intent_alerts" as any).insert(insertPayload) as any);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase.from("intent_alerts") as any).insert(insertPayload);
     
     if (error) {
       console.error("Failed to broadcast intent alert:", error);
@@ -68,8 +70,8 @@ export async function broadcastIntentAlert(payload: AlertPayload): Promise<boole
     }
     
     return true;
-  } catch (error) {
-    console.error("Error broadcasting alert:", error);
+  } catch (_error) {
+    console.error("Error broadcasting alert:", _error);
     return false;
   }
 }
@@ -87,7 +89,8 @@ export function subscribeToResellerAlerts(
       {
         event: "INSERT",
         schema: "public",
-        table: "intent_alerts",
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        table: "intent_alerts" as any,
         filter: `reseller_id=eq.${resellerId}`,
       },
       (payload) => {
@@ -112,7 +115,8 @@ export function subscribeToAllAlerts(callback: AlertCallback): () => void {
       {
         event: "INSERT",
         schema: "public",
-        table: "intent_alerts",
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        table: "intent_alerts" as any,
       },
       (payload) => {
         const alert = payload.new as AlertPayload;
@@ -133,8 +137,8 @@ export async function acknowledgeAlert(
   try {
     const supabase = getSupabaseClient();
     
-    const { error } = await supabase
-      .from("intent_alerts")
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase.from("intent_alerts") as any)
       .update({
         status: "acknowledged",
         acknowledged_by: agentId,
@@ -148,8 +152,8 @@ export async function acknowledgeAlert(
     }
     
     return true;
-  } catch (error) {
-    console.error("Error acknowledging alert:", error);
+  } catch (_error) {
+    console.error("Error acknowledging alert:", _error);
     return false;
   }
 }
@@ -162,11 +166,12 @@ export async function getRecentAlerts(
   try {
     const supabase = getSupabaseClient();
     
-    let query = (supabase.from("intent_alerts" as any)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let query = (supabase.from("intent_alerts") as any)
       .select("*")
       .eq("reseller_id", resellerId)
       .order("created_at", { ascending: false })
-      .limit(limit) as any);
+      .limit(limit);
     
     if (status) {
       query = query.eq("status", status);
@@ -180,8 +185,8 @@ export async function getRecentAlerts(
     }
     
     return (data || []) as AlertPayload[];
-  } catch (error) {
-    console.error("Error fetching alerts:", error);
+  } catch (_error) {
+    console.error("Error fetching alerts:", _error);
     return [];
   }
 }
@@ -190,10 +195,11 @@ export async function getPendingAlertCount(resellerId: string): Promise<number> 
   try {
     const supabase = getSupabaseClient();
     
-    const { count, error } = await (supabase.from("intent_alerts" as any)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { count, error } = await (supabase.from("intent_alerts") as any)
       .select("*", { count: "exact", head: true })
       .eq("reseller_id", resellerId)
-      .eq("status", "pending") as any);
+      .eq("status", "pending");
     
     if (error) {
       console.error("Failed to count pending alerts:", error);
@@ -201,8 +207,8 @@ export async function getPendingAlertCount(resellerId: string): Promise<number> 
     }
     
     return count || 0;
-  } catch (error) {
-    console.error("Error counting alerts:", error);
+  } catch (_error) {
+    console.error("Error counting alerts:", _error);
     return 0;
   }
 }

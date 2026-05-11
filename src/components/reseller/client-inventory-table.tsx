@@ -20,8 +20,7 @@ interface ClientInventoryTableProps {
 
 export function ClientInventoryTable({ 
   clients, 
-  primaryColor, 
-  accentColor 
+  primaryColor
 }: ClientInventoryTableProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
 

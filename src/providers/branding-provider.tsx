@@ -79,7 +79,7 @@ export function BrandingProvider({
   children,
   initialData,
 }: BrandingProviderProps) {
-  const [state, setState] = useState<BrandingContextState>({
+  const [state] = useState<BrandingContextState>({
     branding: initialData || DEFAULT_BRANDING,
     entityType: null,
     slug: null,

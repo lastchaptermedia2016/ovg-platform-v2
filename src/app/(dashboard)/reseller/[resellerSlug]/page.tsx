@@ -20,7 +20,7 @@ export default async function ResellerSovereignPage({
     throw new Error(`Invalid reseller slug: ${validationResult.error.flatten().fieldErrors.resellerSlug?.join(', ')}`);
   }
 
-  const { resellerSlug } = validationResult.data;
+  // const { resellerSlug } = validationResult.data;
   
   return (
     <main className="flex-1 flex flex-col items-center justify-center">

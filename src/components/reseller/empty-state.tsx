@@ -39,7 +39,7 @@ export function EmptyState({
           Tenant Not Found
         </h2>
         <p className="text-gray-500 text-center max-w-md mb-8 leading-relaxed">
-          The reseller "{resellerSlug}" could not be found or may not be active.
+          The reseller &quot;{resellerSlug}&quot; could not be found or may not be active.
           Please check the URL and try again.
         </p>
 

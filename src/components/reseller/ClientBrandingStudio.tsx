@@ -1,22 +1,39 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import Image from 'next/image';
 import { ColorPicker } from '@/components/reseller/ColorPicker';
 import { useVoiceCommand } from '@/hooks/use-voice-command';
-import { getCapabilityBriefing, getContextualSuggestion, getActionValidation, SERVICE_CATALOG } from '@/lib/hannah-service-catalog';
+import { Client as ClientType } from '@/types/index';
+import { getActionValidation, SERVICE_CATALOG, ServiceCapability } from '@/lib/hannah-service-catalog';
 import { createHarmoniousGreeting, VisualStyle } from '@/lib/voice-visual-harmony';
+
+interface ClientWithBranding extends ClientType {
+  industry?: string;
+  pricing_tier_key?: string;
+}
+
+interface InitialConfig {
+  branding?: Partial<BrandingConfig>;
+  features?: {
+    aiInsightBadge?: boolean;
+    aiDesignMirror?: boolean;
+    customCss?: boolean;
+  };
+}
 
 interface ClientBrandingStudioProps {
   clientId: string;
   resellerSlug: string;
-  clients: any[];
+  clients: ClientWithBranding[];
   onClientChange: (clientId: string) => void;
-  initialConfig?: any;
+  initialConfig?: InitialConfig;
   planTier?: string;
 }
 
 interface BrandingConfig {
   headerBackground: string;
+// other properties...
   headerBackgroundType: 'solid' | 'gradient' | 'image';
   headerGradientStart: string;
   headerGradientEnd: string;
@@ -36,7 +53,6 @@ interface BrandingConfig {
 
 export function ClientBrandingStudio({
   clientId,
-  resellerSlug,
   clients,
   onClientChange,
   initialConfig,
@@ -63,21 +79,16 @@ export function ClientBrandingStudio({
 
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
-  const [isLoadingConfig, setIsLoadingConfig] = useState(false);
   const [isAiSyncing, setIsAiSyncing] = useState(false);
+  const [_isLoadingConfig, _setIsLoadingConfig] = useState(false);
   const [vibeInput, setVibeInput] = useState('');
   const [isSpeakerEnabled, setIsSpeakerEnabled] = useState(true);
   const [voiceTranscript, setVoiceTranscript] = useState('');
   
   // Guided Onboarding State
   const [showGuidedSetup, setShowGuidedSetup] = useState(false);
-  const [suggestedConfig, setSuggestedConfig] = useState<BrandingConfig | null>(null);
-  const [isGeneratingSuggestion, setIsGeneratingSuggestion] = useState(false);
-  const [clientSelectorOpen, setClientSelectorOpen] = useState(false);
-  const [continuousListening, setContinuousListening] = useState(false);
 
-  // Refs for greet guard and audio cleanup
-  const hasGreetedRef = useRef(false);
+  // Refs for audio cleanup
   const currentAudioRef = useRef<AudioContext | null>(null);
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const isSpeakingRef = useRef(false);
@@ -87,7 +98,7 @@ export function ClientBrandingStudio({
   const [generatedGreeting, setGeneratedGreeting] = useState<string>('');
   const [greetingExplanation, setGreetingExplanation] = useState<string>('');
   const [showGreetingPreview, setShowGreetingPreview] = useState(false);
-  const [isGeneratingGreeting, setIsGeneratingGreeting] = useState(false);
+  const [_isGeneratingGreeting, setIsGeneratingGreeting] = useState(false);
   
   // Conversational Greeting Edit State
   const [isEditingGreeting, setIsEditingGreeting] = useState(false);
@@ -102,23 +113,6 @@ export function ClientBrandingStudio({
   const [isHannahAwake, setIsHannahAwake] = useState(true);
   const [previousClientId, setPreviousClientId] = useState<string | null>(null);
 
-  // Voice command hook for STT
-  const {
-    isListening,
-    isProcessing,
-    transcript,
-    startListening,
-    stopListening,
-  } = useVoiceCommand({
-    skipAIPipeline: true,
-    forcedContinuousMode,
-    silenceDuration: 3000, // 3 seconds for thinking pauses
-    onTranscript: (text) => {
-      setVoiceTranscript(text);
-      processVoiceDesignCommand(text);
-    },
-  });
-
   // Hannah TTS function with cleanup and privacy check
   const speak = useCallback(async (text: string) => {
     if (!isSpeakerEnabled) return;
@@ -132,7 +126,7 @@ export function ClientBrandingStudio({
       try {
         audioSourceRef.current.stop();
         audioSourceRef.current.disconnect();
-      } catch (e) {
+      } catch {
         // Audio already stopped or disconnected
       }
       audioSourceRef.current = null;
@@ -143,7 +137,7 @@ export function ClientBrandingStudio({
         if (currentAudioRef.current.state !== 'closed') {
           currentAudioRef.current.close();
         }
-      } catch (e) {
+      } catch {
         // Audio context already closed
       }
       currentAudioRef.current = null;
@@ -159,7 +153,7 @@ export function ClientBrandingStudio({
       if (!response.ok) throw new Error('TTS failed');
 
       const audioBuffer = await response.arrayBuffer();
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const audioContext = new (window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
       const audioSource = audioContext.createBufferSource();
       const audioBufferData = await audioContext.decodeAudioData(audioBuffer);
       
@@ -183,7 +177,393 @@ export function ClientBrandingStudio({
       audioSourceRef.current = null;
       isSpeakingRef.current = false;
     }
-  }, [isSpeakerEnabled]);
+  }, [isSpeakerEnabled, isHannahAwake]);
+
+  // Voice command hook for STT
+  const {
+    isListening,
+    isProcessing,
+    startListening,
+    stopListening,
+  } = useVoiceCommand({
+    skipAIPipeline: true,
+    forcedContinuousMode,
+    silenceDuration: 3000, // 3 seconds for thinking pauses
+    onTranscript: (text) => {
+      setVoiceTranscript(text);
+
+      if (isLongFormSTT) {
+        setDictatedGreeting(text);
+      }
+
+      const lowerText = text.toLowerCase();
+      const sleepCommands = ['hannah go to sleep', 'hannah sleep', 'go to sleep', 'be quiet', 'stop talking'];
+      if (sleepCommands.some(cmd => lowerText.includes(cmd))) {
+        setIsHannahAwake(false);
+        speak('Going to sleep. Just tap the mic when you need me again.');
+        return;
+      }
+
+      const wakeCommands = ['hannah wake up', 'hannah awake', 'wake up', 'are you there'];
+      if (wakeCommands.some(cmd => lowerText.includes(cmd))) {
+        setIsHannahAwake(true);
+        speak('I\'m awake and ready to help!');
+        return;
+      }
+
+      processVoiceDesignCommand(text);
+    },
+  });
+
+  const syncBrandWithURL = useCallback(async () => {
+    if (!clientId) return;
+    setIsAiSyncing(true);
+
+    try {
+      const response = await fetch('/api/ai/sync-brand', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to sync brand from URL');
+      }
+
+      const data = await response.json();
+      speak("I've analyzed the website and synced your brand colors.");
+      return data;
+    } catch (err) {
+      console.error('Brand sync error:', err);
+      speak('I had trouble syncing the brand. Please try again.');
+    } finally {
+      setIsAiSyncing(false);
+      startListening();
+    }
+  }, [clientId, speak, startListening]);
+
+  const applyAIVibe = useCallback(async (vibe: string) => {
+    if (!clientId) return;
+    setIsAiSyncing(true);
+
+    try {
+      const response = await fetch('/api/ai/apply-vibe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId, vibe, currentConfig: config }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to apply AI vibe');
+      }
+
+      const data = await response.json();
+      speak(`Applied the ${vibe} vibe. How does it look?`);
+      return data;
+    } catch (err) {
+      console.error('AI vibe error:', err);
+      speak('I had trouble applying the AI vibe. Please try again.');
+    } finally {
+      setIsAiSyncing(false);
+      startListening();
+    }
+  }, [clientId, config, speak, startListening]);
+
+  const updateConfig = (key: keyof BrandingConfig, value: string | number | boolean) => {
+    setConfig((prev) => ({ ...prev, [key]: value }));
+    
+    // Action Confirmation - Hannah validates the change
+    const validation = getActionValidation(String(key));
+    if (validation && isSpeakerEnabled) {
+      // Debounce validations to avoid too much speaking
+      setTimeout(() => speak(validation), 500);
+    }
+  };
+
+  const getHeaderBackground = () => {
+    if (config.headerBackgroundType === 'image') {
+      return config.headerImage || '#0097b2';
+    }
+    if (config.headerBackgroundType === 'gradient') {
+      return `linear-gradient(135deg, ${config.headerGradientStart}, ${config.headerGradientEnd})`;
+    }
+    return config.headerBackground;
+  };
+
+  const getFooterBackground = () => {
+    if (config.footerBackgroundType === 'image') {
+      return config.footerImage || '#050a14';
+    }
+    if (config.footerBackgroundType === 'gradient') {
+      return `linear-gradient(135deg, ${config.footerGradientStart}, ${config.footerGradientEnd})`;
+    }
+    return config.footerBackground;
+  };
+
+  // Draft & Speak Hook - Generate harmonious greeting
+  const generateHarmoniousGreeting = useCallback(async () => {
+    if (!clientId || !clients.length) return;
+    
+    setIsGeneratingGreeting(true);
+    
+    try {
+      const selectedClient = clients.find(c => c.id === clientId);
+      if (!selectedClient) return;
+      
+      // Create visual style from current config
+      const visualStyle: VisualStyle = {
+        headerType: config.headerBackgroundType,
+        primaryColor: config.headerBackground,
+        secondaryColor: config.headerBackgroundType === 'gradient' ? config.headerGradientEnd : undefined,
+        opacity: config.headerOpacity,
+        hasGlassmorphism: config.headerBackgroundType === 'gradient' && config.headerOpacity < 0.9,
+        industry: selectedClient.industry
+      };
+      
+      // Generate harmonious greeting
+      const { greeting, explanation } = createHarmoniousGreeting(
+        visualStyle,
+        selectedClient.name,
+        selectedClient.industry
+      );
+      
+      setGeneratedGreeting(greeting);
+      setGreetingExplanation(explanation);
+      
+      // The Reveal - Hannah explains and previews
+      speak(explanation);
+      
+      // Small delay, then preview the greeting
+      setTimeout(() => {
+        speak("Listen to how it sounds...");
+        setTimeout(() => {
+          speak(greeting);
+          setShowGreetingPreview(true);
+        }, 1000);
+      }, 3000);
+      
+    } catch (err) {
+      console.error('Greeting generation error:', err);
+      speak('I had trouble creating the greeting. Let me try a simpler approach.');
+    } finally {
+      setIsGeneratingGreeting(false);
+    }
+  }, [clientId, clients, config, speak]);
+
+  // Handle greeting edit request
+  const handleGreetingEditRequest = useCallback(() => {
+    setIsEditingGreeting(true);
+    setGreetingEditMode(null);
+    speak('Should I draft a new one for you, or do you want to dictate it?');
+  }, [speak]);
+
+  // Handle draft new greeting
+  const handleDraftNewGreeting = useCallback(() => {
+    speak('I\'ll create a new variation that matches our visual style. Give me a moment...');
+    generateHarmoniousGreeting();
+    setIsEditingGreeting(false);
+    setGreetingEditMode(null);
+  }, [speak, generateHarmoniousGreeting]);
+
+  // Handle dictate greeting
+  const handleDictateGreeting = useCallback(() => {
+    setIsLongFormSTT(true);
+    setDictatedGreeting('');
+    speak('Go ahead and dictate your welcome message. Say "stop" or "done" when you\'re finished.');
+    startListening();
+  }, [speak, startListening]);
+
+  // Stop long-form STT
+  const stopLongFormSTT = useCallback(() => {
+    setIsLongFormSTT(false);
+    setGeneratedGreeting(dictatedGreeting);
+    setGreetingExplanation('Dictated by you - ready to save!');
+    setIsEditingGreeting(false);
+    setGreetingEditMode(null);
+    stopListening();
+    speak('Got it! Your dictated greeting has been saved.');
+  }, [dictatedGreeting, speak, stopListening]);
+
+  const openClientSelector = useCallback(() => {
+    setShowGuidedSetup(false);
+    speak('You can choose another client from the client list on the left.');
+  }, [speak]);
+
+  // Stop long-form STT
+  // Feature locking based on plan tier
+  const isFeatureLocked = useCallback((feature: string) => {
+    if (!planTier) return false;
+    const lockedFeatures: Record<string, string[]> = {
+      'standard': ['aiInsightBadge', 'aiDesignMirror', 'customCss'],
+      'professional': ['aiDesignMirror', 'customCss'],
+      'enterprise': []
+    };
+    return lockedFeatures[planTier]?.includes(feature) || false;
+  }, [planTier]);
+
+  // Handle save
+  const handleSave = useCallback(async () => {
+    setIsSaving(true);
+    setSaveMessage(null);
+
+    try {
+      const response = await fetch('/api/tenants/update-config-with-greeting', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId: clientId,
+          configPatch: {
+            branding: config,
+            features: {
+              aiInsightBadge: config.aiInsightBadge,
+              aiDesignMirror: config.aiDesignMirror,
+              customCss: config.customCss,
+            },
+          },
+          aiSettings: {
+            initial_greeting: generatedGreeting,
+            voice_persona: 'auto-generated',
+          }
+        }),
+      });
+
+      if (!response.ok) throw new Error('Failed to save configuration');
+
+      setSaveMessage('✨ Perfect! Both the visual design and greeting have been saved.');
+      speak('Excellent! Your complete branding setup is now live.');
+      setShowGreetingPreview(false);
+
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setSaveMessage(errorMessage || 'Error saving configuration');
+      speak('Sorry, I had trouble saving your changes.');
+      console.error('Save error:', err);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [clientId, config, generatedGreeting, speak]);
+
+  // Execute Full Design Pass
+  const executeFullDesignPass = useCallback(async () => {
+    speak('Running complete brand analysis and design optimization. This might take a moment...');
+
+    try {
+      await syncBrandWithURL();
+      
+      const selectedClient = clients.find(c => c.id === clientId);
+      if (selectedClient?.industry) {
+        const vibeDescription = `${selectedClient.industry} optimized professional branding`;
+        await applyAIVibe(vibeDescription);
+      }
+      
+      if (planTier && planTier !== 'standard') {
+        setConfig(prev => ({
+          ...prev,
+          headerBackgroundType: 'gradient',
+          headerGradientStart: '#0891b2',
+          headerGradientEnd: '#0e7490',
+          headerOpacity: 0.85,
+        }));
+        speak('Applied premium glassmorphic effects for modern appeal.');
+      }
+      
+      speak('Full design pass complete! Your brand now has optimized colors, professional styling, and enhanced visual appeal.');
+    } catch (err) {
+      console.error('Full design pass error:', err);
+      speak('I encountered an issue during the design pass. Let me try a simpler approach.');
+    }
+  }, [clientId, clients, planTier, speak, applyAIVibe, syncBrandWithURL]);
+
+  const applySuggestedConfig = useCallback(async () => {
+    setShowGuidedSetup(false);
+    speak('Applying the suggested design now.');
+    await executeFullDesignPass();
+  }, [executeFullDesignPass, speak]);
+
+  // Execute Service Capability
+  const executeServiceCapability = useCallback(async (capability: ServiceCapability) => {
+    speak(`Executing ${capability.name.toLowerCase()}...`);
+
+    switch (capability.name) {
+      case 'Brand Sync':
+        await syncBrandWithURL();
+        break;
+      case 'Industry Vibe': {
+        const selectedClient = clients.find(c => c.id === clientId);
+        if (selectedClient?.industry) {
+          await applyAIVibe(`${selectedClient.industry} professional branding`);
+        }
+        break;
+      }
+      case 'Glassmorphism Design':
+        setConfig(prev => ({
+          ...prev,
+          headerBackgroundType: 'gradient',
+          headerGradientStart: '#0891b2',
+          headerGradientEnd: '#0e7490',
+          headerOpacity: 0.85,
+        }));
+        speak('Applied modern glassmorphic design with optimal transparency.');
+        break;
+      case 'Color Harmony':
+        speak('Analyzing current color scheme for optimal harmony...');
+        break;
+      case 'Opacity Tuning':
+        setConfig(prev => ({
+          ...prev,
+          headerOpacity: 0.8,
+          footerOpacity: 0.8,
+        }));
+        speak('Optimized transparency for perfect readability and modern aesthetics.');
+        break;
+      default:
+        speak(`Executing ${capability.description.toLowerCase()}.`);
+    }
+  }, [clientId, clients, speak, applyAIVibe, syncBrandWithURL]);
+
+  // Instant Save - Save both visuals and greeting
+  const instantSave = useCallback(async () => {
+    if (!generatedGreeting) return;
+
+    setIsSaving(true);
+    setSaveMessage(null);
+
+    try {
+      const response = await fetch('/api/tenants/update-config-with-greeting', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId: clientId,
+          configPatch: {
+            branding: config,
+            features: {
+              aiInsightBadge: config.aiInsightBadge,
+              aiDesignMirror: config.aiDesignMirror,
+              customCss: config.customCss,
+            },
+          },
+          aiSettings: {
+            initial_greeting: generatedGreeting,
+            voice_persona: 'auto-generated',
+          }
+        }),
+      });
+
+      if (!response.ok) throw new Error('Failed to save configuration');
+
+      setSaveMessage('✨ Perfect! Both the visual design and greeting have been saved.');
+      speak('Excellent! Your complete branding setup is now live.');
+      setShowGreetingPreview(false);
+
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setSaveMessage(errorMessage || 'Error saving configuration');
+      speak('Sorry, I had trouble saving your changes.');
+      console.error('Save error:', err);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [clientId, config, generatedGreeting, speak]);
 
   // Process voice design commands
   const processVoiceDesignCommand = useCallback(async (command: string) => {
@@ -294,7 +674,7 @@ export function ClientBrandingStudio({
     }
 
     // Handle dictated greeting capture
-    if (isLongFormSTT && lowerCommand.includes('stop') || lowerCommand.includes('done') || lowerCommand.includes('finish')) {
+    if (isLongFormSTT && (lowerCommand.includes('stop') || lowerCommand.includes('done') || lowerCommand.includes('finish'))) {
       stopLongFormSTT();
       return;
     }
@@ -372,185 +752,34 @@ export function ClientBrandingStudio({
       console.error('Voice command error:', err);
       speak("I didn't catch that. Please try again.");
     }
-  }, [config, isSpeakerEnabled]);
-
-  // Generate AI suggestion for guided onboarding
-  const generateGuidedSuggestion = useCallback(async () => {
-    // Greet guard: Only greet once per session/mount
-    if (hasGreetedRef.current) return;
-    if (!clientId || !clients.length) return;
-    if (isGeneratingSuggestion) return; // Prevent multiple simultaneous calls
-    
-    hasGreetedRef.current = true; // Mark as greeted
-    setIsGeneratingSuggestion(true);
-    const selectedClient = clients.find(c => c.id === clientId);
-    if (!selectedClient) {
-      setIsGeneratingSuggestion(false);
-      hasGreetedRef.current = false; // Reset guard if no client found
-      return;
-    }
-
-    try {
-      // Dynamic Capability Briefing
-      const capabilityBriefing = getCapabilityBriefing(clientId, selectedClient?.industry, planTier);
-      speak(capabilityBriefing);
-
-      // Contextual Suggestion
-      const contextualSuggestion = getContextualSuggestion(selectedClient?.industry, planTier);
-      speak(contextualSuggestion);
-
-      // Generate AI vibe suggestion
-      const vibeDescription = selectedClient.industry 
-        ? `${selectedClient.industry} professional branding`
-        : 'modern professional branding';
-
-      const response = await fetch('/api/ai/apply-vibe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          vibe: vibeDescription,
-          tenantId: clientId,
-          industry: selectedClient.industry,
-        }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setSuggestedConfig({
-          headerBackground: data.widgetConfig.branding.headerBackground,
-          headerBackgroundType: data.widgetConfig.branding.headerBackgroundType,
-          headerGradientStart: data.widgetConfig.branding.headerGradientStart,
-          headerGradientEnd: data.widgetConfig.branding.headerGradientEnd,
-          headerImage: data.widgetConfig.branding.headerImage,
-          headerOpacity: data.widgetConfig.branding.headerOpacity,
-          footerBackground: data.widgetConfig.branding.footerBackground,
-          footerBackgroundType: data.widgetConfig.branding.footerBackgroundType,
-          footerGradientStart: data.widgetConfig.branding.footerGradientStart,
-          footerGradientEnd: data.widgetConfig.branding.footerGradientEnd,
-          footerImage: data.widgetConfig.branding.footerImage,
-          footerOpacity: data.widgetConfig.branding.footerOpacity,
-          logoUrl: data.widgetConfig.branding.logoUrl || config.logoUrl,
-          aiInsightBadge: data.widgetConfig.features.aiInsightBadge,
-          aiDesignMirror: data.widgetConfig.features.aiDesignMirror,
-          customCss: data.widgetConfig.features.customCss,
-        });
-        setShowGuidedSetup(true);
-        speak(`I've prepared a ${data.widgetConfig.vibeName} theme with ${data.widgetConfig.branding.headerBackgroundType} header and ${Math.round(data.widgetConfig.branding.headerOpacity * 100)}% opacity. Want to apply it?`);
-        
-        // Start silence timeout
-        silenceTimeoutRef.current = setTimeout(() => {
-          if (showGuidedSetup) { // Still in guided setup
-            const selectedClient = clients.find(c => c.id === clientId);
-            speak(`Still there? I've got a killer design ready for ${selectedClient?.name || 'your client'} whenever you're ready to see it.`);
-          }
-        }, 5000);
-      }
-    } catch (err) {
-      console.error('Guided suggestion error:', err);
-    } finally {
-      setIsGeneratingSuggestion(false);
-    }
-  }, [clientId, clients, config.logoUrl, speak]);
-
-  // Draft & Speak Hook - Generate harmonious greeting
-  const generateHarmoniousGreeting = useCallback(async () => {
-    if (!clientId || !clients.length) return;
-    
-    setIsGeneratingGreeting(true);
-    
-    try {
-      const selectedClient = clients.find(c => c.id === clientId);
-      if (!selectedClient) return;
-      
-      // Create visual style from current config
-      const visualStyle: VisualStyle = {
-        headerType: config.headerBackgroundType,
-        primaryColor: config.headerBackground,
-        secondaryColor: config.headerBackgroundType === 'gradient' ? config.headerGradientEnd : undefined,
-        opacity: config.headerOpacity,
-        hasGlassmorphism: config.headerBackgroundType === 'gradient' && config.headerOpacity < 0.9,
-        industry: selectedClient.industry
-      };
-      
-      // Generate harmonious greeting
-      const { greeting, explanation } = createHarmoniousGreeting(
-        visualStyle,
-        selectedClient.name,
-        selectedClient.industry
-      );
-      
-      setGeneratedGreeting(greeting);
-      setGreetingExplanation(explanation);
-      
-      // The Reveal - Hannah explains and previews
-      speak(explanation);
-      
-      // Small delay, then preview the greeting
-      setTimeout(() => {
-        speak("Listen to how it sounds...");
-        setTimeout(() => {
-          speak(greeting);
-          setShowGreetingPreview(true);
-        }, 1000);
-      }, 3000);
-      
-    } catch (err) {
-      console.error('Greeting generation error:', err);
-      speak('I had trouble creating the greeting. Let me try a simpler approach.');
-    } finally {
-      setIsGeneratingGreeting(false);
-    }
-  }, [clientId, clients, config, speak]);
-
-  // Handle greeting edit request
-  const handleGreetingEditRequest = useCallback(() => {
-    setIsEditingGreeting(true);
-    setGreetingEditMode(null);
-    speak('Should I draft a new one for you, or do you want to dictate it?');
-  }, [speak]);
-
-  // Handle draft new greeting
-  const handleDraftNewGreeting = useCallback(() => {
-    speak('I\'ll create a new variation that matches our visual style. Give me a moment...');
-    generateHarmoniousGreeting();
-    setIsEditingGreeting(false);
-    setGreetingEditMode(null);
-  }, [speak, generateHarmoniousGreeting]);
-
-  // Handle dictate greeting
-  const handleDictateGreeting = useCallback(() => {
-    setIsLongFormSTT(true);
-    setDictatedGreeting('');
-    speak('Go ahead and dictate your welcome message. Say "stop" or "done" when you\'re finished.');
-    startListening();
-  }, [speak, startListening]);
-
-  // Stop long-form STT
-  const stopLongFormSTT = useCallback(() => {
-    setIsLongFormSTT(false);
-    stopListening();
-    
-    if (dictatedGreeting.trim()) {
-      setGeneratedGreeting(dictatedGreeting);
-      setShowGreetingPreview(true);
-      setIsEditingGreeting(false);
-      setGreetingEditMode(null);
-      
-      const selectedClient = clients.find((c: any) => c.id === clientId);
-      speak(`Updated. Here is the new welcome for ${selectedClient?.name || 'your client'}. Sounds perfect with our new visuals.`);
-    } else {
-      speak('I didn\'t catch your greeting. Would you like to try again?');
-      setIsEditingGreeting(false);
-      setGreetingEditMode(null);
-    }
-  }, [dictatedGreeting, stopListening, clients, clientId, speak]);
-
-  // Update dictated greeting in real-time during long-form STT
-  useEffect(() => {
-    if (isLongFormSTT && transcript) {
-      setDictatedGreeting(transcript);
-    }
-  }, [isLongFormSTT, transcript]);
+  }, [
+    clientId,
+    clients,
+    config,
+    executeFullDesignPass,
+    executeServiceCapability,
+    generateHarmoniousGreeting,
+    greetingEditMode,
+    handleDictateGreeting,
+    handleDraftNewGreeting,
+    handleGreetingEditRequest,
+    instantSave,
+    isEditingGreeting,
+    isLongFormSTT,
+    onClientChange,
+    setGreetingEditMode,
+    setSaveMessage,
+    setShowGreetingPreview,
+    setVoiceTranscript,
+    showGreetingPreview,
+    showGuidedSetup,
+    speak,
+    applyAIVibe,
+    syncBrandWithURL,
+    applySuggestedConfig,
+    openClientSelector,
+    stopLongFormSTT,
+  ]);
 
   // Monitor clientId changes for tenant-switch vocal confirmation
   useEffect(() => {
@@ -629,453 +858,6 @@ export function ClientBrandingStudio({
     }
   }, [clientId]);
 
-  // Handle "Hannah, go to sleep" and "Hannah, wake up" commands
-  useEffect(() => {
-    if (voiceTranscript) {
-      const lowerTranscript = voiceTranscript.toLowerCase();
-      
-      // Sleep commands
-      const sleepCommands = ['hannah go to sleep', 'hannah sleep', 'go to sleep', 'be quiet', 'stop talking'];
-      if (sleepCommands.some(cmd => lowerTranscript.includes(cmd))) {
-        setIsHannahAwake(false);
-        speak('Going to sleep. Just tap the mic when you need me again.');
-        return;
-      }
-      
-      // Wake commands
-      const wakeCommands = ['hannah wake up', 'hannah awake', 'wake up', 'are you there'];
-      if (wakeCommands.some(cmd => lowerTranscript.includes(cmd))) {
-        setIsHannahAwake(true);
-        speak('I\'m awake and ready to help!');
-        return;
-      }
-    }
-  }, [voiceTranscript, speak]);
-
-  // Apply suggested config
-  const applySuggestedConfig = useCallback(() => {
-    if (suggestedConfig) {
-      // Clear silence timeout
-      if (silenceTimeoutRef.current) {
-        clearTimeout(silenceTimeoutRef.current);
-        silenceTimeoutRef.current = null;
-      }
-      
-      setConfig(suggestedConfig);
-      setShowGuidedSetup(false);
-      
-      // Generate harmonious greeting after applying config
-      generateHarmoniousGreeting();
-      
-      // Start continuous listening for vibe commands
-      setContinuousListening(true);
-      startListening();
-    }
-  }, [suggestedConfig, speak, startListening, generateHarmoniousGreeting]);
-
-  // Open client selector
-  const openClientSelector = useCallback(() => {
-    // Clear silence timeout
-    if (silenceTimeoutRef.current) {
-      clearTimeout(silenceTimeoutRef.current);
-      silenceTimeoutRef.current = null;
-    }
-    
-    setClientSelectorOpen(true);
-    setShowGuidedSetup(false);
-    speak('Opening client selector. Who would you like to brand?');
-  }, [speak]);
-
-  // Fetch client config when clientId changes
-  useEffect(() => {
-    async function fetchClientConfig() {
-      if (!clientId) return;
-      setIsLoadingConfig(true);
-
-      try {
-        const response = await fetch(`/api/tenants/${clientId}`);
-        if (!response.ok) throw new Error('Failed to fetch client config');
-        const data = await response.json();
-        const clientConfig = data.widget_config || {};
-
-        setConfig({
-          headerBackground: clientConfig.branding?.headerBackground || '#0097b2',
-          headerBackgroundType: clientConfig.branding?.headerBackgroundType || 'solid',
-          headerGradientStart: clientConfig.branding?.headerGradientStart || '#0097b2',
-          headerGradientEnd: clientConfig.branding?.headerGradientEnd || '#226683',
-          headerImage: clientConfig.branding?.headerImage || '',
-          headerOpacity: clientConfig.branding?.headerOpacity || 0.75,
-          footerBackground: clientConfig.branding?.footerBackground || '#050a14',
-          footerBackgroundType: clientConfig.branding?.footerBackgroundType || 'solid',
-          footerGradientStart: clientConfig.branding?.footerGradientStart || '#050a14',
-          footerGradientEnd: clientConfig.branding?.footerGradientEnd || '#1a1a2e',
-          footerImage: clientConfig.branding?.footerImage || '',
-          footerOpacity: clientConfig.branding?.footerOpacity || 0.75,
-          logoUrl: clientConfig.branding?.logoUrl || '',
-          aiInsightBadge: clientConfig.features?.aiInsightBadge ?? true,
-          aiDesignMirror: clientConfig.features?.aiDesignMirror ?? false,
-          customCss: clientConfig.features?.customCss ?? false,
-        });
-
-        console.log("OVG-PLATFORM-V2: Client config loaded for", data.name);
-      } catch (err: any) {
-        console.error('Error fetching client config:', err);
-      } finally {
-        setIsLoadingConfig(false);
-      }
-    }
-
-    fetchClientConfig();
-  }, [clientId]);
-
-  // Trigger guided onboarding on mount
-  useEffect(() => {
-    // Reset greet guard when clientId changes (new client = new greeting)
-    hasGreetedRef.current = false;
-    
-    // Small delay to ensure audio context can be initialized after user interaction
-    const timer = setTimeout(() => {
-      if (clients.length > 0 && !initialConfig?.branding?.headerBackground) {
-        generateGuidedSuggestion();
-      }
-    }, 1500);
-
-    return () => clearTimeout(timer);
-  }, [clientId, clients.length, initialConfig?.branding?.headerBackground]);
-
-  // Continuous listening effect
-  useEffect(() => {
-    if (continuousListening && !isListening && !isProcessing) {
-      const timer = setTimeout(() => {
-        startListening();
-      }, 500);
-      return () => clearTimeout(timer);
-    }
-  }, [continuousListening, isListening, isProcessing, startListening]);
-
-  // Cleanup audio on component unmount
-  useEffect(() => {
-    return () => {
-      // Cleanup any playing audio when component unmounts
-      if (audioSourceRef.current) {
-        try {
-          audioSourceRef.current.stop();
-          audioSourceRef.current.disconnect();
-        } catch (e) {
-          // Audio already stopped or disconnected
-        }
-        audioSourceRef.current = null;
-      }
-      
-      if (currentAudioRef.current) {
-        try {
-          if (currentAudioRef.current.state !== 'closed') {
-            currentAudioRef.current.close();
-          }
-        } catch (e) {
-          // Audio context already closed
-        }
-        currentAudioRef.current = null;
-      }
-      
-      // Clear silence timeout
-      if (silenceTimeoutRef.current) {
-        clearTimeout(silenceTimeoutRef.current);
-        silenceTimeoutRef.current = null;
-      }
-      
-      // Reset guards
-      isSpeakingRef.current = false;
-    };
-  }, []);
-
-  const isFeatureLocked = (feature: string) => {
-    const selectedClient = clients.find(c => c.id === clientId);
-    return selectedClient?.pricing_tier_key === 'standard';
-  };
-
-  const handleSave = async () => {
-    setIsSaving(true);
-    setSaveMessage(null);
-
-    try {
-      const response = await fetch('/api/tenants/update-config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tenantId: clientId,
-          configPatch: {
-            branding: config,
-            features: {
-              aiInsightBadge: config.aiInsightBadge,
-              aiDesignMirror: config.aiDesignMirror,
-              customCss: config.customCss,
-            },
-          },
-        }),
-      });
-
-      if (!response.ok) throw new Error('Failed to save configuration');
-
-      setSaveMessage('Configuration saved successfully');
-      console.log("OVG-PLATFORM-V2: Branding configuration saved for client", clientId);
-    } catch (err: any) {
-      setSaveMessage('Error saving configuration');
-      console.error('Save error:', err);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const syncBrandWithURL = async () => {
-    setIsAiSyncing(true);
-    setSaveMessage(null);
-
-    try {
-      const response = await fetch('/api/ai/sync-brand', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tenantId: clientId }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to sync brand with website');
-      }
-
-      const data = await response.json();
-      const { brandAnalysis } = data;
-
-      // Update config state with AI-generated values
-      setConfig((prev) => ({
-        ...prev,
-        headerBackground: brandAnalysis.primaryColor,
-        headerGradientStart: brandAnalysis.primaryColor,
-        headerGradientEnd: brandAnalysis.accentColor,
-        headerImage: brandAnalysis.suggestedHeaderImage || prev.headerImage,
-        headerOpacity: brandAnalysis.optimalOpacity,
-        footerBackground: brandAnalysis.accentColor,
-        footerGradientStart: brandAnalysis.accentColor,
-        footerGradientEnd: brandAnalysis.primaryColor,
-        footerOpacity: brandAnalysis.optimalOpacity,
-      }));
-
-      setSaveMessage('AI Magic applied! Brand synced with website');
-      speak(`Brand synced successfully. Using ${brandAnalysis.primaryColor} primary color with ${Math.round(brandAnalysis.optimalOpacity * 100)}% opacity.`);
-      console.log('✨ AI Brand Sync complete:', brandAnalysis);
-    } catch (err: any) {
-      setSaveMessage(err.message || 'Error syncing brand');
-      speak('Sorry, I could not sync with the website.');
-      console.error('Brand sync error:', err);
-    } finally {
-      setIsAiSyncing(false);
-    }
-  };
-
-  const applyAIVibe = async (vibe: string) => {
-    setIsAiSyncing(true);
-    setSaveMessage(null);
-
-    try {
-      const response = await fetch('/api/ai/apply-vibe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          vibe,
-          tenantId: clientId,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to apply AI vibe');
-      }
-
-      const data = await response.json();
-      const { widgetConfig } = data;
-
-      // Update config state with complete AI-generated configuration
-      setConfig({
-        headerBackground: widgetConfig.branding.headerBackground,
-        headerBackgroundType: widgetConfig.branding.headerBackgroundType,
-        headerGradientStart: widgetConfig.branding.headerGradientStart,
-        headerGradientEnd: widgetConfig.branding.headerGradientEnd,
-        headerImage: widgetConfig.branding.headerImage,
-        headerOpacity: widgetConfig.branding.headerOpacity,
-        footerBackground: widgetConfig.branding.footerBackground,
-        footerBackgroundType: widgetConfig.branding.footerBackgroundType,
-        footerGradientStart: widgetConfig.branding.footerGradientStart,
-        footerGradientEnd: widgetConfig.branding.footerGradientEnd,
-        footerImage: widgetConfig.branding.footerImage,
-        footerOpacity: widgetConfig.branding.footerOpacity,
-        logoUrl: widgetConfig.branding.logoUrl || config.logoUrl,
-        aiInsightBadge: widgetConfig.features.aiInsightBadge,
-        aiDesignMirror: widgetConfig.features.aiDesignMirror,
-        customCss: widgetConfig.features.customCss,
-      });
-
-      setSaveMessage(`✨ Vibe applied: ${widgetConfig.vibeName}`);
-      speak(`${widgetConfig.vibeName} aesthetic applied. ${widgetConfig.vibeDescription}`);
-      console.log('🎨 AI Vibe complete:', widgetConfig.vibeDescription);
-    } catch (err: any) {
-      setSaveMessage(err.message || 'Error applying vibe');
-      speak('Sorry, I could not apply that vibe.');
-      console.error('Apply vibe error:', err);
-    } finally {
-      setIsAiSyncing(false);
-    }
-  };
-
-  const updateConfig = (key: keyof BrandingConfig, value: any) => {
-    setConfig((prev) => ({ ...prev, [key]: value }));
-    
-    // Action Confirmation - Hannah validates the change
-    const validation = getActionValidation(key, value, config);
-    if (validation && isSpeakerEnabled) {
-      // Debounce validations to avoid too much speaking
-      setTimeout(() => speak(validation), 500);
-    }
-  };
-
-  const getHeaderBackground = () => {
-    if (config.headerBackgroundType === 'image') {
-      return config.headerImage || '#0097b2';
-    }
-    if (config.headerBackgroundType === 'gradient') {
-      return `linear-gradient(135deg, ${config.headerGradientStart}, ${config.headerGradientEnd})`;
-    }
-    return config.headerBackground;
-  };
-
-  const getFooterBackground = () => {
-    if (config.footerBackgroundType === 'image') {
-      return config.footerImage || '#050a14';
-    }
-    if (config.footerBackgroundType === 'gradient') {
-      return `linear-gradient(135deg, ${config.footerGradientStart}, ${config.footerGradientEnd})`;
-    }
-    return config.footerBackground;
-  };
-
-  // Execute Full Design Pass
-  const executeFullDesignPass = useCallback(async () => {
-    speak('Running complete brand analysis and design optimization. This might take a moment...');
-    
-    try {
-      // Step 1: Sync brand colors
-      await syncBrandWithURL();
-      
-      // Step 2: Apply industry-specific optimizations
-      const selectedClient = clients.find(c => c.id === clientId);
-      if (selectedClient?.industry) {
-        const vibeDescription = `${selectedClient.industry} optimized professional branding`;
-        await applyAIVibe(vibeDescription);
-      }
-      
-      // Step 3: Apply glassmorphism if premium/enterprise
-      if (planTier && planTier !== 'standard') {
-        setConfig(prev => ({
-          ...prev,
-          headerBackgroundType: 'gradient',
-          headerGradientStart: '#0891b2',
-          headerGradientEnd: '#0e7490',
-          headerOpacity: 0.85,
-        }));
-        speak('Applied premium glassmorphic effects for modern appeal.');
-      }
-      
-      speak('Full design pass complete! Your brand now has optimized colors, professional styling, and enhanced visual appeal.');
-    } catch (err) {
-      console.error('Full design pass error:', err);
-      speak('I encountered an issue during the design pass. Let me try a simpler approach.');
-    }
-  }, [clientId, clients, planTier, syncBrandWithURL, applyAIVibe, speak]);
-
-  // Execute Service Capability
-  const executeServiceCapability = useCallback(async (capability: any) => {
-    speak(`Executing ${capability.name.toLowerCase()}...`);
-    
-    switch (capability.name) {
-      case 'Brand Sync':
-        await syncBrandWithURL();
-        break;
-      case 'Industry Vibe':
-        const selectedClient = clients.find(c => c.id === clientId);
-        if (selectedClient?.industry) {
-          await applyAIVibe(`${selectedClient.industry} professional branding`);
-        }
-        break;
-      case 'Glassmorphism Design':
-        setConfig(prev => ({
-          ...prev,
-          headerBackgroundType: 'gradient',
-          headerGradientStart: '#0891b2',
-          headerGradientEnd: '#0e7490',
-          headerOpacity: 0.85,
-        }));
-        speak('Applied modern glassmorphic design with optimal transparency.');
-        break;
-      case 'Color Harmony':
-        speak('Analyzing current color scheme for optimal harmony...');
-        // AI color optimization would go here
-        break;
-      case 'Opacity Tuning':
-        setConfig(prev => ({
-          ...prev,
-          headerOpacity: 0.8,
-          footerOpacity: 0.8,
-        }));
-        speak('Optimized transparency for perfect readability and modern aesthetics.');
-        break;
-      default:
-        speak(`Executing ${capability.description.toLowerCase()}.`);
-    }
-  }, [clientId, clients, syncBrandWithURL, applyAIVibe, speak]);
-
-  // Instant Save - Save both visuals and greeting
-  const instantSave = useCallback(async () => {
-    if (!generatedGreeting) return;
-    
-    setIsSaving(true);
-    setSaveMessage(null);
-    
-    try {
-      const response = await fetch('/api/tenants/update-config-with-greeting', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tenantId: clientId,
-          configPatch: {
-            branding: config,
-            features: {
-              aiInsightBadge: config.aiInsightBadge,
-              aiDesignMirror: config.aiDesignMirror,
-              customCss: config.customCss,
-            },
-          },
-          aiSettings: {
-            initial_greeting: generatedGreeting,
-            voice_persona: 'auto-generated', // Could be enhanced to store actual persona
-          }
-        }),
-      });
-      
-      if (!response.ok) throw new Error('Failed to save configuration');
-      
-      setSaveMessage('✨ Perfect! Both the visual design and greeting have been saved.');
-      speak('Excellent! Your complete branding setup is now live.');
-      setShowGreetingPreview(false);
-      
-    } catch (err: any) {
-      setSaveMessage(err.message || 'Error saving configuration');
-      speak('Sorry, I had trouble saving your changes.');
-      console.error('Save error:', err);
-    } finally {
-      setIsSaving(false);
-    }
-  }, [clientId, config, generatedGreeting]);
-
-  
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {/* Left Panel: The Studio */}
@@ -1088,7 +870,7 @@ export function ClientBrandingStudio({
               Studio Controls
             </h2>
             <div className="flex items-center gap-3">
-              {isLoadingConfig && (
+              {_isLoadingConfig && (
                 <div className="text-xs text-white/60">Loading...</div>
               )}
               {/* Voice Command Mic Button */}
@@ -1621,7 +1403,7 @@ export function ClientBrandingStudio({
                   <span className="text-[#FFD700]">Generated Greeting:</span>
                 </div>
                 <div className="backdrop-blur-lg bg-black/40 rounded-lg p-4 border border-white/10">
-                  <p className="text-white text-sm italic">"{generatedGreeting}"</p>
+                  <p className="text-white text-sm italic">&quot;{generatedGreeting}&quot;</p>
                 </div>
                 
                 {greetingExplanation && (
@@ -1651,7 +1433,7 @@ export function ClientBrandingStudio({
                 </div>
                 
                 <div className="text-white/40 text-xs text-center">
-                  Say "I love it" or "Save that" to approve, or "Try again" to regenerate
+                  Say &quot;I love it&quot; or &quot;Save that&quot; to approve, or &quot;Try again&quot; to regenerate
                 </div>
               </div>
             </div>
@@ -1665,10 +1447,10 @@ export function ClientBrandingStudio({
               <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
               <div className="text-white">
                 <div className="font-semibold text-sm">🎤 Dictating Greeting</div>
-                <div className="text-xs text-white/70">Say "stop" or "done" when finished</div>
+                <div className="text-xs text-white/70">Say &quot;stop&quot; or &quot;done&quot; when finished</div>
                 {dictatedGreeting && (
                   <div className="mt-2 text-xs text-white/60 italic">
-                    "{dictatedGreeting}"
+                    &quot;{dictatedGreeting}&quot;
                   </div>
                 )}
               </div>
@@ -1736,10 +1518,16 @@ export function ClientBrandingStudio({
               )}
               <div className="relative z-10 flex items-center gap-3">
                 {config.logoUrl && config.logoUrl.startsWith('http') ? (
-                  <img src={config.logoUrl} alt="Logo" className="w-8 h-8 rounded" onError={(e) => {
-                    e.currentTarget.style.display = 'none';
-                    e.currentTarget.nextElementSibling?.classList.remove('hidden');
-                  }} />
+                  <div className="relative w-8 h-8 rounded overflow-hidden">
+                    <Image
+                      src={config.logoUrl}
+                      alt="Logo"
+                      fill
+                      className="rounded"
+                      style={{ objectFit: 'cover' }}
+                      unoptimized
+                    />
+                  </div>
                 ) : (
                   <div className="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-xs font-bold">
                     AI
@@ -1803,7 +1591,7 @@ export function ClientBrandingStudio({
                 <div>
                   <h3 className="text-xl font-bold text-white mb-2">AI Branding Suggestion</h3>
                   <p className="text-white/80 text-sm">
-                    I've prepared a professional branding theme for your client. Would you like to apply it?
+                    I&apos;ve prepared a professional branding theme for your client. Would you like to apply it?
                   </p>
                 </div>
                 <div className="flex gap-3">
@@ -1852,7 +1640,7 @@ export function ClientBrandingStudio({
             </div>
             {voiceTranscript && (
               <div className="mt-2 text-white text-sm">
-                <span className="text-[#FFD700]">You said:</span> "{voiceTranscript}"
+                <span className="text-[#FFD700]">You said:</span> &quot;{voiceTranscript}&quot;
               </div>
             )}
           </div>

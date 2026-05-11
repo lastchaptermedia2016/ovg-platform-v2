@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { checkClientStatus, ClientStatus } from '@/utils/heartbeat';
+import { checkClientStatus } from '@/utils/heartbeat';
 
 interface StatusDotProps {
   lastSeen?: string;

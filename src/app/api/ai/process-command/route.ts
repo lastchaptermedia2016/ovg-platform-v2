@@ -17,6 +17,7 @@ const ProcessCommandSchema = z.object({
   }),
 });
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 type ProcessCommandRequest = z.infer<typeof ProcessCommandSchema>;
 
 // Response schema for AI output - supports both SINGLE and BULK actions
@@ -238,10 +239,11 @@ Output ONLY valid JSON.`;
           tenants: data ? [{ id: data.id, name: data.name }] : [],
         };
       }
-    } catch (updateError: any) {
+    } catch (updateError) {
+      const errorMessage = updateError instanceof Error ? updateError.message : String(updateError);
       console.error('Update execution failed:', updateError);
       return NextResponse.json(
-        { error: `Update failed: ${updateError.message}` },
+        { error: `Update failed: ${errorMessage}` },
         { status: 500 }
       );
     }

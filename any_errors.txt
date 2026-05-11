@@ -1,0 +1,78 @@
+src\app\(auth)\auth\page.tsx:25:  const [companyName, setCompanyName] = useState('');
+src\app\(auth)\auth\page.tsx:42:      .trim() || 'your-company';
+src\app\(auth)\auth\page.tsx:262:    // Validate passwords match and company name provided
+src\app\(auth)\auth\page.tsx:269:    if (!companyName.trim()) {
+src\app\(auth)\auth\page.tsx:270:      setError('Company name is required for reseller accounts');
+src\app\(auth)\auth\page.tsx:278:      // Generate slug from company name for database trigger
+src\app\(auth)\auth\page.tsx:279:      const slug = companyName.toLowerCase()
+src\app\(auth)\auth\page.tsx:290:            company_name: companyName.trim(),
+src\app\(auth)\auth\page.tsx:489:                      Company Name
+src\app\(auth)\auth\page.tsx:493:                      value={companyName}
+src\app\(auth)\auth\page.tsx:494:                      onChange={(e) => setCompanyName(e.target.value)}
+src\app\(auth)\auth\page.tsx:497:                      placeholder="Enter your company name"
+src\app\(auth)\auth\page.tsx:501:                    {companyName && (
+src\app\(auth)\auth\page.tsx:511:                            reseller/{generateSlug(companyName)}
+src\app\(dashboard)\reseller\[resellerSlug]\clients\page.tsx:280:    // Clear any pending toggle
+src\app\(dashboard)\reseller\[resellerSlug]\layout.tsx:56:  // Production Excellence: Execute security check before any rendering
+src\app\api\ai\extract-client-info\route.ts:37:Return ONLY a JSON object with the extracted fields. If a field is not found, omit it from the JSON. Do not include any explanations or additional text.
+src\app\api\ai\extract-client-info\route.ts:77:        const nameMatch = transcript.match(/(?:client|company|business)\s+(?:name\s+)?(?:is\s+)?([A-Z][a-zA-Z\s&]+?)(?:\s+(?:in|and|with)|$)/i);
+src\app\api\ai\generate-response\route.ts:16:Do not include any explanatory text or formatting - just the response text.`;
+src\app\api\ai\process-command\route.ts:13:  currentConfig: z.record(z.any()).default({}),
+src\app\api\ai\process-command\route.ts:26:  payload: z.record(z.any()),
+src\app\api\ai\voice-design\route.ts:9:  currentConfig: z.record(z.any()).optional(),
+src\app\api\ai\voice-design\route.ts:28:  value: z.any(),
+src\app\api\tenants\update-config\route.ts:8:  configPatch: z.record(z.any()),
+src\app\api\tenants\update-config\route.ts:173:    // Check if any rows were affected
+src\app\api\tenants\update-config-with-greeting\route.ts:10:  configPatch: z.record(z.any()),
+src\app\api\tenants\update-config-with-greeting\route.ts:11:  aiSettings: z.record(z.any()).optional(),
+src\app\create-agent\page.tsx:92:    // EXECUTION PRIORITY: Kill any accidental sounds immediately
+src\app\create-agent\page.tsx:126:    // EXECUTION PRIORITY: Kill any accidental sounds immediately
+src\app\create-agent\page.tsx:232:      return; // Don't play any step audio during initial boot
+src\components\reseller\ClientBrandingStudio.tsx:147:    // Cleanup any existing audio
+src\components\reseller\ClientBrandingStudio.tsx:581:        speak('No problem. You can use voice commands anytime to customize your design.');
+src\components\reseller\ClientBrandingStudio.tsx:987:      // Cleanup any playing audio when component unmounts
+src\components\reseller\ClientsGrid.tsx:382:    if ((tenant as any).is_active === false) {
+src\components\reseller\ClientsGrid.tsx:388:    const permissionLevel = (tenant as any).permission_level || 'standard';
+src\components\reseller\ClientsGrid.tsx:745:          const newLog = payload.new as any;
+src\components\reseller\ClientsGrid.tsx:879:        console.debug('STATUS CODE:', (error as any)?.status || 'NO STATUS');
+src\components\reseller\ClientsGrid.tsx:997:        // Try to create the reseller record for any valid slug
+src\components\reseller\ClientsGrid.tsx:1110:              key => (prevTenant as any)?.[key] !== (newTenant as any)?.[key]
+src\components\reseller\ClientsGrid.tsx:1124:        code: err instanceof Error && 'code' in err ? (err as any).code : undefined,
+src\components\reseller\ClientsGrid.tsx:1125:        status: err instanceof Error && 'status' in err ? (err as any).status : undefined,
+src\components\reseller\modals\UniversalCommandModal.tsx:207:    // Strip Command Prefixes: Remove phrases like "Client Name," "Company is," or "Name is"
+src\components\reseller\modals\UniversalCommandModal.tsx:209:      /^(client name|company name|name is|company is|the name is|the company is|the client name is)/i,
+src\components\reseller\modals\UniversalCommandModal.tsx:211:      /^(my company|our company|the company)/i
+src\components\reseller\modals\UniversalCommandModal.tsx:859:    await speak(`I've drafted the full profile for ${voiceEntryData.name}. Please review the details and correct any errors before I save this to your database.`);
+src\components\reseller\modals\UniversalCommandModal.tsx:1356:                <p className="text-xs text-white/60">Please correct any errors before saving to database</p>
+src\components\reseller\SignOutButton.tsx:31:      router.refresh(); // Clears any server-side cached segments
+src\core\tenant\db.ts:21:    z.record(z.any()).optional().default({})
+src\hooks\use-resilient-voice.ts:24:    (error as any).status = response.status;
+src\hooks\use-resilient-voice.ts:41:    (error as any).status = response.status;
+src\hooks\use-voice-command.ts:29:  currentConfig?: Record<string, any>;
+src\hooks\use-voice-command.ts:119:    // Abort any ongoing fetch
+src\hooks\use-voice-command.ts:260:      // Clean up any existing TTS audio context
+src\hooks\use-voice-command.ts:274:      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+src\hooks\use-voice-command.ts:332:      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+src\lib\voice-visual-harmony.ts:23:    companyName: string;
+src\lib\voice-visual-harmony.ts:152:export function generateGreetingTemplate(persona: VoicePersona, companyName: string, industry?: string): GreetingTemplate {
+src\lib\voice-visual-harmony.ts:159:      companyName,
+src\lib\voice-visual-harmony.ts:172:      "Welcome to {companyName}. I'm here to assist you with our professional {industry} solutions.",
+src\lib\voice-visual-harmony.ts:173:      "Thank you for visiting {companyName}. How may I provide you with expert {industry} assistance today?",
+src\lib\voice-visual-harmony.ts:174:      "Greetings from {companyName}. I'm your dedicated {industry} specialist, ready to help."
+src\lib\voice-visual-harmony.ts:177:      "Hey there! Welcome to {companyName}. I'm excited to help you with our {industry} services!",
+src\lib\voice-visual-harmony.ts:178:      "Hi! Thanks for stopping by {companyName}. What can I help you with today?",
+src\lib\voice-visual-harmony.ts:179:      "Welcome to {companyName}! I'm here to make your {industry} experience amazing."
+src\lib\voice-visual-harmony.ts:182:      "Welcome to {companyName}. I'm your AI-powered {industry} assistant, optimized for your needs.",
+src\lib\voice-visual-harmony.ts:183:      "Greetings. {companyName}'s intelligent {industry} platform is ready to assist you.",
+src\lib\voice-visual-harmony.ts:184:      "Welcome to {companyName}. I'm equipped with advanced {industry} capabilities to help you."
+src\lib\voice-visual-harmony.ts:187:      "Welcome to {companyName}. Experience the excellence of our premium {industry} services.",
+src\lib\voice-visual-harmony.ts:188:      "Greetings from {companyName}. Allow me to guide you through our exceptional {industry} offerings.",
+src\lib\voice-visual-harmony.ts:189:      "Welcome to {companyName}. Discover the sophistication of our world-class {industry} solutions."
+src\lib\voice-visual-harmony.ts:192:      "Welcome to {companyName}! It's wonderful to have you here. How can I make your {industry} journey delightful?",
+src\lib\voice-visual-harmony.ts:193:      "Warm greetings from {companyName}! I'm here to ensure your {industry} experience is exceptional.",
+src\lib\voice-visual-harmony.ts:194:      "Welcome to {companyName}! I'm delighted to assist you with our {industry} services."
+src\lib\voice-visual-harmony.ts:197:      "Welcome to {companyName}! I'm thrilled to help you explore our amazing {industry} solutions!",
+src\lib\voice-visual-harmony.ts:198:      "Excited to welcome you to {companyName}! Let's discover our incredible {industry} offerings together!",
+src\lib\voice-visual-harmony.ts:199:      "Welcome to {companyName}! I'm pumped to show you our fantastic {industry} services!"
+src\lib\voice-visual-harmony.ts:249:  companyName: string,
+src\lib\voice-visual-harmony.ts:253:  const template = generateGreetingTemplate(persona, companyName, industry);

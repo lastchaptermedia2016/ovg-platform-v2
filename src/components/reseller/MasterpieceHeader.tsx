@@ -16,7 +16,6 @@ interface MasterpieceHeaderProps {
 export function MasterpieceHeader({ 
   isListening = false, 
   onMicClick,
-  isProcessing = false,
   isAwaitingVoiceConfirm = false,
   transcribedText,
   isCommunicating = false
@@ -120,7 +119,7 @@ export function MasterpieceHeader({
         {transcribedText && (
           <div className="ml-3 px-2 py-0.5 bg-[#226683]/50 border-l-2 border-[#0097b2] backdrop-blur-sm">
             <span className="text-[#0097b2] text-[9px] font-mono uppercase tracking-tighter italic">
-              Detected: "{transcribedText}"
+              Detected: &quot;{transcribedText}&quot;
             </span>
           </div>
         )}

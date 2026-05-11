@@ -11,6 +11,10 @@ interface UseResilientVoiceReturn {
   clearCaptions: () => void;
 }
 
+interface TtsError extends Error {
+  status?: number;
+}
+
 // Phase 1: Groq Orpheus-v1 TTS
 const playGroqTTS = async (text: string): Promise<ArrayBuffer> => {
   const response = await fetch('/api/tts', {
@@ -20,25 +24,8 @@ const playGroqTTS = async (text: string): Promise<ArrayBuffer> => {
   });
 
   if (!response.ok) {
-    const error = new Error(`Groq TTS failed: ${response.status}`);
-    (error as any).status = response.status;
-    throw error;
-  }
-
-  return response.arrayBuffer();
-};
-
-// Phase 2: ElevenLabs TTS
-const playElevenLabsTTS = async (text: string): Promise<ArrayBuffer> => {
-  const response = await fetch('/api/tts', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, provider: 'elevenlabs' }),
-  });
-
-  if (!response.ok) {
-    const error = new Error(`ElevenLabs TTS failed: ${response.status}`);
-    (error as any).status = response.status;
+    const error = new Error(`Groq TTS failed: ${response.status}`) as TtsError;
+    error.status = response.status;
     throw error;
   }
 
@@ -158,7 +145,7 @@ export function useResilientVoice(): UseResilientVoiceReturn {
 
       if (!isCancelledRef.current) setIsPlaying(false);
       return;
-    } catch (error: any) {
+    } catch {
       if (isCancelledRef.current) return;
       console.log(`[Voice] Groq failed, trying browser TTS...`);
     }
@@ -169,7 +156,7 @@ export function useResilientVoice(): UseResilientVoiceReturn {
       await playBrowserTTS(text);
       if (!isCancelledRef.current) setIsPlaying(false);
       return;
-    } catch (error) {
+    } catch {
       console.log('[Voice] Browser TTS failed, entering silent mode...');
     }
 

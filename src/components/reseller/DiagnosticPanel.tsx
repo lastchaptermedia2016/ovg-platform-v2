@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { createClient as createSupabaseClient } from '@/lib/supabase/client';
 
 interface LogEntry {
@@ -8,7 +8,7 @@ interface LogEntry {
   tenant_id: string;
   error_type: string;
   error_message: string;
-  metadata: any;
+  metadata: Record<string, unknown>;
   created_at: string;
 }
 
@@ -18,12 +18,56 @@ interface DiagnosticPanelProps {
   onClose: () => void;
 }
 
+interface FixableAction {
+  label: string;
+  action: () => void;
+}
+
 export function DiagnosticPanel({ tenantId, isOpen, onClose }: DiagnosticPanelProps) {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [fixableAction, setFixableAction] = useState<{ label: string; action: () => void } | null>(null);
+  const [fixableAction, setFixableAction] = useState<FixableAction | null>(null);
+
+  const analyzeWithGroq = useCallback(async (_tenantId: string, errorLogs: LogEntry[]) => {
+    setIsAnalyzing(true);
+
+    // In production, this would call Groq API
+    // For now, simulate AI analysis
+    setTimeout(() => {
+      const hasServiceDisabled = errorLogs.some(log =>
+        log.error_message.toLowerCase().includes('disabled') ||
+        log.error_message.toLowerCase().includes('service')
+      );
+
+      if (hasServiceDisabled) {
+        setAiSuggestion('Service appears to be disabled. Re-enabling the AI service should restore normal operations.');
+        setFixableAction({
+          label: 'Re-enable Service',
+          action: async () => {
+            const supabase = createSupabaseClient();
+            await supabase
+              .from('tenants')
+              .update({
+                industry_config: {
+                  ...(errorLogs[0]?.metadata ?? {}),
+                  service_enabled: true,
+                },
+              })
+              .eq('id', _tenantId);
+            setFixableAction(null);
+            setAiSuggestion('Service has been re-enabled. Monitoring for recovery...');
+          },
+        });
+      } else {
+        setAiSuggestion('Multiple connection errors detected. Check network connectivity and API key configuration.');
+        setFixableAction(null);
+      }
+
+      setIsAnalyzing(false);
+    }, 1500);
+  }, []);
 
   useEffect(() => {
     if (!isOpen || !tenantId) return;
@@ -43,9 +87,11 @@ export function DiagnosticPanel({ tenantId, isOpen, onClose }: DiagnosticPanelPr
         console.error('Error fetching logs:', error);
       } else {
         setLogs(data || []);
-        
+
         // Analyze last 3 error logs with Groq
-        const errorLogs = (data || []).filter(log => log.error_type === 'error' || log.error_type === 'critical').slice(0, 3);
+        const errorLogs = (data || [])
+          .filter(log => log.error_type === 'error' || log.error_type === 'critical')
+          .slice(0, 3);
         if (errorLogs.length > 0) {
           analyzeWithGroq(tenantId, errorLogs);
         }
@@ -63,22 +109,23 @@ export function DiagnosticPanel({ tenantId, isOpen, onClose }: DiagnosticPanelPr
           event: 'INSERT',
           schema: 'public',
           table: 'tenant_logs',
-          filter: `tenant_id=eq.${tenantId}`
+          filter: `tenant_id=eq.${tenantId}`,
         },
         (payload) => {
           const newLog = payload.new as LogEntry;
           setIsTyping(true);
-          
+
           // Simulate typing effect
           setTimeout(() => {
-            setLogs(prev => [newLog, ...prev]);
+            setLogs(prev => {
+              const updatedLogs = [newLog, ...prev];
+              if (newLog.error_type === 'error' || newLog.error_type === 'critical') {
+                const errorLogs = [newLog, ...prev.filter(log => log.error_type === 'error' || log.error_type === 'critical')].slice(0, 3);
+                analyzeWithGroq(tenantId, errorLogs);
+              }
+              return updatedLogs;
+            });
             setIsTyping(false);
-            
-            // Re-analyze if new error log
-            if (newLog.error_type === 'error' || newLog.error_type === 'critical') {
-              const errorLogs = [newLog, ...logs.filter(log => log.error_type === 'error' || log.error_type === 'critical')].slice(0, 3);
-              analyzeWithGroq(tenantId, errorLogs);
-            }
           }, 500);
         }
       )
@@ -87,42 +134,7 @@ export function DiagnosticPanel({ tenantId, isOpen, onClose }: DiagnosticPanelPr
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [isOpen, tenantId]);
-
-  const analyzeWithGroq = async (tenantId: string, errorLogs: LogEntry[]) => {
-    setIsAnalyzing(true);
-    
-    // In production, this would call Groq API
-    // For now, simulate AI analysis
-    setTimeout(() => {
-      const hasServiceDisabled = errorLogs.some(log => 
-        log.error_message.toLowerCase().includes('disabled') || 
-        log.error_message.toLowerCase().includes('service')
-      );
-      
-      if (hasServiceDisabled) {
-        setAiSuggestion('Service appears to be disabled. Re-enabling the AI service should restore normal operations.');
-        setFixableAction({
-          label: 'Re-enable Service',
-          action: async () => {
-            const supabase = createSupabaseClient();
-            // Simulate fix execution
-            await supabase
-              .from('tenants')
-              .update({ industry_config: { ...errorLogs[0].metadata, service_enabled: true } })
-              .eq('id', tenantId);
-            setFixableAction(null);
-            setAiSuggestion('Service has been re-enabled. Monitoring for recovery...');
-          }
-        });
-      } else {
-        setAiSuggestion('Multiple connection errors detected. Check network connectivity and API key configuration.');
-        setFixableAction(null);
-      }
-      
-      setIsAnalyzing(false);
-    }, 1500);
-  };
+  }, [isOpen, tenantId, analyzeWithGroq]);
 
   if (!isOpen) return null;
 
@@ -205,7 +217,7 @@ export function DiagnosticPanel({ tenantId, isOpen, onClose }: DiagnosticPanelPr
                   <span className="uppercase tracking-wider">Receiving live data...</span>
                 </div>
               )}
-              
+
               {logs.map((log) => (
                 <div
                   key={log.id}
@@ -214,7 +226,7 @@ export function DiagnosticPanel({ tenantId, isOpen, onClose }: DiagnosticPanelPr
                   <div className="flex items-start justify-between gap-4 mb-2">
                     <div className="flex items-center gap-2">
                       <span className={`px-2 py-0.5 text-[9px] tracking-[0.1em] rounded uppercase ${
-                        log.error_type === 'critical' 
+                        log.error_type === 'critical'
                           ? 'bg-[#DC143C]/20 border border-[#DC143C]/30 text-[#DC143C]'
                           : log.error_type === 'warning'
                           ? 'bg-[#FFB000]/20 border border-[#FFB000]/30 text-[#FFB000]'
@@ -227,11 +239,11 @@ export function DiagnosticPanel({ tenantId, isOpen, onClose }: DiagnosticPanelPr
                       </span>
                     </div>
                   </div>
-                  
+
                   <div className="text-xs text-white/90 mb-2 font-mono">
                     {log.error_message}
                   </div>
-                  
+
                   {log.metadata && (
                     <details className="mt-2">
                       <summary className="text-[10px] text-white/40 uppercase tracking-wider cursor-pointer hover:text-white/60 transition-colors">

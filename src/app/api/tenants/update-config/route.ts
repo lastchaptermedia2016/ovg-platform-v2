@@ -115,14 +115,16 @@ export async function POST(request: NextRequest) {
     console.log('=== APPLYING UPDATE ===');
     console.log('Merged config:', JSON.stringify(mergedConfig, null, 2));
 
-    const { data: updateData, error: updateError, count } = await supabase
+    const updatePayload = {
+      widget_config: mergedConfig,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data: updateData, error: updateError } = await supabase
       .from('tenants')
-      .update({
-        widget_config: mergedConfig,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq('id', tenantId)
-      .select();
+      .select('id');
 
     if (updateError) {
       console.error('=== UPDATE ERROR ===');
@@ -194,13 +196,14 @@ export async function POST(request: NextRequest) {
       }
     });
 
-  } catch (error: any) {
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('=== UNEXPECTED ERROR ===');
     console.error('Error:', error);
-    console.error('Error message:', error?.message);
-    console.error('Error stack:', error?.stack);
+    console.error('Error message:', errorMessage);
+    if (error instanceof Error) console.error('Error stack:', error.stack);
     return NextResponse.json(
-      { success: false, error: 'Internal server error', details: error?.message },
+      { success: false, error: 'Internal server error', details: errorMessage },
       { status: 500 }
     );
   }

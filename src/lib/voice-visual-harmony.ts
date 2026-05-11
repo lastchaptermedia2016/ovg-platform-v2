@@ -83,7 +83,7 @@ export function mapVisualStyleToPersona(style: VisualStyle): VoicePersona {
   const colorAnalysis = analyzeColorPalette(colors);
   
   // Base persona on industry
-  let basePersona: VoicePersona = {
+  const basePersona: VoicePersona = {
     tone: 'professional',
     vocabulary: 'formal',
     pace: 'medium',

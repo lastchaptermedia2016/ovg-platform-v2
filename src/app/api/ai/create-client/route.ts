@@ -34,8 +34,6 @@ const CreateClientRequestSchema = z.object({
   }).optional(),
 });
 
-type CreateClientRequest = z.infer<typeof CreateClientRequestSchema>;
-
 // Helper function to normalize URLs with soft validation
 const normalizeUrl = (url: string | null | undefined): string | null => {
   if (!url || url.trim() === '') return null;
@@ -344,8 +342,9 @@ export async function POST(request: NextRequest) {
     // Return parsed data only — no DB insert
     return NextResponse.json({ success: true, parsed });
 
-  } catch (error: any) {
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[CreateClient] Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }

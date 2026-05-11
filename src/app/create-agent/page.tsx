@@ -1,12 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Zap, Mic, Brain, Upload, User, Settings, Sparkles, X } from "lucide-react";
+import { Zap, Mic, Upload, User, X } from "lucide-react";
 import StrategySlides from "@/components/StrategySlides";
-import { useRef } from "react";
 
 export default function CreateAgent() {
   const router = useRouter();
@@ -17,7 +16,6 @@ export default function CreateAgent() {
   const [playedAudio, setPlayedAudio] = useState<Set<string>>(new Set());
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showUnmuteHint, setShowUnmuteHint] = useState(false);
-  const [audioUnlocked, setAudioUnlocked] = useState(false);
 
   // Global Audio Reference for Exclusive Playback
   const currentAudio = useRef<HTMLAudioElement | null>(null);
@@ -28,38 +26,41 @@ export default function CreateAgent() {
   const isInitialBoot = useRef(true);
 
   // Audio file paths with absolute URLs for iPad Safari compatibility
-  const audioFiles = {
-    tab: '/ElevenLabs1.mp3',
-    step1: '/ElevenLabs2.mp3',
-    step2: '/ElevenLabs3.mp3',
-    step3: '/ElevenLabs4.mp3',
-    deploy: '/ElevenLabs5.mp3'
-  };
+  const audioFiles = useMemo(
+    () => ({
+      tab: '/ElevenLabs1.mp3',
+      step1: '/ElevenLabs2.mp3',
+      step2: '/ElevenLabs3.mp3',
+      step3: '/ElevenLabs4.mp3',
+      deploy: '/ElevenLabs5.mp3',
+    }),
+    []
+  );
 
   // Prime audio objects on first interaction
-  const primeAudioObjects = () => {
+  const primeAudioObjects = useCallback(() => {
     if (audioPreloaded.current) return;
-    
+
     Object.values(audioFiles).forEach(filePath => {
       const audio = new Audio(filePath);
       audio.preload = 'auto';
       audio.load(); // Pre-fetch buffer for iPad
     });
-    
+
     audioPreloaded.current = true;
-  };
+  }, [audioFiles]);
 
   // Initialize Audio Context and setup iPad compatibility
   useEffect(() => {
     // Initialize Web Audio API
-    audioContext.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-    
+    const WebKitAudioContext = (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    audioContext.current = new (window.AudioContext || WebKitAudioContext)();
+
     // Resume audio context on user interaction
     const unlockAudio = async () => {
       if (audioContext.current && audioContext.current.state === 'suspended') {
         try {
           await audioContext.current.resume();
-          setAudioUnlocked(true);
           setShowUnmuteHint(false);
         } catch (error) {
           console.log('Audio context resume failed:', error);
@@ -85,7 +86,7 @@ export default function CreateAgent() {
       window.removeEventListener('touchstart', handleUserInteraction);
       window.removeEventListener('click', handleUserInteraction);
     };
-  }, []);
+  }, [primeAudioObjects]);
 
   // Global Exit & Silence Hook
   const handleGlobalExit = () => {
@@ -109,15 +110,18 @@ export default function CreateAgent() {
   };
 
   // Autonomous status messages for each step
-  const statusMessages = {
-    1: "> Mapping neural pathways...",
-    2: "> Calibrating synthesis protocols...",
-    3: "> Injecting knowledge vectors...",
-    4: "> Deploying agent to infrastructure..."
-  };
+  const statusMessages = useMemo(
+    () => ({
+      1: "> Mapping neural pathways...",
+      2: "> Calibrating synthesis protocols...",
+      3: "> Injecting knowledge vectors...",
+      4: "> Deploying agent to infrastructure...",
+    }),
+    []
+  );
 
   // Strict Relay Implementation - Chained Audio Relay (No Overlap)
-  const playChainedAudio = (audioKey: string, audioFile: string, consoleMessage: string, triggerModal?: boolean, nextAudioKey?: string) => {
+  const playChainedAudio = useCallback((audioKey: string, audioFile: string, consoleMessage: string, triggerModal?: boolean, nextAudioKey?: string) => {
     // Play-once-per-session check
     if (playedAudio.has(audioKey)) {
       return;
@@ -213,7 +217,7 @@ export default function CreateAgent() {
         setShowAuthModal(true);
       }
     }
-  };
+  }, [playedAudio, audioFiles, setStatusText, setShowUnmuteHint]);
 
   // Page mount audio - Chain Trigger for Sequential Playback
   useEffect(() => {
@@ -223,24 +227,26 @@ export default function CreateAgent() {
     }, 1000);
     
     return () => clearTimeout(timer);
-  }, []);
+  }, [playChainedAudio]);
 
   // Step transition audio triggers - 3-Step Flow (Non-chained for manual navigation)
   useEffect(() => {
-    // STRICT RELAY: Block auto-play during initial boot to prevent premature ElevenLabs2.mp3
     if (isInitialBoot.current) {
       return; // Don't play any step audio during initial boot
     }
-    
-    // Trigger audio based on current step without chaining for manual navigation
-    if (currentStep === 1) {
-      playChainedAudio('step1', '/ElevenLabs2.mp3', '> ANALYZING PERSONALITY MATRIX PARAMETERS...');
-    } else if (currentStep === 2) {
-      playChainedAudio('step2', '/ElevenLabs3.mp3', '> CALIBRATING SYNTHESIS...');
-    } else if (currentStep === 3) {
-      playChainedAudio('step3', '/ElevenLabs4.mp3', '> INJECTING KNOWLEDGE...');
-    }
-  }, [currentStep]);
+
+    const timer = window.setTimeout(() => {
+      if (currentStep === 1) {
+        playChainedAudio('step1', '/ElevenLabs2.mp3', '> ANALYZING PERSONALITY MATRIX PARAMETERS...');
+      } else if (currentStep === 2) {
+        playChainedAudio('step2', '/ElevenLabs3.mp3', '> CALIBRATING SYNTHESIS...');
+      } else if (currentStep === 3) {
+        playChainedAudio('step3', '/ElevenLabs4.mp3', '> INJECTING KNOWLEDGE...');
+      }
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [currentStep, playChainedAudio]);
 
   // Status typewriter effect
   useEffect(() => {
@@ -269,7 +275,7 @@ export default function CreateAgent() {
       clearTimeout(typingInterval);
       clearTimeout(deleteTimeout);
     };
-  }, [currentStep]);
+  }, [currentStep, statusMessages]);
 
   return (
     <div className="min-h-screen bg-cover bg-center bg-no-repeat relative overflow-hidden" style={{ backgroundImage: "url('/home-bg.jpg')" }}>
@@ -280,7 +286,7 @@ export default function CreateAgent() {
             <div className="text-[#FFD700] text-2xl">🔊</div>
             <div className="flex-1">
               <p className="text-white text-sm font-medium">Audio Unlocked</p>
-              <p className="text-white/70 text-xs">Check your device's mute switch and volume</p>
+              <p className="text-white/70 text-xs">Check your device&apos;s mute switch and volume</p>
             </div>
             <button
               onClick={() => setShowUnmuteHint(false)}
@@ -425,7 +431,7 @@ export default function CreateAgent() {
                     Personality Matrix
                   </h3>
                   <p className="text-white/40 font-thin mb-6">
-                    Configure cognitive parameters for your AI agent's behavioral patterns and response characteristics.
+                    Configure cognitive parameters for your AI agent&apos;s behavioral patterns and response characteristics.
                   </p>
                   
                   {/* Cognitive Parameters */}
@@ -476,7 +482,7 @@ export default function CreateAgent() {
                     Voice Blueprint
                   </h3>
                   <p className="text-white/70 mb-6">
-                    Select and configure synthesis protocols for your AI agent's voice generation capabilities.
+                    Select and configure synthesis protocols for your AI agent&apos;s voice generation capabilities.
                   </p>
                   
                   {/* Synthesis Models */}
@@ -518,7 +524,7 @@ export default function CreateAgent() {
                     Knowledge Injection
                   </h3>
                   <p className="text-white/70 mb-6">
-                    Upload documents and data sources to enhance your AI agent's knowledge base and capabilities.
+                    Upload documents and data sources to enhance your AI agent&apos;s knowledge base and capabilities.
                   </p>
                   
                   {/* Drag and Drop Zone with Pulsing Gold Glow */}

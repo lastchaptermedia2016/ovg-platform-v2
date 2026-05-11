@@ -4,7 +4,6 @@
  */
 
 const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
-const PAYSTACK_PUBLIC_KEY = process.env.PAYSTACK_PUBLIC_KEY;
 
 export interface InitializeTransactionParams {
   email: string;
@@ -22,6 +21,12 @@ export interface InitializeTransactionResult {
     access_code: string;
     reference: string;
   };
+}
+
+export interface PaystackTransactionVerificationResult {
+  status: boolean;
+  message: string;
+  data: Record<string, unknown>;
 }
 
 /**
@@ -65,7 +70,7 @@ export async function initializeTransaction(
 /**
  * Verify a Paystack transaction
  */
-export async function verifyTransaction(reference: string): Promise<any> {
+export async function verifyTransaction(reference: string): Promise<PaystackTransactionVerificationResult> {
   if (!PAYSTACK_SECRET_KEY) {
     throw new Error("PAYSTACK_SECRET_KEY is not configured");
   }

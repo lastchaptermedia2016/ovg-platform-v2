@@ -197,7 +197,7 @@ export function getContextualSuggestion(industry?: string, planTier?: string): s
   return "I can help you create a professional brand presence. Where should we start?";
 }
 
-export function getActionValidation(action: string, value: any, context?: any): string {
+export function getActionValidation(action: string): string {
   const validations = {
     color: [
       "That color choice really works well with the overall design.",

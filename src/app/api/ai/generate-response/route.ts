@@ -30,8 +30,9 @@ Do not include any explanatory text or formatting - just the response text.`;
     const response = completion.choices[0]?.message?.content || 'Got it.';
 
     return NextResponse.json({ response }, { status: 200 });
-  } catch (error: any) {
-    console.error("❌ [Response Generation Error]:", error.message);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error("❌ [Response Generation Error]:", errorMessage);
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }

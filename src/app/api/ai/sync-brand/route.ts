@@ -138,10 +138,11 @@ Extract brand colors and suggest widget styling that would match their website a
       },
     });
 
-  } catch (error: any) {
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Failed to analyze brand from website';
     console.error('❌ Brand sync error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to analyze brand from website' },
+      { error: errorMessage },
       { status: 500 }
     );
   }

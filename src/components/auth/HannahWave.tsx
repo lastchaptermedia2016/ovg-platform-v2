@@ -10,14 +10,14 @@ interface HannahWaveProps {
 }
 
 export function HannahWave({ isSpeaking, message, analyserRef, isMuted }: HannahWaveProps) {
-  const [bars, setBars] = useState<number[]>([50, 70, 60, 80, 65]);
+  const [bars, setBars] = useState<number[]>(() => 
+    isMuted ? [15, 20, 18, 22, 19] : [50, 70, 60, 80, 65]
+  );
   const animationRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (isMuted) {
-      // Muted state - dimmed, static bars
-      setBars([15, 20, 18, 22, 19]); // Very low, static heights
-      return;
+      return; // Use initial state already set via useState factory
     }
 
     if (!isSpeaking) {
@@ -27,41 +27,39 @@ export function HannahWave({ isSpeaking, message, analyserRef, isMuted }: Hannah
       }, 1000);
       
       return () => clearInterval(idleInterval);
-    } else {
-      // Audio-reactive animation
-      const animateBars = () => {
-        if (analyserRef?.current) {
-          const analyser = analyserRef.current;
-          const dataArray = new Uint8Array(analyser.frequencyBinCount);
-          analyser.getByteFrequencyData(dataArray);
-          
-          // Calculate average volume from frequency data
-          const average = dataArray.reduce((sum, value) => sum + value, 0) / dataArray.length;
-          const normalizedVolume = average / 255; // Normalize to 0-1
-          
-          // Generate bar heights based on volume
-          const newBars = Array(5).fill(0).map((_, i) => {
-            const baseHeight = 20 + (normalizedVolume * 60); // 20-80% base
-            const variation = Math.sin(Date.now() / 100 + i) * 10; // Slight variation
-            const randomFactor = Math.random() * 10; // Random factor
-            return Math.min(100, Math.max(10, baseHeight + variation + randomFactor));
-          });
-          
-          setBars(newBars);
-        }
-        
-        animationRef.current = requestAnimationFrame(animateBars);
-      };
-      
-      animateBars();
-      
-      return () => {
-        if (animationRef.current) {
-          cancelAnimationFrame(animationRef.current);
-        }
-      };
     }
-  }, [isSpeaking, isMuted]);
+    
+    // Audio-reactive animation
+    const animateBars = () => {
+      if (analyserRef?.current) {
+        const analyser = analyserRef.current;
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(dataArray);
+        
+        const average = dataArray.reduce((sum, value) => sum + value, 0) / dataArray.length;
+        const normalizedVolume = average / 255;
+        
+        const newBars = Array(5).fill(0).map((_, i) => {
+          const baseHeight = 20 + (normalizedVolume * 60);
+          const variation = Math.sin(Date.now() / 100 + i) * 10;
+          const randomFactor = Math.random() * 10;
+          return Math.min(100, Math.max(10, baseHeight + variation + randomFactor));
+        });
+        
+        setBars(newBars);
+      }
+      
+      animationRef.current = requestAnimationFrame(animateBars);
+    };
+    
+    animateBars();
+    
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, [isSpeaking, isMuted, analyserRef]);
 
   return (
     <div className="flex items-center gap-2">
@@ -78,7 +76,7 @@ export function HannahWave({ isSpeaking, message, analyserRef, isMuted }: Hannah
       </div>
       {message && (
         <span className="text-white/80 text-sm font-light tracking-wide">
-          "{message}"
+          &quot;{message}&quot;
         </span>
       )}
     </div>

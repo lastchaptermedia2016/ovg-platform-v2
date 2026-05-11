@@ -20,14 +20,22 @@ interface TenantContext {
   category?: string;
 }
 
+interface ProcessResponse {
+  response: string;
+}
+
+interface SttResponse {
+  text: string;
+}
+
 interface VoiceCommandOptions {
   silenceThreshold?: number;
   silenceDuration?: number;
-  forcedContinuousMode?: boolean; // Override silence detection for hands-free sessions
+  forcedContinuousMode?: boolean;
   resellerId?: string;
   tenantContext?: TenantContext;
-  currentConfig?: Record<string, any>;
-  skipAIPipeline?: boolean; // Skip internal AI processing when using external handling
+  currentConfig?: Record<string, unknown>;
+  skipAIPipeline?: boolean;
   onTranscript?: (text: string) => void;
   onAIResponse?: (text: string) => void;
   onError?: (error: string) => void;
@@ -36,12 +44,12 @@ interface VoiceCommandOptions {
 export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceCommandReturn {
   const {
     silenceThreshold = 0.02,
-    silenceDuration = 3000, // 3 seconds - extended for thinking pauses
+    silenceDuration = 3000,
     forcedContinuousMode = false,
     resellerId,
     tenantContext = {},
-    currentConfig = {},
-    skipAIPipeline = false, // Default to false for backward compatibility
+    currentConfig: _currentConfig,
+    skipAIPipeline = false,
     onTranscript,
     onAIResponse,
     onError,
@@ -69,27 +77,37 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   const ttsAudioContextRef = useRef<AudioContext | null>(null);
   const ttsAudioSourceRef = useRef<AudioBufferSourceNode | null>(null);
 
+  // Ref indirection to break circular deps between monitorVolume and stopListening
+  const stopListeningRef = useRef<() => void>(() => {});
+  // Ref indirection for monitorVolume to avoid self-referencing in requestAnimationFrame
+  const monitorVolumeRef = useRef<() => void>(() => {});
+
+  const getAudioContextConstructor = useCallback((): typeof AudioContext => {
+    if (typeof AudioContext !== 'undefined') return AudioContext;
+    if (typeof window !== 'undefined' && 'webkitAudioContext' in window) {
+      return (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    }
+    return AudioContext;
+  }, []);
+
   // Cleanup function
   const cleanup = useCallback(() => {
-    // Stop media recorder
     if (mediaRecorderRef.current?.state !== 'inactive') {
       mediaRecorderRef.current?.stop();
     }
     mediaRecorderRef.current = null;
 
-    // Stop audio context
     if (audioContextRef.current?.state !== 'closed') {
       audioContextRef.current?.close();
     }
     audioContextRef.current = null;
     analyserRef.current = null;
 
-    // Production Excellence: Enhanced TTS audio context cleanup
     if (ttsAudioSourceRef.current) {
       try {
         ttsAudioSourceRef.current.stop();
         ttsAudioSourceRef.current.disconnect();
-      } catch (e) {
+      } catch {
         // Ignore errors during cleanup
       }
       ttsAudioSourceRef.current = null;
@@ -100,27 +118,22 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     }
     ttsAudioContextRef.current = null;
 
-    // Stop all tracks
     streamRef.current?.getTracks().forEach(track => track.stop());
     streamRef.current = null;
 
-    // Clear timers
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = null;
     }
 
-    // Cancel animation frame
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
       animationFrameRef.current = null;
     }
 
-    // Abort any ongoing fetch
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
 
-    // Reset volume
     setVolumeLevel(0);
   }, []);
 
@@ -133,36 +146,38 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     abortControllerRef.current?.abort();
   }, [cleanup]);
 
-  // Monitor volume levels
+  // Monitor volume levels - uses ref for stopListening to avoid circular deps
   const monitorVolume = useCallback(() => {
     if (!analyserRef.current) return;
 
     const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
     analyserRef.current.getByteFrequencyData(dataArray);
 
-    // Calculate average volume
     const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-    const normalizedVolume = average / 255; // Normalize to 0-1
+    const normalizedVolume = average / 255;
     setVolumeLevel(normalizedVolume);
 
-    // Check silence threshold (unless forced continuous mode)
     if (!forcedContinuousMode && normalizedVolume < silenceThreshold) {
       if (!silenceTimerRef.current && !isProcessingRef.current) {
         silenceTimerRef.current = setTimeout(() => {
-          stopListening();
+          stopListeningRef.current();
         }, silenceDuration);
       }
     } else {
-      // Reset silence timer if volume detected (or in forced continuous mode)
       if (silenceTimerRef.current) {
         clearTimeout(silenceTimerRef.current);
         silenceTimerRef.current = null;
       }
     }
 
-    // Continue monitoring
-    animationFrameRef.current = requestAnimationFrame(monitorVolume);
+    animationFrameRef.current = requestAnimationFrame(() => {
+      monitorVolumeRef.current();
+    });
   }, [silenceThreshold, silenceDuration, forcedContinuousMode]);
+
+  useEffect(() => {
+    monitorVolumeRef.current = monitorVolume;
+  }, [monitorVolume]);
 
   // Stop listening and process
   const stopListening = useCallback(() => {
@@ -172,6 +187,11 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     setIsListening(false);
     cleanup();
   }, [cleanup]);
+
+  // Keep stopListeningRef synced outside render via useEffect
+  useEffect(() => {
+    stopListeningRef.current = stopListening;
+  }, [stopListening]);
 
   // Process audio through pipeline
   const processAudioPipeline = useCallback(async (audioBlob: Blob) => {
@@ -183,15 +203,12 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     try {
       // Step 1: Speech-to-Text (Whisper)
       const sttFormData = new FormData();
-      
-      // Production Excellence: Convert Blob to File with explicit naming
-      // This satisfies the 403 permission check for file types
       const audioFile = new File([audioBlob], 'command.webm', { type: 'audio/webm' });
       sttFormData.append('file', audioFile);
 
       const sttResponse = await fetch('/api/ai/stt', {
         method: 'POST',
-        body: sttFormData, // Do NOT set Content-Type header; let the browser do it
+        body: sttFormData,
         signal,
       });
 
@@ -200,31 +217,26 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
         throw new Error(`STT failed: ${sttResponse.status} - ${errorData.error}`);
       }
 
-      const { text } = await sttResponse.json();
+      const { text } = await sttResponse.json() as SttResponse;
       setTranscript(text);
       onTranscript?.(text);
 
-      // Skip AI pipeline if handled externally (e.g., via ClientsGrid)
       if (skipAIPipeline) {
-        console.log('[VoiceCommand] Skipping internal AI pipeline - handled externally');
         return;
       }
 
-      // Step 2: Process with AI (Llama)
-      // 🔷 Warm Boot: Allow mic initialization even if resellerId is not yet valid
-      // API calls will be blocked in onTranscript if resellerId is invalid
       if (!resellerId || resellerId.includes('[') || resellerId.includes(']') || resellerId.includes('%5B')) {
         console.warn('[VoiceCommand] Skipping AI pipeline - invalid resellerId:', resellerId);
         return;
       }
-      
+
       const processResponse = await fetch('/api/ai/process-command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           resellerId: resellerId.trim(),
           userCommand: text,
-          currentConfig: currentConfig || {},
+          currentConfig: _currentConfig || {},
           tenantContext: {
             tenantId: tenantContext.tenantId,
             category: tenantContext.category || 'GENERAL',
@@ -237,7 +249,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
         throw new Error(`Process failed: ${processResponse.status}`);
       }
 
-      const { response: aiText } = await processResponse.json();
+      const { response: aiText } = await processResponse.json() as ProcessResponse;
       setAiResponse(aiText);
       onAIResponse?.(aiText);
 
@@ -254,11 +266,8 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       }
 
       const audioBuffer = await ttsResponse.arrayBuffer();
-      
-      // Production Excellence: Enhanced TTS audio playback with proper memory management
       setIsSpeaking(true);
-      
-      // Clean up any existing TTS audio context
+
       if (ttsAudioContextRef.current?.state !== 'closed') {
         ttsAudioContextRef.current?.close();
       }
@@ -266,71 +275,65 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
         try {
           ttsAudioSourceRef.current.stop();
           ttsAudioSourceRef.current.disconnect();
-        } catch (e) {
+        } catch {
           // Ignore errors during cleanup
         }
       }
-      
-      // Create new audio context for TTS
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+
+      const AudioContextCtor = getAudioContextConstructor();
+      const audioContext = new AudioContextCtor();
       ttsAudioContextRef.current = audioContext;
-      
+
       const audioSource = audioContext.createBufferSource();
       ttsAudioSourceRef.current = audioSource;
-      
+
       const audioBufferData = await audioContext.decodeAudioData(audioBuffer);
-      
       audioSource.buffer = audioBufferData;
       audioSource.connect(audioContext.destination);
-      
+
       audioSource.onended = () => {
         setIsSpeaking(false);
-        // Clean up TTS audio resources
         try {
           audioSource.stop();
           audioSource.disconnect();
-        } catch (e) {
+        } catch {
           // Ignore errors during cleanup
         }
         audioContext.close();
-        
-        // Clear refs
         ttsAudioSourceRef.current = null;
         ttsAudioContextRef.current = null;
       };
-      
+
       audioSource.start();
 
-    } catch (err: any) {
-      if (err.name === 'AbortError') {
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === 'AbortError') {
         console.log('Voice command aborted');
         return;
       }
-      const errorMsg = err.message || 'Voice command failed';
+      const errorMsg = err instanceof Error ? err.message : 'Voice command failed';
       setError(errorMsg);
       onError?.(errorMsg);
     } finally {
       isProcessingRef.current = false;
       setIsProcessing(false);
     }
-  }, [onTranscript, onAIResponse, onError]);
+  }, [onTranscript, onAIResponse, onError, skipAIPipeline, resellerId, _currentConfig, tenantContext.tenantId, tenantContext.category, getAudioContextConstructor]);
 
   // Start listening
   const startListening = useCallback(async () => {
     try {
-      // Reset state
       setTranscript('');
       setAiResponse('');
       setError(null);
       setVolumeLevel(0);
       audioChunksRef.current = [];
 
-      // Get microphone access
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
-      // Set up audio context for volume monitoring
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const AudioContextCtor = getAudioContextConstructor();
+      const audioContext = new AudioContextCtor();
       audioContextRef.current = audioContext;
 
       const source = audioContext.createMediaStreamSource(stream);
@@ -339,7 +342,6 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       source.connect(analyser);
       analyserRef.current = analyser;
 
-      // Set up media recorder
       const mediaRecorder = new MediaRecorder(stream, {
         mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4',
       });
@@ -358,24 +360,23 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       };
 
       mediaRecorderRef.current = mediaRecorder;
-      mediaRecorder.start(100); // Collect data every 100ms
+      mediaRecorder.start(100);
 
-      // Start volume monitoring
       setIsListening(true);
-      monitorVolume();
+      monitorVolumeRef.current();
 
-    } catch (err: any) {
-      const errorMsg = err.message || 'Failed to access microphone';
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'Failed to access microphone';
       setError(errorMsg);
       onError?.(errorMsg);
       cleanup();
     }
-  }, [monitorVolume, processAudioPipeline, cleanup, onError]);
+  }, [processAudioPipeline, cleanup, onError, getAudioContextConstructor]);
 
   // Handle Escape key
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && (isListening || isProcessing || isSpeaking)) {
+    const handleKeyDown = (_e: KeyboardEvent) => {
+      if (_e.key === 'Escape' && (isListening || isProcessing || isSpeaking)) {
         abort();
       }
     };

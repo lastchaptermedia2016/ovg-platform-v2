@@ -30,10 +30,10 @@ interface BrandKitProviderProps {
 export function BrandKitProvider({ children }: BrandKitProviderProps) {
   const [headerUrl, setHeaderUrl] = useState<string | null>(null);
   const [footerUrl, setFooterUrl] = useState<string | null>(null);
-  const [template, setTemplate] = useState<string>('default');
-  const [botPersonality, setBotPersonality] = useState<string>('informational');
-  const [primaryColor, setPrimaryColor] = useState<string>('#0097b2');
-  const [secondaryColor, setSecondaryColor] = useState<string>('#D4AF37');
+  const [template] = useState<string>('default');
+  const [botPersonality] = useState<string>('informational');
+  const [primaryColor] = useState<string>('#0097b2');
+  const [secondaryColor] = useState<string>('#D4AF37');
 
   const value: BrandKitContextType = {
     headerUrl,

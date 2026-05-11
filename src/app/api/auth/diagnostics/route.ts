@@ -23,7 +23,7 @@ export async function GET() {
     
     try {
       const supabase = await createClient();
-      const { data, error } = await supabase.from('resellers').select('count').single();
+      const { error } = await supabase.from('resellers').select('id').limit(1).single();
       if (!error) {
         clientConnection = "SUCCESS";
       } else {
@@ -39,7 +39,7 @@ export async function GET() {
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
         process.env.SUPABASE_SERVICE_ROLE_KEY!
       );
-      const { data, error } = await supabaseAdmin.from('resellers').select('count').single();
+      const { error } = await supabaseAdmin.from('resellers').select('id').limit(1).single();
       if (!error) {
         adminConnection = "SUCCESS";
       } else {

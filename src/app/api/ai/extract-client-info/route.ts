@@ -65,10 +65,10 @@ Example format:
     }
 
     // Parse the JSON response
-    let extractedData: Record<string, any> = {};
+    let extractedData: Record<string, string> = {};
     try {
       extractedData = JSON.parse(content);
-    } catch (parseError) {
+    } catch {
       console.error('Failed to parse Groq response:', content);
       // Fallback: try to extract using regex if JSON parsing fails
       extractedData = {};
@@ -91,7 +91,7 @@ Example format:
 
     return NextResponse.json(extractedData);
 
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error extracting client info:', error);
     return NextResponse.json(
       { error: 'Failed to extract client information' },

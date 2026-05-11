@@ -1,7 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { TenantSchema } from "@/types";
 import { unstable_noStore } from "next/cache";
-import { generateTenantId } from "@/lib/utils/slugify";
 
 /**
  * Validate UUID format
@@ -91,7 +90,16 @@ export async function getResellerClients(
 /**
  * Get reseller by their slug/tenant_id
  */
-export async function getResellerBySlug(slug: string): Promise<any | null> {
+interface ResellerRecord {
+  id: string;
+  slug: string;
+  name: string;
+  tenant_id: string;
+  is_active: boolean;
+  [key: string]: unknown;
+}
+
+export async function getResellerBySlug(slug: string): Promise<ResellerRecord | null> {
   unstable_noStore();
   
   console.log('Fetching reseller for slug:', slug);
@@ -125,7 +133,7 @@ export async function getResellerBySlug(slug: string): Promise<any | null> {
   }
 
   console.log('Reseller found:', data.slug, data.name);
-  return data;
+  return data as ResellerRecord;
 }
 
 /**
