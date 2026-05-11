@@ -1,5 +1,7 @@
 // Types and functions for reseller client management
-// Replace with your actual database implementation
+// Real Supabase implementation with proper RLS support
+
+import { createBrowserClient, createClient as createServerClient } from "@/lib/supabase";
 
 export interface ResellerClient {
   id: string;
@@ -27,31 +29,109 @@ export interface ResellerClient {
   updated_at: string;
 }
 
+/**
+ * Fetch all clients (tenants) for a given reseller.
+ * Uses the server client (Route Handler context) with corrected RLS policy.
+ */
 export async function getResellerClients(resellerId: string): Promise<ResellerClient[]> {
-  // Stub implementation - replace with actual database query
-  console.log('[DB Stub] Fetching clients for reseller:', resellerId);
-  return [];
+  const supabase = await createServerClient();
+
+  const { data, error } = await supabase
+    .from("tenants")
+    .select("*")
+    .eq("reseller_id", resellerId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("[getResellerClients] Supabase error:", error);
+    throw new Error(`Failed to fetch reseller clients: ${error.message}`);
+  }
+
+  return (data as ResellerClient[]) || [];
 }
 
-export async function createResellerClient(client: Omit<ResellerClient, 'id' | 'created_at' | 'updated_at'>): Promise<ResellerClient> {
-  // Stub implementation - replace with actual database insert
-  return {
-    id: Math.random().toString(36),
-    ...client,
-    is_active: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString()
-  };
+/**
+ * Create a new client (tenant) under a reseller.
+ * Uses the browser client — relies on corrected RLS policy for authorization.
+ */
+export async function createResellerClient(
+  client: Omit<ResellerClient, "id" | "created_at" | "updated_at">
+): Promise<ResellerClient> {
+  const supabase = createBrowserClient();
+
+  const { data, error } = await supabase
+    .from("tenants")
+    .insert({
+      tenant_id: crypto.randomUUID().slice(0, 8), // short unique slug
+      name: client.name,
+      reseller_id: client.reseller_id,
+      industry: client.industry,
+      email: client.email,
+      mobile: client.mobile,
+      website: client.website,
+      branding_colors: client.branding_colors,
+      custom_assets: client.custom_assets,
+      show_ovg_branding: client.show_ovg_branding,
+      pricing_tier_key: client.pricing_tier_key,
+      voice_id: client.voice_id,
+      system_prompt: client.system_prompt,
+      is_active: true,
+    })
+    .select("*")
+    .single();
+
+  if (error) {
+    console.error("[createResellerClient] Supabase error:", error);
+    throw new Error(`Failed to create reseller client: ${error.message}`);
+  }
+
+  return data as ResellerClient;
 }
 
-export async function updateResellerClient(id: string, updates: Partial<ResellerClient>): Promise<ResellerClient | null> {
-  // Stub implementation - replace with actual database update
-  console.log('[DB Stub] Updating reseller client:', { id, updates });
-  return null;
+/**
+ * Update an existing reseller client.
+ * Uses the server client for higher privileges in Route Handler context.
+ */
+export async function updateResellerClient(
+  id: string,
+  updates: Partial<ResellerClient>
+): Promise<ResellerClient | null> {
+  const supabase = await createServerClient();
+
+  const { data, error } = await supabase
+    .from("tenants")
+    .update({
+      ...updates,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .select("*")
+    .single();
+
+  if (error) {
+    console.error("[updateResellerClient] Supabase error:", error);
+    throw new Error(`Failed to update reseller client: ${error.message}`);
+  }
+
+  return data as ResellerClient | null;
 }
 
+/**
+ * Soft-delete a reseller client by setting is_active to false.
+ * Uses the browser client with corrected RLS policy.
+ */
 export async function deleteResellerClient(id: string): Promise<boolean> {
-  // Stub implementation - replace with actual database delete
-  console.log('[DB Stub] Deleting reseller client:', id);
+  const supabase = createBrowserClient();
+
+  const { error } = await supabase
+    .from("tenants")
+    .update({ is_active: false, updated_at: new Date().toISOString() })
+    .eq("id", id);
+
+  if (error) {
+    console.error("[deleteResellerClient] Supabase error:", error);
+    throw new Error(`Failed to delete reseller client: ${error.message}`);
+  }
+
   return true;
 }

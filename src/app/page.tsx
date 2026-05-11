@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback, type MouseEvent } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Zap, Mic, Brain } from "lucide-react";
 
 function ParticleCanvas() {
@@ -33,11 +34,13 @@ function ParticleCanvas() {
       color: Math.random() > 0.5 ? "#0097b2" : "#D4AF37",
     }));
 
-    const handlePointerMove = (e: MouseEvent | TouchEvent) => {
+    const handlePointerMove = (event: Event) => {
+      const e = event as MouseEvent | TouchEvent;
+
       if ("touches" in e && e.touches.length > 0) {
         mouseRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-      } else {
-        mouseRef.current = { x: (e as MouseEvent).clientX, y: (e as MouseEvent).clientY };
+      } else if ("clientX" in e) {
+        mouseRef.current = { x: e.clientX, y: e.clientY };
       }
     };
 
@@ -118,6 +121,33 @@ export default function Home() {
   const [currentStatusIndex, setCurrentStatusIndex] = useState(0);
   const [isTypingStatus, setIsTypingStatus] = useState(true);
   const fullText = "OVG Platform v2: Phoenix Rising";
+  const router = useRouter();
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const handleResellerTabClick = useCallback(
+    (event: MouseEvent<HTMLAnchorElement>) => {
+      event.preventDefault();
+
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+        audioRef.current = null;
+      }
+
+      if (typeof window !== "undefined") {
+        const audio = new Audio('/ElevenLabs6.mp3');
+        audioRef.current = audio;
+        audio.play().catch((error) => {
+          console.warn('Reseller access audio failed to play:', error);
+        });
+      }
+
+      setTimeout(() => {
+        router.push('/auth');
+      }, 150);
+    },
+    [router]
+  );
 
   useEffect(() => {
     let index = 0;
@@ -239,6 +269,7 @@ export default function Home() {
             {/* Reseller Access */}
             <a
               href="/auth"
+              onClick={handleResellerTabClick}
               className="block px-3 py-1.5 sm:px-6 sm:py-2 border border-[#FFD700] text-white font-semibold rounded-lg hover:bg-[#FFD700]/10 transition-colors text-[10px] sm:text-sm whitespace-nowrap"
             >
               RESELLER ACCESS
