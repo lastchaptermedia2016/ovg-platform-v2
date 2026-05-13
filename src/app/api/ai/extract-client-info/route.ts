@@ -1,12 +1,17 @@
 import { NextResponse } from 'next/server';
 import Groq from 'groq-sdk';
 
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY!,
-});
+export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
   try {
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json({ error: 'AI service not configured' }, { status: 500 });
+    }
+
+    const groq = new Groq({ apiKey });
+
     const { transcript, fields } = await request.json();
     
     if (!transcript || !fields) {
@@ -14,7 +19,7 @@ export async function POST(request: Request) {
     }
 
     // Create prompt for Groq to extract specific fields with semantic mapping
-    const fieldDescriptions = {
+    const fieldDescriptions: Record<string, string> = {
       name: 'client business name (exact business name)',
       industry: 'industry sector (must be one of: AUTOMOTIVE, RETAIL, HEALTHCARE, INSURANCE, GENERAL BUSINESS)',
       email: 'email address (with @ and domain)',
@@ -26,7 +31,7 @@ export async function POST(request: Request) {
     const prompt = `Extract the following information from this transcript: "${transcript}"
 
 Fields to extract:
-${fields.map((field: string) => `- ${field}: ${fieldDescriptions[field as keyof typeof fieldDescriptions] || field}`).join('\n')}
+${fields.map((field: string) => `- ${field}: ${fieldDescriptions[field] || field}`).join('\n')}
 
 Semantic Mapping Rules:
 - For website: Normalize "dot com" to ".com", remove spaces, ensure proper domain format
@@ -44,11 +49,11 @@ Example format:
 }`;
 
     const response = await groq.chat.completions.create({
-      model: 'llama-3.1-8b-instant',
+      model: 'llama-3.3-70b-versatile',
       messages: [
         {
           role: 'system',
-          content: 'You are a data extraction assistant. Extract specific information from transcripts and return only JSON objects. Be precise and accurate.'
+          content: 'You are a precise data extraction assistant. Extract the requested fields from the transcript and return ONLY a valid JSON object. Never include explanations, greetings, or extra text. If a field is not found in the transcript, omit it from the JSON output.'
         },
         {
           role: 'user',
@@ -57,6 +62,7 @@ Example format:
       ],
       temperature: 0.1,
       max_tokens: 500,
+      response_format: { type: 'json_object' },
     });
 
     const content = response.choices[0]?.message?.content;

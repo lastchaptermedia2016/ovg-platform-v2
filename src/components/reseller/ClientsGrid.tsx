@@ -24,6 +24,7 @@ interface Tenant {
   name: string;
   email: string;
   category: string;
+  industry?: string;
   category_config?: Record<string, unknown>;
   created_at: string;
   signal_count?: number;

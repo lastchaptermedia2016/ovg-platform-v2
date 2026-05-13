@@ -19,6 +19,7 @@ interface Tenant {
   name: string;
   email: string;
   category: string;
+  industry?: string;
   category_config?: TenantCategoryConfig;
   created_at: string;
   signal_count?: number;
@@ -96,7 +97,7 @@ export function ClientCard({
   useSimpleStyle = false,
   onMouseEnter,
   onMouseLeave,
-  categoryMap
+  categoryMap: _categoryMap
 }: ClientCardProps) {
   const isArmed = selectedClientId === tenant.id;
   const [commandInput, setCommandInput] = useState('');
@@ -132,8 +133,38 @@ export function ClientCard({
 
   const isAutomotive = tenant.category === 'automotive';
 
-  // Get display label from categoryMap or use tenant.category directly
-  const categoryLabel = categoryMap?.[tenant.category?.toUpperCase()] || tenant.category;
+  // Industry badge dynamic color mapping
+  const INDUSTRY_STYLES: Record<string, { bg: string; border: string; text: string }> = {
+    'INSURANCE': {
+      bg: 'bg-sky-500/10',
+      border: 'border-sky-500/30',
+      text: 'text-sky-300',
+    },
+    'AUTOMOTIVE': {
+      bg: 'bg-slate-400/10',
+      border: 'border-slate-400/30',
+      text: 'text-slate-300',
+    },
+    'RETAIL': {
+      bg: 'bg-amber-500/10',
+      border: 'border-amber-500/30',
+      text: 'text-amber-300',
+    },
+    'HEALTHCARE': {
+      bg: 'bg-emerald-500/10',
+      border: 'border-emerald-500/30',
+      text: 'text-emerald-300',
+    },
+    'GENERAL BUSINESS': {
+      bg: 'bg-cyan-500/10',
+      border: 'border-cyan-500/20',
+      text: 'text-cyan-300',
+    },
+  };
+
+  // Determine display value: industry first, fallback to category
+  const displayIndustry = tenant.industry?.toUpperCase() || tenant.category?.toUpperCase() || 'GENERAL BUSINESS';
+  const industryStyle = INDUSTRY_STYLES[displayIndustry] || INDUSTRY_STYLES['GENERAL BUSINESS'];
 
   const getCategoryIcon = (category: string) => {
     switch (category?.toLowerCase()) {
@@ -196,8 +227,8 @@ export function ClientCard({
           </div>
 
           <div className="grid grid-cols-[1fr_auto] gap-3 items-center">
-            <span className="px-2 py-1 text-[10px] tracking-[0.1em] bg-cyan-500/10 border border-cyan-500/20 rounded text-cyan-300 uppercase min-w-[120px] w-fit text-center">
-              {categoryLabel}
+            <span className={`px-2 py-1 text-[10px] tracking-[0.1em] rounded uppercase min-w-[120px] w-fit text-center ${industryStyle.bg} ${industryStyle.border} ${industryStyle.text}`}>
+              {displayIndustry}
             </span>
             <div className="flex items-center gap-2 w-[72px] justify-end">
               <button

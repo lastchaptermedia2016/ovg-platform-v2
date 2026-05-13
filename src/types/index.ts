@@ -128,3 +128,14 @@ export interface OrpheusPayload {
   canopyEndpoint?: string;
   elevenLabsApiKey?: string;
 }
+
+export interface Vehicle {
+  id: string;
+  tenant_id: string;
+  vin: string;
+  registration?: string;
+  make_model?: string;
+  year?: number;
+  natis_payload: Record<string, unknown>;
+  created_at: string;
+}

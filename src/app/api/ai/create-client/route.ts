@@ -323,7 +323,7 @@ export async function POST(request: NextRequest) {
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: `Voice command: "${voiceCommand}"` },
       ],
-      model: 'llama-3.1-8b-instant',
+      model: 'llama-3.3-70b-versatile',
       temperature: 0.1,
       max_tokens: 200,
       response_format: { type: 'json_object' },
