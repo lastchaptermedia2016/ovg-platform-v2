@@ -123,6 +123,10 @@ export default function ClientsPage() {
       stopListening();
       if (hasProcessedRef.current) return;
       if (!text || text.trim().length < 3) return;
+
+      // 🔷 Ghost Listen Fix: Bridge STT transcript to footer input for visual feedback
+      setCommandInput(text);
+
       hasProcessedRef.current = true;
       setTimeout(() => { hasProcessedRef.current = false; }, 3000);
       const lowerText = text.toLowerCase().trim();
@@ -344,6 +348,7 @@ export default function ClientsPage() {
           isAwaitingVoiceConfirm={isAwaitingVoiceConfirm}
           transcribedText={voiceTranscript}
           isCommunicating={isCommunicating}
+          playVoice={speakVoice}
         />
         
         {/* Main Navigation Tabs - Compact Grid Layout */}
@@ -406,22 +411,31 @@ export default function ClientsPage() {
         <div className="w-full">
           <div className="px-6">
             <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 py-2">
-              {['All', 'Automotive', 'General', 'Retail', 'Healthcare', 'Insurance'].map((filter) => (
+              {(() => {
+                // 🔷 Production Excellence: Derive filter buttons from CATEGORY_MAP (single source of truth)
+                const FILTER_LABELS = Object.entries(CATEGORY_MAP)
+                  .filter(([key]) => key !== 'ALL' && key !== 'OFFLINE_ONLY')
+                  .map(([key]) => ({
+                    label: key.charAt(0) + key.slice(1).toLowerCase(),
+                    value: key,
+                  }));
+                // Prepend the "All" option
+                return [{ label: 'All', value: 'ALL' }, ...FILTER_LABELS].map(({ label, value }) => (
                 <button
-                  key={filter}
-                  onClick={() => handleFilterChange(filter)}
+                  key={value}
+                  onClick={() => handleFilterChange(value)}
                   style={{ display: 'inline-flex', width: '100%', padding: '4px 8px' }}
                   className={`relative rounded-lg text-[10px] font-medium tracking-wider uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden
                     backdrop-blur-md bg-black/10 border border-white/10
                     hover:-translate-y-0.5 hover:backdrop-blur-xl hover:border-white/20 transition-colors duration-200
-                    ${activeFilter === filter.toUpperCase()
+                    ${activeFilter === value.toUpperCase()
                       ? '!text-[#FFD700] bg-[#FFD700]/10 border-[#FFD700]/30'
                       : '!text-[#94a3b8] hover:!text-white hover:font-semibold hover:bg-black/20'
                     }`}
                 >
-                  <span className={`relative z-20 ${activeFilter === filter.toUpperCase() ? 'drop-shadow-[0_0_6px_rgba(255,215,0,0.3)]' : ''}`} style={{ textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>{filter}</span>
+                  <span className={`relative z-20 ${activeFilter === value.toUpperCase() ? 'drop-shadow-[0_0_6px_rgba(255,215,0,0.3)]' : ''}`} style={{ textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>{label}</span>
                 </button>
-              ))}
+              ))})()}
 
               <div className="w-px h-4 bg-[#0097b2]/30 mx-1" />
 
@@ -561,6 +575,13 @@ export default function ClientsPage() {
                 <div className="flex items-center gap-2 text-sm text-white/80 mt-1">
                   <span className="w-2.5 h-2.5 rounded-full bg-[#0097b2] animate-pulse shadow-[0_0_8px_#0097b2]" />
                   <span className="font-medium">{portfolioStats.totalClients} active clients</span>
+                </div>
+                {/* SYSTEM READY: Unique tenant count after deduplication */}
+                <div className="flex items-center gap-2 mt-2 px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/20">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
+                  <span className="text-[9px] font-bold tracking-widest text-emerald-300 uppercase drop-shadow-[0_0_4px_rgba(52,211,153,0.4)]">
+                    SYSTEM READY: {portfolioStats.totalClients} UNIQUE TENANT{portfolioStats.totalClients !== 1 ? 'S' : ''} DETECTED
+                  </span>
                 </div>
               </div>
 

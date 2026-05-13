@@ -327,7 +327,7 @@ export function ClientCard({
                 <div className="w-2 h-2 rounded-full bg-[#22c55e] animate-pulse" />
                 <input
                   type="text"
-                  placeholder="I'M LISTENING..."
+                  placeholder="CLIENT"
                   value={commandInput}
                   onChange={(e) => setCommandInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && commandInput.trim() && handleExecute()}

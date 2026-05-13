@@ -323,7 +323,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
       const response = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice: 'hannah', metadata: ttsMetadata }),
+        body: JSON.stringify({ text, voice: 'hannah', model: 'orpheus-v1', metadata: ttsMetadata }),
       });
 
       if (!response.ok) throw new Error('TTS failed');
@@ -889,7 +889,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
 
     try {
       if (isIdentityQuestion) {
-        await speak("I'm Hannah, your Pierre AI assistant. I'm here to help you create and manage clients with intelligent voice commands.");
+        await speak("Universal command active. Use this bar to filter your portfolio, broadcast messages, or run cross-client analytics.");
         if (!manualTranscript) setTranscript(''); // Only clear state if not using manual transcript
         return;
       }
@@ -1179,7 +1179,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
 
               <div>
                 <label className="block text-xs font-light tracking-[0.2em] text-white/60 uppercase mb-3">
-                  {isVoiceEntryMode ? 'Voice Entry Mode' : 'Voice Command'}
+                  {isVoiceEntryMode ? 'UNIVERSAL (Voice Entry)' : 'UNIVERSAL'}
                 </label>
                 <div className={`backdrop-blur-xl bg-white/[0.02] border rounded-lg p-4 transition-all duration-300 ${
                   isListening

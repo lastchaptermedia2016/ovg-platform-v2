@@ -9,6 +9,51 @@ import { DiagnosticPanel } from './DiagnosticPanel';
 import { ClientCard } from './ClientCard';
 import { UniversalCommandModal } from './modals/UniversalCommandModal';
 
+// Capability Map: Dynamic industry-to-action permissions
+const CAPABILITY_MAP: Record<string, Set<string>> = {
+  automotive: new Set(['ai', 'sms', 'vin', 'signal']),
+  retail: new Set(['ai', 'sms', 'signal']),
+  healthcare: new Set(['ai', 'sms', 'signal']),
+  insurance: new Set(['ai', 'sms', 'signal']),
+  'GENERAL BUSINESS': new Set(['ai', 'sms', 'signal']),
+  default: new Set(['ai', 'sms', 'signal']),
+};
+
+/**
+ * Resolve the effective capability category for a tenant.
+ * Priority 1: automotive override (industry or category)
+ * Priority 2: general/business mapping
+ * Priority 3: fallback to 'GENERAL BUSINESS' — never undefined.
+ * This decouples UI industry labels from legacy database strings.
+ */
+function resolveEffectiveCategory(tenant: { industry?: string; category?: string }): string {
+  const industry = (tenant.industry || '').toLowerCase();
+  const category = (tenant.category || '').toLowerCase();
+
+  // Priority 1: automotive (most restrictive vertical)
+  if (industry.includes('automotive') || category.includes('automotive')) {
+    return 'automotive';
+  }
+
+  // Priority 2: general/business mapping
+  if (industry.includes('general') || category.includes('general') ||
+      industry.includes('business') || category.includes('business')) {
+    return 'GENERAL BUSINESS';
+  }
+
+  // Priority 3: exact or partial key match against CAPABILITY_MAP
+  const search = industry || category;
+  if (search) {
+    const matchedKey = Object.keys(CAPABILITY_MAP).find(
+      key => key.toLowerCase().includes(search) || search.includes(key.toLowerCase())
+    );
+    if (matchedKey) return matchedKey;
+  }
+
+  // Priority 4: safe default
+  return 'GENERAL BUSINESS';
+}
+
 // Status Indicator Types
 type IndicatorStatus = 'active' | 'inactive' | 'error';
 
@@ -99,6 +144,7 @@ export function ClientsGridInternal({
   
   // Cache for AI confirmation audio (zero-latency playback)
   const cachedAudioBlob = useRef<Blob | null>(null);
+  const cachedConfirmationTextRef = useRef<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   
   // STT State
@@ -195,12 +241,16 @@ export function ClientsGridInternal({
     }
   }, [isListening, selectedClientId]);
 
-  // Play AI confirmation with caching for zero-latency playback
-  const playAIConfirmation = useCallback(async () => {
-    const confirmationText = "AI Control System Initiated";
+  // Play AI confirmation with caching for zero-latency playback – effective vertical scope
+  const playAIConfirmation = useCallback(async (tenantContext?: Pick<Tenant, 'name' | 'industry' | 'category'>) => {
+    const effectiveCategory = tenantContext ? resolveEffectiveCategory(tenantContext) : 'GENERAL BUSINESS';
+    const scopePrefix = effectiveCategory === 'automotive' ? 'Automotive' : 'Client';
+    const confirmationText = tenantContext?.name
+      ? `${scopePrefix} control active for ${tenantContext.name}. Use this to manage specific leads, trigger SMS deployments, or verify industry signals.`
+      : `${scopePrefix} control active. Use this to manage specific leads, trigger SMS deployments, or verify industry signals.`;
 
     // Use cached blob if available (zero-latency)
-    if (cachedAudioBlob.current) {
+    if (cachedAudioBlob.current && cachedConfirmationTextRef.current === confirmationText) {
       console.log('🔊 [Audio] Playing cached AI confirmation');
       const audioUrl = URL.createObjectURL(cachedAudioBlob.current);
       audioRef.current = new Audio(audioUrl);
@@ -214,7 +264,7 @@ export function ClientsGridInternal({
       const payload = {
         text: confirmationText,
         model: 'canopylabs/orpheus-v1-english',
-        voice: 'daniel', // Professional tone for Pierre AI Control System
+        voice: 'hannah', // Hannah Orpheus voice profile
       };
       console.log('🔊 [Audio] Sending payload:', payload);
       
@@ -232,22 +282,18 @@ export function ClientsGridInternal({
 
       const audioBuffer = await response.arrayBuffer();
       cachedAudioBlob.current = new Blob([audioBuffer], { type: 'audio/mpeg' });
+      cachedConfirmationTextRef.current = confirmationText;
       
       console.log('🔊 [Audio] Audio cached, playing now');
       const audioUrl = URL.createObjectURL(cachedAudioBlob.current);
       audioRef.current = new Audio(audioUrl);
       
-      // Attach onEnded listener to trigger STT
-      audioRef.current.onended = () => {
-        console.log('🔊 [Audio] TTS complete, starting STT capture...');
-        startSTTCapture();
-      };
-      
+      // No onended trigger — STT is already started in parallel from handleModuleAction
       audioRef.current.play().catch(console.error);
     } catch (error) {
       console.error('❌ [Audio] Failed to fetch AI confirmation:', error);
     }
-  }, [startSTTCapture]);
+  }, []);
   
   // HUD State
   const [hudStats, setHudStats] = useState({
@@ -372,17 +418,39 @@ export function ClientsGridInternal({
       return;
     }
     
-    // Industry-specific guards
-    if (actionType === 'vin' && tenant.category !== 'automotive') {
-      console.warn(`[Dispatcher] VIN action blocked for non-Automotive client ${clientId}`);
+    // Universal Capability Guard: Resolve effective category from industry + category
+    const effectiveCategory = resolveEffectiveCategory(tenant);
+    const tenantCapabilities = CAPABILITY_MAP[effectiveCategory] || CAPABILITY_MAP['default'];
+    console.log(`[Dispatcher] Authorized: ${actionType} for Effective Category: "${effectiveCategory}" (client ${clientId})`);
+    if (!tenantCapabilities.has(actionType)) {
+      console.warn(`[Dispatcher] Action ${actionType} not in capability map for effective category "${effectiveCategory}" (client ${clientId})`);
       return;
     }
     
-    // AI ARMING MODE: Bypass status check for AI to allow activation
+    // AI ARMING MODE: Hardware-first — gate UI state on mic acquisition
     if (actionType === 'ai') {
       console.log('🚀 [Dispatcher] ARMING AI SYSTEM for:', clientId);
-      setSelectedClientId(clientId); // Trigger input bar display
-      playAIConfirmation(); // Play vocal confirmation
+      
+      try {
+        // Hardware-First Gate: Only proceed after mic is confirmed
+        const _stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Immediately release the stream — STT capture will acquire its own
+        _stream.getTracks().forEach(track => track.stop());
+        
+        console.log('✅ [Dispatcher] Microphone acquired for:', clientId);
+        setSelectedClientId(clientId); // Trigger input bar display only after mic confirmed
+        
+        // Parallel Audio Execution: Fire TTS and STT simultaneously
+        // TTS is fire-and-forget (cached for zero-latency next time)
+        playAIConfirmation(tenant);
+        
+        // Start STT capture immediately without waiting for TTS to finish
+        startSTTCapture();
+      } catch {
+        console.error('❌ [Dispatcher] Microphone access denied for AI activation:', clientId);
+        // Notify user — mic permission rejected
+        return;
+      }
       return;
     }
     
@@ -442,7 +510,7 @@ export function ClientsGridInternal({
     
     // Fire log without await - keep UI snappy for 100k+ clients
     void logModuleAction();
-  }, [allTenants, handleFeatureToggle, playAIConfirmation]);
+  }, [allTenants, handleFeatureToggle, playAIConfirmation, startSTTCapture]);
   
   // Event Delegation: Single listener for all module actions
   useEffect(() => {
@@ -476,14 +544,16 @@ export function ClientsGridInternal({
     };
   }, [handleModuleAction]);
 
-  // SAFETY GUARD: Ensure VIN stays inactive for non-Automotive clients
+  // Universal Capability Guard: Derive indicator states from capability map using effective category
   const sanitizeIndicators = (tenant: Tenant, indicators?: Indicators): Indicators | undefined => {
     if (!indicators) return undefined;
-    const isAutomotive = tenant.category === 'automotive';
+    const effectiveCategory = resolveEffectiveCategory(tenant);
+    const tenantCapabilities = CAPABILITY_MAP[effectiveCategory] || CAPABILITY_MAP['default'];
     return {
-      ...indicators,
-      // VIN lock: Force 'inactive' for non-Automotive regardless of realtime data
-      vin: !isAutomotive ? 'inactive' : indicators.vin
+      ai: tenantCapabilities.has('ai') ? indicators.ai : 'inactive',
+      sms: tenantCapabilities.has('sms') ? indicators.sms : 'inactive',
+      vin: tenantCapabilities.has('vin') ? indicators.vin : 'inactive',
+      signal: tenantCapabilities.has('signal') ? indicators.signal : 'inactive',
     };
   };
 
@@ -759,7 +829,7 @@ export function ClientsGridInternal({
 
       if (filterParam && filterParam.toUpperCase() !== 'ALL') {
         const category = categoryMap?.[filterParam.toUpperCase()];
-        if (category) q = q.ilike('category', `%${category}%`);
+        if (category) q = q.or(`category.ilike.%${category}%,industry.ilike.%${category}%`);
       }
 
       // Temporarily disabled for debugging
@@ -770,9 +840,21 @@ export function ClientsGridInternal({
 
       if (error) throw error;
 
+      // Deduplication: Use Map to filter unique tenants by ID, resolving the {E450E301...}.png duplication bug
+      const uniqueTenantMap = new Map<string, Tenant>();
+      (data || []).forEach((tenant: Tenant) => {
+        if (!uniqueTenantMap.has(tenant.id)) {
+          uniqueTenantMap.set(tenant.id, tenant);
+        }
+      });
+      const uniqueTenants = Array.from(uniqueTenantMap.values());
+      const uniqueCount = uniqueTenants.length;
+
+      console.log(`SYSTEM READY: ${uniqueCount} UNIQUE TENANT(S) DETECTED (deduplicated from ${data?.length ?? 0} raw records)`);
+
       setAllTenants(prev => {
         // Sanitize indicators on fetch (VIN lock for non-Automotive)
-        const sanitizedData = (data || []).map((tenant: Tenant) => ({
+        const sanitizedData = uniqueTenants.map((tenant: Tenant) => ({
           ...tenant,
           indicators: sanitizeIndicators(tenant, tenant.indicators)
         }));
@@ -790,6 +872,7 @@ export function ClientsGridInternal({
         console.log('setAllTenants applied, count:', sanitizedData.length);
         return sanitizedData;
       });
+      
     } catch (err: unknown) {
       const error = err instanceof Error ? err : { message: String(err), code: undefined, status: undefined };
       console.error('Error fetching tenants:', {
@@ -824,17 +907,19 @@ export function ClientsGridInternal({
         tenant.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         tenant.email.toLowerCase().includes(searchQuery.toLowerCase());
       
-      // First, check Category match
-      const activeFilter = filter.toLowerCase().trim();
-      const clientCategory = (tenant.category || '').toLowerCase().trim();
+      // First, check Category match — normalize both category and industry with toUpperCase
+      const activeFilter = filter.toUpperCase().trim();
+      const clientCategory = (tenant.category || '').toUpperCase().trim();
+      const clientIndustry = (tenant.industry || '').toUpperCase().trim();
       
       let categoryMatch = false;
-      if (activeFilter === 'all') {
+      if (activeFilter === 'ALL') {
         categoryMatch = true;
-      } else if (activeFilter === 'general') {
-        categoryMatch = clientCategory.includes('general') || clientCategory.includes('business');
+      } else if (activeFilter === 'GENERAL') {
+        categoryMatch = clientCategory.includes('GENERAL') || clientCategory.includes('BUSINESS') ||
+                         clientIndustry.includes('GENERAL') || clientIndustry.includes('BUSINESS');
       } else {
-        categoryMatch = clientCategory.includes(activeFilter);
+        categoryMatch = clientCategory.includes(activeFilter) || clientIndustry.includes(activeFilter);
       }
       
       // Second, if Offline is toggled, it acts as a SECONDARY strainer
@@ -858,88 +943,44 @@ export function ClientsGridInternal({
     });
   }, [allTenants, filter, showOfflineOnly]);
 
-  // Auth state management with retry logic - fetch only when session is truthy
+  // Mount-only initialization: runs exactly once. Re-mount occurs on page navigation.
   useEffect(() => {
-    const checkSession = async () => {
-      try {
-        // Token refresh: Verify token is valid before hitting tenants table
-        const { data: { user }, error: userError } = await supabase.current.auth.getUser();
-        
-        if (userError || !user) {
-          console.log('Token invalid or expired:', userError?.message);
-          setHasSession(false);
-          setSessionLoading(false);
-          return;
-        }
+    const supabaseClient = supabase.current;
 
-        // Session is valid, proceed with data fetching
-        setHasSession(true);
-        setSessionLoading(false);
-        
-        // Trigger UI transition from red pulse back to Cyan
+    const init = async () => {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      const hasActiveSession = !!session;
+      setHasSession(hasActiveSession);
+      setSessionLoading(false);
+
+      if (session) {
         document.body.classList.remove('heartbeat-error');
-        
         fetchTenants({ filterParam: 'ALL', resellerSlugParam: resellerSlug });
         fetchDashboardStats();
         fetchCriticalAlerts();
-      } catch (error) {
-        console.error('Session check error:', error);
-        setHasSession(false);
-        setSessionLoading(false);
       }
     };
 
-    // Only fetch if we have a session
-    if (hasSession) {
-      checkSession();
-    } else {
-      // Initial session check
-      const initialCheck = async () => {
-        const { data: { session } } = await supabase.current.auth.getSession();
-        setHasSession(!!session);
-        setSessionLoading(false);
-        
-        if (session) {
-          // Trigger UI transition and fetch data
-          document.body.classList.remove('heartbeat-error');
-          fetchTenants({ filterParam: 'ALL', resellerSlugParam: resellerSlug });
-          fetchDashboardStats();
-          fetchCriticalAlerts();
-        }
-      };
-      
-      initialCheck();
-    }
+    void init();
 
-    // Session Bridge: Listen for custom event from sign-in page
+    // Session Bridge: Listen for custom sign-in event
     const handleUserSignedIn = (event: CustomEvent) => {
       console.log('User signed in event received:', event.detail);
       setHasSession(true);
       setSessionLoading(false);
-      
-      // Trigger UI transition from red pulse back to Cyan
       document.body.classList.remove('heartbeat-error');
-      
-      // Immediately re-fetch tenants list
       fetchTenants({ filterParam: 'ALL', resellerSlugParam: resellerSlug });
       fetchDashboardStats();
       fetchCriticalAlerts();
     };
-
-    // Add event listener for custom sign-in event
     window.addEventListener('userSignedIn', handleUserSignedIn as EventListener);
 
-    // Retry logic: Listen for auth state changes
-    const { data: { subscription } } = supabase.current.auth.onAuthStateChange((event, session) => {
-            
+    // Listen for auth state changes
+    const { data: { subscription } } = supabaseClient.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' && session) {
         setHasSession(true);
         setSessionLoading(false);
-        
-        // Trigger UI transition from red pulse back to Cyan
         document.body.classList.remove('heartbeat-error');
-        
-        // Re-fetch data when user signs in
         fetchTenants({ filterParam: 'ALL', resellerSlugParam: resellerSlug });
         fetchDashboardStats();
         fetchCriticalAlerts();
@@ -947,7 +988,6 @@ export function ClientsGridInternal({
         setHasSession(false);
         setSessionLoading(false);
         setAllTenants([]);
-        // Add red pulse for locked state
         document.body.classList.add('heartbeat-error');
       }
     });
@@ -956,7 +996,8 @@ export function ClientsGridInternal({
       subscription.unsubscribe();
       window.removeEventListener('userSignedIn', handleUserSignedIn as EventListener);
     };
-  }, [resellerSlug, hasSession, fetchTenants, fetchDashboardStats, fetchCriticalAlerts]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Refetch when offline toggle or filter changes
   useEffect(() => {

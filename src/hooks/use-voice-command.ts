@@ -257,7 +257,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       const ttsResponse = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: aiText, voice: 'daniel' }),
+        body: JSON.stringify({ text: aiText, voice: 'hannah', model: 'orpheus-v1' }),
         signal,
       });
 

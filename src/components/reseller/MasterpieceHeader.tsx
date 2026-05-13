@@ -1,5 +1,6 @@
 'use client';
 
+import { useRef, useEffect } from 'react';
 import { Mic } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { SignOutButton } from './SignOutButton';
@@ -11,6 +12,7 @@ interface MasterpieceHeaderProps {
   isAwaitingVoiceConfirm?: boolean;
   transcribedText?: string;
   isCommunicating?: boolean;
+  playVoice?: (text: string) => Promise<void>;
 }
 
 export function MasterpieceHeader({ 
@@ -18,8 +20,38 @@ export function MasterpieceHeader({
   onMicClick,
   isAwaitingVoiceConfirm = false,
   transcribedText,
-  isCommunicating = false
+  isCommunicating = false,
+  playVoice
 }: MasterpieceHeaderProps) {
+  // Track previous listening state to detect transitions
+  const prevListeningRef = useRef(isListening);
+  const prevCommunicatingRef = useRef(isCommunicating);
+  const playedWelcomeRef = useRef(false);
+
+  // Purpose-driven voice scripts for Global Header state transitions
+  useEffect(() => {
+    if (!playVoice) return;
+
+    // On mount, announce voice readiness once
+    if (!playedWelcomeRef.current && !isListening && !isCommunicating) {
+      playedWelcomeRef.current = true;
+      // No automatic welcome — only on user interaction
+    }
+
+    // Listening started transition – SYSTEM scope announcement
+    if (isListening && !prevListeningRef.current) {
+      playVoice("System control active. Use this interface for global configuration, reseller settings, and platform-wide monitoring.");
+    }
+
+    // Communicating (speaking) started transition
+    if (isCommunicating && !prevCommunicatingRef.current) {
+      playVoice("");
+    }
+
+    prevListeningRef.current = isListening;
+    prevCommunicatingRef.current = isCommunicating;
+  }, [isListening, isCommunicating, playVoice]);
+
   return (
     <>
       {/* Global shimmer animation styles */}
@@ -112,14 +144,14 @@ export function MasterpieceHeader({
             ? 'PIERRE: SPEAKING...' 
             : isListening 
               ? 'LISTENING...' 
-              : 'VOICE READY'}
+              : 'SYSTEM'}
         </span>
         
         {/* Pierre HUD: STT Command Feedback */}
         {transcribedText && (
           <div className="ml-3 px-2 py-0.5 bg-[#226683]/50 border-l-2 border-[#0097b2] backdrop-blur-sm">
             <span className="text-[#0097b2] text-[9px] font-mono uppercase tracking-tighter italic">
-              Detected: &quot;{transcribedText}&quot;
+              Detected: {'\u201C'}{transcribedText}{'\u201D'}
             </span>
           </div>
         )}
