@@ -84,6 +84,9 @@ export default function ClientsPage() {
   const confirmationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const commandInputRef = useRef<HTMLInputElement>(null);
   const hasProcessedRef = useRef(false);
+  // Stable refs for voice hook callbacks to avoid circular declaration dependency
+  const stopListeningRef = useRef<() => void>(() => {});
+  const startListeningRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   // Portfolio Stats State (lifted from ClientsGrid)
   const [portfolioStats, setPortfolioStats] = useState({
@@ -107,6 +110,130 @@ export default function ClientsPage() {
     error,
   } = useAICommand();
 
+  // Resilient 4-phase Voice Integration — must be above handleTranscript
+  const { isPlaying: isVoicePlaying, isSilentMode, captions, playVoice: speakVoice } = useResilientVoice();
+  const speakVoiceRef = useRef(speakVoice);
+  useEffect(() => { speakVoiceRef.current = speakVoice; }, [speakVoice]);
+
+  // 🔷 Production Excellence: Track TTS communication state for HUD
+  const isCommunicating = isVoicePlaying;
+
+  // Handle bulk confirmation — must be above handleTranscript
+  const handleBulkConfirm = useCallback(async () => {
+    if (!bulkConfirmation) return;
+    try {
+      const response = await fetch('/api/tenants/bulk-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetIds: bulkConfirmation.targetIds,
+          payload: bulkConfirmation.payload,
+        }),
+      });
+      if (response.ok) {
+        setSuccessRipple(true);
+        setTimeout(() => setSuccessRipple(false), 1000);
+        speakVoiceRef.current(`Update complete. Applied changes to ${bulkConfirmation.count} clients.`);
+      }
+    } catch (err) {
+      console.error('Bulk update failed:', err);
+    } finally {
+      setBulkConfirmation(null);
+    }
+  }, [bulkConfirmation]);
+
+  const handleBulkCancel = useCallback(() => {
+    setBulkConfirmation(null);
+    setIsAwaitingVoiceConfirm(false);
+    if (confirmationTimeoutRef.current) {
+      clearTimeout(confirmationTimeoutRef.current);
+      confirmationTimeoutRef.current = null;
+    }
+    speakVoiceRef.current('Bulk action cancelled.');
+  }, []);
+
+  // Stable transcript handler — must be useCallback to prevent useVoiceCommand
+  // from recreating processAudioPipeline on every parent render, which causes
+  // the ClientsGrid re-mount loop.
+  const handleTranscript = useCallback((text: string) => {
+      // Guard must be first — before stopListening — to block Strict Mode double-invocation
+      if (hasProcessedRef.current) return;
+      if (!text || text.trim().length < 3) return;
+      stopListeningRef.current();
+
+      setCommandInput(text);
+      hasProcessedRef.current = true;
+      setTimeout(() => { hasProcessedRef.current = false; }, 3000);
+      const lowerText = text.toLowerCase().trim();
+
+      if (isAwaitingVoiceConfirm && bulkConfirmation?.show) {
+        if (confirmationTimeoutRef.current) {
+          clearTimeout(confirmationTimeoutRef.current);
+          confirmationTimeoutRef.current = null;
+        }
+        const confirmWords = ['yes', 'confirm', 'do it', 'go ahead', 'proceed', 'ok', 'yeah', 'sure'];
+        const cancelWords = ['no', 'cancel', 'stop', 'abort', 'wait', 'hold on'];
+        const isConfirm = confirmWords.some(word => lowerText.includes(word));
+        const isCancel = cancelWords.some(word => lowerText.includes(word));
+        if (isConfirm) {
+          setIsAwaitingVoiceConfirm(false);
+          stopListeningRef.current();
+          handleBulkConfirm();
+          return;
+        } else if (isCancel) {
+          setIsAwaitingVoiceConfirm(false);
+          stopListeningRef.current();
+          handleBulkCancel();
+          return;
+        }
+      }
+
+      let activeSlug = resellerSlug;
+      if (!activeSlug || activeSlug.includes('[') || activeSlug.includes(']') || activeSlug.includes('%5B')) {
+        const segments = window.location.pathname.split('/');
+        const resellerIndex = segments.indexOf('reseller');
+        if (resellerIndex !== -1 && segments[resellerIndex + 1]) {
+          activeSlug = segments[resellerIndex + 1];
+          console.log('%c[Pierre] 🚀 Extracted slug from URL path:', 'color: #0097b2; font-weight: bold;', activeSlug);
+        }
+      }
+
+      console.log('%c[Pierre] 🚀 Submission triggered with resolved slug:', 'color: #0097b2; font-weight: bold;', activeSlug);
+
+      handleCommandSubmit(
+        text,
+        { theme: { primary: '#0097b2' }, behavior: { prompt: 'Default' } },
+        selectedTenantId ? { tenantId: selectedTenantId, category: activeFilter } : { category: activeFilter },
+        activeSlug,
+        (response: AICommandResponse | undefined) => {
+          if (response?.actionType === 'BULK' && response?.targetIds?.length > 1) {
+            setBulkConfirmation({
+              show: true,
+              count: response.targetIds.length,
+              targetIds: response.targetIds,
+              payload: response.payload,
+            });
+            if (response.summary) {
+              speakVoiceRef.current(`I've identified ${response.targetIds.length} clients. Should I proceed with the update?`);
+              setTimeout(() => {
+                setIsAwaitingVoiceConfirm(true);
+                startListeningRef.current();
+                confirmationTimeoutRef.current = setTimeout(() => {
+                  setIsAwaitingVoiceConfirm(false);
+                  stopListeningRef.current();
+                }, 3000);
+              }, 2000);
+            }
+          } else if (response?.success) {
+            setSuccessRipple(true);
+            setTimeout(() => setSuccessRipple(false), 1000);
+            speakVoiceRef.current('Update applied successfully.');
+          }
+        }
+      );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAwaitingVoiceConfirm, bulkConfirmation, resellerSlug, selectedTenantId, activeFilter, handleCommandSubmit]);
+
   // Voice Command Integration
   const {
     isListening,
@@ -118,144 +245,17 @@ export default function ClientsPage() {
     resellerId: resellerSlug,
     tenantContext: selectedTenantId ? { tenantId: selectedTenantId, category: activeFilter } : { category: activeFilter },
     currentConfig: { theme: { primary: '#0097b2' }, behavior: { prompt: 'Default' } },
-    skipAIPipeline: true, // AI processing handled by handleCommandSubmit
-    onTranscript: (text) => {
-      stopListening();
-      if (hasProcessedRef.current) return;
-      if (!text || text.trim().length < 3) return;
-
-      // 🔷 Ghost Listen Fix: Bridge STT transcript to footer input for visual feedback
-      setCommandInput(text);
-
-      hasProcessedRef.current = true;
-      setTimeout(() => { hasProcessedRef.current = false; }, 3000);
-      const lowerText = text.toLowerCase().trim();
-      
-      // Intent filtering for bulk confirmation state
-      if (isAwaitingVoiceConfirm && bulkConfirmation?.show) {
-        // Clear the timeout since we got a response
-        if (confirmationTimeoutRef.current) {
-          clearTimeout(confirmationTimeoutRef.current);
-          confirmationTimeoutRef.current = null;
-        }
-        
-        // Check for confirmation intents
-        const confirmWords = ['yes', 'confirm', 'do it', 'go ahead', 'proceed', 'ok', 'yeah', 'sure'];
-        const cancelWords = ['no', 'cancel', 'stop', 'abort', 'wait', 'hold on'];
-        
-        const isConfirm = confirmWords.some(word => lowerText.includes(word));
-        const isCancel = cancelWords.some(word => lowerText.includes(word));
-        
-        if (isConfirm) {
-          setIsAwaitingVoiceConfirm(false);
-          stopListening();
-          handleBulkConfirm();
-          return;
-        } else if (isCancel) {
-          setIsAwaitingVoiceConfirm(false);
-          stopListening();
-          handleBulkCancel();
-          return;
-        }
-        // If neither, continue listening within the 3-second window
-      }
-      
-      // Normal flow - auto-submit to AI when transcript is received
-      // 🔷 Production Excellence: URL Path-Extraction Fallback for hydration race condition
-      let activeSlug = resellerSlug;
-      if (!activeSlug || activeSlug.includes('[') || activeSlug.includes(']') || activeSlug.includes('%5B')) {
-        // Direct extraction from window for "Production Excellence" speed
-        const segments = window.location.pathname.split('/');
-        const resellerIndex = segments.indexOf('reseller');
-        if (resellerIndex !== -1 && segments[resellerIndex + 1]) {
-          activeSlug = segments[resellerIndex + 1];
-          console.log('%c[Pierre] 🚀 Extracted slug from URL path:', 'color: #0097b2; font-weight: bold;', activeSlug);
-        }
-      }
-      
-      // 🔷 Production Excellence: Electric blue structured logging
-      console.log('%c[Pierre] 🚀 Submission triggered with resolved slug:', 'color: #0097b2; font-weight: bold;', activeSlug);
-      
-      handleCommandSubmit(
-        text,
-        { theme: { primary: '#0097b2' }, behavior: { prompt: 'Default' } },
-        selectedTenantId ? { tenantId: selectedTenantId, category: activeFilter } : { category: activeFilter },
-        activeSlug,
-        (response: AICommandResponse | undefined) => {
-          // Handle bulk command response
-          if (response?.actionType === 'BULK' && response?.targetIds?.length > 1) {
-            setBulkConfirmation({
-              show: true,
-              count: response.targetIds.length,
-              targetIds: response.targetIds,
-              payload: response.payload,
-            });
-            // Voice handshake with 4-phase TTS and auto-listen
-            if (response.summary) {
-              speakVoice(`I've identified ${response.targetIds.length} clients. Should I proceed with the update?`);
-              // Auto-reactivate after voice finishes
-              setTimeout(() => {
-                setIsAwaitingVoiceConfirm(true);
-                startListening();
-                confirmationTimeoutRef.current = setTimeout(() => {
-                  setIsAwaitingVoiceConfirm(false);
-                  stopListening();
-                }, 3000);
-              }, 2000);
-            }
-          } else if (response?.success) {
-            // Single tenant success - trigger ripple and voice
-            setSuccessRipple(true);
-            setTimeout(() => setSuccessRipple(false), 1000);
-            speakVoice('Update applied successfully.');
-          }
-        }
-      );
-    },
+    skipAIPipeline: true,
+    onTranscript: handleTranscript,
     onError: (err) => console.error('Voice command error:', err),
   });
 
-  // Resilient 4-phase Voice Integration (Groq → ElevenLabs → Browser → Silent)
-  const { isPlaying: isVoicePlaying, isSilentMode, captions, playVoice: speakVoice } = useResilientVoice();
+  // Keep voice action refs in sync so handleTranscript can call them without
+  // being listed as a dep (which would recreate the callback on every render)
+  useEffect(() => { stopListeningRef.current = stopListening; }, [stopListening]);
+  useEffect(() => { startListeningRef.current = startListening; }, [startListening]);
 
-  // 🔷 Production Excellence: Track TTS communication state for HUD
-  const isCommunicating = isVoicePlaying;
 
-  // Handle bulk confirmation
-  const handleBulkConfirm = async () => {
-    if (!bulkConfirmation) return;
-    
-    try {
-      const response = await fetch('/api/tenants/bulk-update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          targetIds: bulkConfirmation.targetIds,
-          payload: bulkConfirmation.payload,
-        }),
-      });
-
-      if (response.ok) {
-        setSuccessRipple(true);
-        setTimeout(() => setSuccessRipple(false), 1000);
-        speakVoice(`Update complete. Applied changes to ${bulkConfirmation.count} clients.`);
-      }
-    } catch (err) {
-      console.error('Bulk update failed:', err);
-    } finally {
-      setBulkConfirmation(null);
-    }
-  };
-
-  const handleBulkCancel = () => {
-    setBulkConfirmation(null);
-    setIsAwaitingVoiceConfirm(false);
-    if (confirmationTimeoutRef.current) {
-      clearTimeout(confirmationTimeoutRef.current);
-      confirmationTimeoutRef.current = null;
-    }
-    speakVoice('Bulk action cancelled.');
-  };
 
   // Cleanup confirmation timeout on unmount
   useEffect(() => {
@@ -643,7 +643,12 @@ export default function ClientsPage() {
               CONFIRM
             </button>
             <button
-              onClick={handleBulkCancel}
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                window.speechSynthesis.cancel();
+                handleBulkCancel();
+              }}
               className="px-4 py-1.5 rounded-lg bg-white/10 border border-white/20 text-white/60 text-xs font-semibold hover:bg-white/20 transition-colors"
             >
               CANCEL
@@ -660,8 +665,11 @@ export default function ClientsPage() {
               <div className="absolute w-full h-1 bg-gradient-to-r from-transparent via-emerald-400 to-transparent animate-radar-scan shadow-[0_0_20px_rgba(16,185,129,0.8)]" />
             </div>
           )}
+          {/* ClientsGrid is always mounted — CSS masks it during loading to preserve internal Refs */}
+          <div className={isAnalyzing ? 'opacity-50 pointer-events-none' : ''}>
           
           <ClientsGrid
+            key={resellerSlug}
             resellerSlug={resellerSlug}
             filter={activeFilter}
             showOfflineOnly={showOfflineOnly}
@@ -672,6 +680,7 @@ export default function ClientsPage() {
             isGlobalScanning={isProcessing && !selectedTenantId}
             onStatsUpdate={setPortfolioStats}
           />
+          </div>
         </section>
       </main>
 

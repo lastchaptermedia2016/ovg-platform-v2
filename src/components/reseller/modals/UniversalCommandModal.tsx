@@ -7,10 +7,23 @@ import { createClient } from '@/lib/supabase/client';
 type Step = 'command' | 'draft' | 'review' | 'confirm';
 type VoiceEntryStep = 0 | 1 | 2 | 3 | 4; // Multi-step voice entry
 
+// Category options keyed by industry
+const INDUSTRY_CATEGORY_MAP: Record<string, string[]> = {
+  AUTOMOTIVE: ['VIN_DECODE', 'LOGISTICS', 'RETAIL_SALES'],
+  RETAIL: ['ECOMMERCE', 'BRICK_AND_MORTAR'],
+  HEALTHCARE: ['CLINICAL', 'WELLNESS'],
+  INSURANCE: ['CLAIMS', 'UNDERWRITING'],
+  'GENERAL BUSINESS': ['GENERAL', 'CONSULTING', 'SERVICES'],
+};
+
+const getCategoriesForIndustry = (ind: string): string[] =>
+  INDUSTRY_CATEGORY_MAP[ind.toUpperCase().trim()] ?? INDUSTRY_CATEGORY_MAP['GENERAL BUSINESS'];
+
 interface DraftData {
   clientName: string;
   clientEmail: string;
   industry: string;
+  category: string;
   mobile: string;
   website: string;
   systemPrompt: string;
@@ -37,6 +50,8 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
   const [clientName, setClientName] = useState('');
   const [clientEmail, setClientEmail] = useState('');
   const [industry, setIndustry] = useState('GENERAL BUSINESS');
+  const [category, setCategory] = useState('');
+  const [categoryError, setCategoryError] = useState(false);
   const [mobile, setMobile] = useState('');
   const [website, setWebsite] = useState('');
   const [systemPrompt, setSystemPrompt] = useState('');
@@ -51,17 +66,18 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
   const [voicePersonaTone, setVoicePersonaTone] = useState('');
   
   // Field highlighting states for real-time feedback
-  const [highlightedField, setHighlightedField] = useState<'name' | 'email' | 'industry' | 'mobile' | 'website' | 'vibe' | null>(null);
+  const [highlightedField, setHighlightedField] = useState<'name' | 'email' | 'industry' | 'category' | 'mobile' | 'website' | 'vibe' | null>(null);
   
   // Stateful Interaction: Track current conversation step for Hannah to know which field she's interviewing
-  const [, setConversationStep] = useState<'greeting' | 'name' | 'industry' | 'email' | 'mobile' | 'website' | 'vibe' | 'review' | 'complete'>('greeting');
+  const [, setConversationStep] = useState<'greeting' | 'name' | 'industry' | 'category' | 'email' | 'mobile' | 'website' | 'vibe' | 'review' | 'complete'>('greeting');
   
   // Validation Check: Track missing fields to prevent AI from repeating questions
-  const [, setMissingFields] = useState<Set<string>>(new Set(['name', 'industry', 'email', 'mobile', 'website', 'vibe']));
+  const [, setMissingFields] = useState<Set<string>>(new Set(['name', 'industry', 'category', 'email', 'mobile', 'website', 'vibe']));
   
   const [voiceEntryData, setVoiceEntryData] = useState({
     name: '',
     industry: '',
+    category: '',
     email: '',
     mobile: '',
     website: '',
@@ -72,6 +88,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
   const [reviewData, setReviewData] = useState({
     name: '',
     industry: '',
+    category: '',
     email: '',
     mobile: '',
     website: '',
@@ -135,12 +152,13 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
 
   // Website Parameter Transformer: Normalize website URLs with dot com replacement and space removal
   // Keyword Delimiters: Multi-pass parser to split raw SST string at keywords
-  const parseWithKeywordDelimiters = (transcript: string): { name: string; industry?: string; email?: string; mobile?: string; website?: string } => {
+  const parseWithKeywordDelimiters = (transcript: string): { name: string; industry?: string; category?: string; email?: string; mobile?: string; website?: string } => {
     const lowerTranscript = transcript.toLowerCase();
-    const keywords = ['industry', 'email', 'mobile', 'phone', 'website'];
+    const keywords = ['industry', 'category', 'mapped to', 'email', 'mobile', 'phone', 'website'];
     
     let name = transcript;
     let industry: string | undefined;
+    let category: string | undefined;
     let email: string | undefined;
     let mobile: string | undefined;
     let website: string | undefined;
@@ -170,6 +188,8 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
       // Assign value to appropriate field
       if (keyword === 'industry') {
         industry = value;
+      } else if (keyword === 'category' || keyword === 'mapped to') {
+        category = value;
       } else if (keyword === 'email') {
         email = value;
       } else if (keyword === 'mobile' || keyword === 'phone') {
@@ -198,7 +218,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
     // Punctuation Scrubbing: Strip trailing commas and special characters
     name = name.replace(/[,\.;:!?\-\—\–]+$/, '').trim();
     
-    return { name, industry, email, mobile, website };
+    return { name, industry, category, email, mobile, website };
   };
 
   // Verbal-to-Data Transformers: Sanitize SST strings for website_url and email fields
@@ -429,7 +449,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
   const startVoiceEntryMode = () => {
     setIsVoiceEntryMode(true);
     setVoiceEntryStep(0);
-    setVoiceEntryData({ name: '', industry: '', email: '', mobile: '', website: '', vibe: '' });
+    setVoiceEntryData({ name: '', industry: '', category: '', email: '', mobile: '', website: '', vibe: '' });
     speak("Let's create a new client. First, tell me the client name and industry.");
   };
 
@@ -534,47 +554,51 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
       
       const finalName = parserFoundDelimiters 
         ? (parsed.name?.replace(/^[\s,]+/, '').trim() || data.name)
-        : data.name;  // ← Groq wins for natural speech
+        : data.name;
 
       const finalIndustry = (parserFoundDelimiters && parsed.industry?.trim()) 
         ? parsed.industry.trim() 
         : data.industry;
+
+      // Category: prefer voice-parsed keyword, then Groq extraction, then empty
+      const finalCategory = (parserFoundDelimiters && parsed.category?.trim())
+        ? parsed.category.trim().toUpperCase()
+        : (data.category?.trim().toUpperCase() || '');
       
       if (finalName) {
         setVoiceEntryData(prev => ({ ...prev, name: finalName }));
         setClientName(finalName);
-        
-        // Validation Check: Update missingFields immediately
-        setMissingFields(prev => {
-          const updated = new Set(prev);
-          updated.delete('name');
-          return updated;
-        });
+        setMissingFields(prev => { const u = new Set(prev); u.delete('name'); return u; });
       }
       
       if (finalIndustry) {
         setVoiceEntryData(prev => ({ ...prev, industry: finalIndustry }));
         setIndustry(finalIndustry);
-        setMissingFields(prev => {
-          const updated = new Set(prev);
-          updated.delete('industry');
-          return updated;
-        });
+        setMissingFields(prev => { const u = new Set(prev); u.delete('industry'); return u; });
+      }
+
+      if (finalCategory) {
+        setVoiceEntryData(prev => ({ ...prev, category: finalCategory }));
+        setCategory(finalCategory);
+        setMissingFields(prev => { const u = new Set(prev); u.delete('category'); return u; });
       }
       
       if (data.name && data.industry) {
-        // Stateful Interaction: Update conversation step
         setConversationStep('name');
-        
-        // LLM-Driven Response Generation: Generate natural response
-        const response = await generateHannahResponse('Creating client profile', 'name and industry', `${data.name} in ${data.industry}`);
-        await speak(response);
+        const hannahResp = await generateHannahResponse('Creating client profile', 'name and industry', `${data.name} in ${data.industry}`);
+        await speak(hannahResp);
+
+        // Proactive clarification: ask for category if not yet captured
+        if (!finalCategory) {
+          const industryLabel = finalIndustry || data.industry;
+          await speak(`I've got the ${industryLabel} industry. To finalize the capability mapping, what is the specific category for this client?`);
+          setHighlightedField('category');
+          return; // Stay on step 0 until category is provided
+        }
         
         setVoiceEntryStep(1);
         setHighlightedField('email');
         setConversationStep('email');
-        
-        // Generate natural prompt for next field
         const nextPrompt = await generateHannahResponse('Moving to next field', 'email');
         await speak(nextPrompt);
       } else {
@@ -838,6 +862,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
     setReviewData({
       name: voiceEntryData.name,
       industry: voiceEntryData.industry.toUpperCase(),
+      category: voiceEntryData.category.toUpperCase(),
       email: voiceEntryData.email,
       mobile: voiceEntryData.mobile,
       website: voiceEntryData.website,
@@ -858,6 +883,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
       clientName: reviewData.name,
       clientEmail: reviewData.email,
       industry: reviewData.industry,
+      category: reviewData.category,
       mobile: reviewData.mobile,
       website: reviewData.website,
       systemPrompt: reviewData.vibe,
@@ -946,6 +972,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
         clientName: data.parsed.name,
         clientEmail: data.parsed.email || '',
         industry: data.parsed.industry,
+        category: data.parsed.category || '',
         mobile: data.parsed.mobile || '',
         website: data.parsed.website || '',
         systemPrompt: data.parsed.systemPrompt || '',
@@ -1040,6 +1067,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
           clientData: {
             name: validateField(draftData.clientName) || 'Unknown Client', // Validation Logic: Fail-safe for name
             industry: normalizeIndustry(validateField(draftData.industry) || 'GENERAL BUSINESS'),
+            category: validateField(category) || 'GENERAL',
             email: validateField(draftData.clientEmail), // Validation Logic: Returns null if invalid
             mobile: validateField(mobile),  // Schema Enforcement: Use camelCase key matching API schema
             website: validateField(website),  // Schema Enforcement: Use camelCase key matching API schema
@@ -1144,6 +1172,12 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                       <div className="text-sm text-white">{voiceEntryData.industry || '...'}</div>
                     </div>
                     <div className={`backdrop-blur-xl bg-white/[0.02] border rounded-lg p-2 transition-all ${
+                      highlightedField === 'category' ? 'border-amber-400 bg-amber-400/10' : 'border-white/10'
+                    }`}>
+                      <div className="text-xs text-white/60">Category</div>
+                      <div className="text-sm text-white">{voiceEntryData.category || '...'}</div>
+                    </div>
+                    <div className={`backdrop-blur-xl bg-white/[0.02] border rounded-lg p-2 transition-all ${
                       highlightedField === 'email' ? 'border-cyan-500 bg-cyan-500/10' : 'border-white/10'
                     }`}>
                       <div className="text-xs text-white/60">Email</div>
@@ -1161,7 +1195,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                       <div className="text-xs text-white/60">Website</div>
                       <div className="text-sm text-white">{voiceEntryData.website || '...'}</div>
                     </div>
-                    <div className={`backdrop-blur-xl bg-white/[0.02] border rounded-lg p-2 transition-all ${
+                    <div className={`col-span-2 backdrop-blur-xl bg-white/[0.02] border rounded-lg p-2 transition-all ${
                       highlightedField === 'vibe' ? 'border-cyan-500 bg-cyan-500/10' : 'border-white/10'
                     }`}>
                       <div className="text-xs text-white/60">Vibe</div>
@@ -1269,11 +1303,27 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                   <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Industry</span>
                   <select
                     value={industry}
-                    onChange={(e) => setIndustry(e.target.value)}
+                    onChange={(e) => { setIndustry(e.target.value); setCategory(''); setCategoryError(false); }}
                     className="text-xs text-white bg-black/30 border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
                   >
                     {['AUTOMOTIVE', 'RETAIL', 'HEALTHCARE', 'INSURANCE', 'GENERAL BUSINESS'].map(i => (
                       <option key={i} value={i}>{i.charAt(0) + i.slice(1).toLowerCase()}</option>
+                    ))}
+                  </select>
+                </div>
+                {/* Category Select */}
+                <div className="flex justify-between items-center">
+                  <span className={`text-xs uppercase tracking-[0.1em] ${categoryError ? 'text-amber-400' : 'text-white/60'}`}>Category {categoryError && '⚠ Required'}</span>
+                  <select
+                    value={category}
+                    onChange={(e) => { setCategory(e.target.value); setCategoryError(false); }}
+                    className={`text-xs text-white bg-black/30 border-b outline-none w-48 text-right transition-colors ${
+                      categoryError ? 'border-amber-400 focus:border-amber-300' : 'border-white/20 focus:border-cyan-500/50'
+                    }`}
+                  >
+                    <option value="">Select category...</option>
+                    {getCategoriesForIndustry(industry).map(c => (
+                      <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>
                     ))}
                   </select>
                 </div>
@@ -1359,11 +1409,27 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                   <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Industry</span>
                   <select
                     value={reviewData.industry}
-                    onChange={(e) => setReviewData({...reviewData, industry: e.target.value})}
+                    onChange={(e) => setReviewData({...reviewData, industry: e.target.value, category: ''})}
                     className="text-xs text-white bg-black/30 border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
                   >
                     {['AUTOMOTIVE', 'RETAIL', 'HEALTHCARE', 'INSURANCE', 'GENERAL BUSINESS'].map(i => (
                       <option key={i} value={i}>{i.charAt(0) + i.slice(1).toLowerCase()}</option>
+                    ))}
+                  </select>
+                </div>
+                {/* Category Select */}
+                <div className="flex justify-between items-center">
+                  <span className={`text-xs uppercase tracking-[0.1em] ${!reviewData.category ? 'text-amber-400' : 'text-white/60'}`}>Category {!reviewData.category && '⚠'}</span>
+                  <select
+                    value={reviewData.category}
+                    onChange={(e) => setReviewData({...reviewData, category: e.target.value})}
+                    className={`text-xs text-white bg-black/30 border-b outline-none w-48 text-right transition-colors ${
+                      !reviewData.category ? 'border-amber-400' : 'border-white/20 focus:border-cyan-500/50'
+                    }`}
+                  >
+                    <option value="">Select category...</option>
+                    {getCategoriesForIndustry(reviewData.industry).map(c => (
+                      <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>
                     ))}
                   </select>
                 </div>
@@ -1446,6 +1512,11 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                 <div className="flex justify-between">
                   <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Industry</span>
                   <span className="text-xs text-white capitalize">{industry}</span>
+                </div>
+                {/* Review Category */}
+                <div className="flex justify-between">
+                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Category</span>
+                  <span className="text-xs text-white">{category.replace(/_/g, ' ') || '—'}</span>
                 </div>
               </div>
 

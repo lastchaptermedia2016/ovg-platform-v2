@@ -1,6 +1,5 @@
 'use client';
 
-import { Fragment } from 'react';
 import { Dialog, Transition } from '@headlessui/react';
 
 interface DeploymentModalProps {
@@ -19,10 +18,11 @@ export function DeploymentModal({
   onDeploy,
 }: DeploymentModalProps) {
   return (
-    <Transition appear show={isOpen} as={Fragment}>
+    <Transition appear show={isOpen} as="div">
       <Dialog as="div" className="relative z-50" onClose={onClose}>
         {/* Backdrop */}
         <Transition.Child
+          as="div"
           enter="ease-out duration-300"
           enterFrom="opacity-0"
           enterTo="opacity-100"
@@ -37,6 +37,8 @@ export function DeploymentModal({
         <div className="fixed inset-0 overflow-y-auto">
           <div className="flex min-h-full items-center justify-center p-4 text-center">
             <Transition.Child
+              as="div"
+              className="relative w-full max-w-7xl"
               enter="ease-out duration-300"
               enterFrom="opacity-0 scale-95"
               enterTo="opacity-100 scale-100"
@@ -44,7 +46,6 @@ export function DeploymentModal({
               leaveFrom="opacity-100 scale-100"
               leaveTo="opacity-0 scale-95"
             >
-               <div className="relative w-full max-w-7xl">
                 <Dialog.Panel
                   className="w-full transform rounded-2xl backdrop-blur-xl bg-black/40 border border-[#0097b2]/50 p-6 text-left align-middle shadow-[0_0_40px_rgba(0,151,178,0.3)] transition-all"
                 >
@@ -69,7 +70,7 @@ export function DeploymentModal({
                   <div className="mt-4 flex flex-col sm:flex-row gap-3 justify-end">
                     <button
                       type="button"
-                      onClick={onClose}
+                      onClick={(e) => { e.stopPropagation(); e.preventDefault(); onClose(); }}
                       disabled={isDeploying}
                       className="px-6 py-2 rounded-lg border border-white/20 bg-white/5 text-white/70 text-xs tracking-widest uppercase transition-all duration-300 hover:bg-white/10 hover:text-white hover:border-white/30 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
@@ -143,7 +144,6 @@ export function DeploymentModal({
                       />
                     </svg>
                   </button>
-                </div>  {/* closes relative w-full max-w-7xl */}
             </Transition.Child>
           </div>
         </div>

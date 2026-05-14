@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef, useMemo, memo, startTransition, useCallback } from 'react';
+import { useAIStore } from '@/store/useAIStore';
 import { useRouter } from 'next/navigation';
 import { createClient as createSupabaseClient } from '@/lib/supabase/client';
 import { AddClientAction } from './AddClientAction';
@@ -113,17 +114,18 @@ export function ClientsGridInternal({
   }) => void;
   onSTTResult?: (tenantId: string, text: string) => void;
 }) {
-  // Debug: Log resellerSlug prop on component mount
-  console.log('OVG-PLATFORM-V2: ClientsGrid mounted with resellerSlug:', {
-    resellerSlug,
-    type: typeof resellerSlug,
-    isEmpty: !resellerSlug,
-    isUndefined: resellerSlug === undefined,
-    isNull: resellerSlug === null,
-    length: resellerSlug?.length
-  });
-    
-  // Props change tracking removed for production
+  // Debug: fires only on true mount, not on every parent re-render
+  useEffect(() => {
+    console.log('OVG-PLATFORM-V2: ClientsGrid mounted with resellerSlug:', {
+      resellerSlug,
+      type: typeof resellerSlug,
+      isEmpty: !resellerSlug,
+      isUndefined: resellerSlug === undefined,
+      isNull: resellerSlug === null,
+      length: resellerSlug?.length
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   
   const router = useRouter();
   const [allTenants, setAllTenants] = useState<Tenant[]>([]);
@@ -146,6 +148,11 @@ export function ClientsGridInternal({
   const cachedAudioBlob = useRef<Blob | null>(null);
   const cachedConfirmationTextRef = useRef<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Anti-double-speak guard: Zustand global state survives re-mounts
+  const lastGlobalSpokenText = useAIStore((s) => s.lastGlobalSpokenText);
+  const setLastGlobalSpokenText = useAIStore((s) => s.setLastGlobalSpokenText);
+  // Command lock: prevents overlapping AI/STT actions
+  const [isCommandProcessing, setIsCommandProcessing] = useState(false);
   
   // STT State
   const [isListening, setIsListening] = useState(false);
@@ -249,9 +256,16 @@ export function ClientsGridInternal({
       ? `${scopePrefix} control active for ${tenantContext.name}. Use this to manage specific leads, trigger SMS deployments, or verify industry signals.`
       : `${scopePrefix} control active. Use this to manage specific leads, trigger SMS deployments, or verify industry signals.`;
 
+    // Anti-double-speak guard: skip if this exact string was already spoken (survives re-mounts)
+    if (lastGlobalSpokenText === confirmationText) {
+      console.log('🔊 [Audio] Skipping duplicate TTS — already spoken');
+      return;
+    }
+
     // Use cached blob if available (zero-latency)
     if (cachedAudioBlob.current && cachedConfirmationTextRef.current === confirmationText) {
       console.log('🔊 [Audio] Playing cached AI confirmation');
+      setLastGlobalSpokenText(confirmationText);
       const audioUrl = URL.createObjectURL(cachedAudioBlob.current);
       audioRef.current = new Audio(audioUrl);
       audioRef.current.play().catch(console.error);
@@ -283,6 +297,7 @@ export function ClientsGridInternal({
       const audioBuffer = await response.arrayBuffer();
       cachedAudioBlob.current = new Blob([audioBuffer], { type: 'audio/mpeg' });
       cachedConfirmationTextRef.current = confirmationText;
+      setLastGlobalSpokenText(confirmationText);
       
       console.log('🔊 [Audio] Audio cached, playing now');
       const audioUrl = URL.createObjectURL(cachedAudioBlob.current);
@@ -293,7 +308,7 @@ export function ClientsGridInternal({
     } catch (error) {
       console.error('❌ [Audio] Failed to fetch AI confirmation:', error);
     }
-  }, []);
+  }, [lastGlobalSpokenText, setLastGlobalSpokenText]);
   
   // HUD State
   const [hudStats, setHudStats] = useState({
@@ -391,6 +406,12 @@ export function ClientsGridInternal({
   const handleModuleAction = useCallback(async (clientId: string, actionType: 'ai' | 'sms' | 'vin' | 'signal') => {
     // ENTRY LOG: First line to verify signal reception
     console.log('[Dispatcher] Received signal for:', clientId, actionType);
+
+    // Command Lock: block re-entrant signals while an action is in flight
+    if (isCommandProcessing) {
+      console.warn('[Dispatcher] Blocked — command already in progress');
+      return;
+    }
     
     // TYPE SAFETY: Validate actionType at runtime
     if (!isValidActionType(actionType)) {
@@ -440,15 +461,20 @@ export function ClientsGridInternal({
         console.log('✅ [Dispatcher] Microphone acquired for:', clientId);
         setSelectedClientId(clientId); // Trigger input bar display only after mic confirmed
         
-        // Parallel Audio Execution: Fire TTS and STT simultaneously
-        // TTS is fire-and-forget (cached for zero-latency next time)
-        playAIConfirmation(tenant);
-        
-        // Start STT capture immediately without waiting for TTS to finish
-        startSTTCapture();
+        setIsCommandProcessing(true);
+        try {
+          // Parallel Audio Execution: Fire TTS and STT simultaneously
+          // TTS is fire-and-forget (cached for zero-latency next time)
+          playAIConfirmation(tenant);
+          
+          // Start STT capture immediately without waiting for TTS to finish
+          startSTTCapture();
+        } finally {
+          setIsCommandProcessing(false);
+        }
       } catch {
         console.error('❌ [Dispatcher] Microphone access denied for AI activation:', clientId);
-        // Notify user — mic permission rejected
+        setIsCommandProcessing(false);
         return;
       }
       return;
@@ -510,7 +536,7 @@ export function ClientsGridInternal({
     
     // Fire log without await - keep UI snappy for 100k+ clients
     void logModuleAction();
-  }, [allTenants, handleFeatureToggle, playAIConfirmation, startSTTCapture]);
+  }, [allTenants, handleFeatureToggle, isCommandProcessing, playAIConfirmation, startSTTCapture]);
   
   // Event Delegation: Single listener for all module actions
   useEffect(() => {
@@ -999,20 +1025,21 @@ export function ClientsGridInternal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Stable ref so the refetch effect below never needs fetchTenants in its dep array
+  const fetchTenantsRef = useRef(fetchTenants);
+  useEffect(() => { fetchTenantsRef.current = fetchTenants; }, [fetchTenants]);
+
   // Refetch when offline toggle or filter changes
   useEffect(() => {
+    // Auth Guard: Prevent RLS errors by blocking API calls until session is resolved
+    if (!hasSession || sessionLoading) return;
+    
     let active = true;
-
     Promise.resolve().then(() => {
-      if (active) {
-        fetchTenants({ filterParam: filter, resellerSlugParam: resellerSlug });
-      }
+      if (active) fetchTenantsRef.current({ filterParam: filter, resellerSlugParam: resellerSlug });
     });
-
-    return () => {
-      active = false;
-    };
-  }, [showOfflineOnly, filter, resellerSlug, fetchTenants]);
+    return () => { active = false; };
+  }, [showOfflineOnly, filter, resellerSlug, hasSession, sessionLoading]);
 
   // Realtime subscription - runs once on mount with proper cleanup
   useEffect(() => {
