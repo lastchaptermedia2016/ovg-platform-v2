@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { mapVisualStyleToPersona } from '@/lib/voice-visual-harmony';
 import { createClient } from '@/lib/supabase/client';
 
@@ -36,6 +36,57 @@ interface UniversalCommandModalProps {
   onClientCreated?: () => void;
 }
 
+// ─── Atomic Form State ─────────────────────────────────────────────
+interface FormState {
+  name: string;
+  email: string;
+  industry: string;
+  category: string;
+  mobile: string;
+  website: string;
+  systemPrompt: string;
+}
+
+const INITIAL_FORM_STATE: FormState = {
+  name: '',
+  email: '',
+  industry: 'GENERAL BUSINESS',
+  category: '',
+  mobile: '',
+  website: '',
+  systemPrompt: '',
+};
+
+interface VoiceEntryData {
+  name: string;
+  industry: string;
+  category: string;
+  email: string;
+  mobile: string;
+  website: string;
+  vibe: string;
+}
+
+const INITIAL_VOICE_ENTRY_DATA: VoiceEntryData = {
+  name: '',
+  industry: '',
+  category: '',
+  email: '',
+  mobile: '',
+  website: '',
+  vibe: '',
+};
+
+interface ReviewData {
+  name: string;
+  industry: string;
+  category: string;
+  email: string;
+  mobile: string;
+  website: string;
+  vibe: string;
+}
+
 export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }: UniversalCommandModalProps) {
   const getErrorMessage = (err: unknown): string => {
     if (err instanceof Error) return err.message;
@@ -43,81 +94,73 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
     return 'An unknown error occurred.';
   };
 
+  // ─── Core Navigation State ───────────────────────────────────────
   const [step, setStep] = useState<Step>('command');
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [draftData, setDraftData] = useState<DraftData | null>(null);
-  const [clientName, setClientName] = useState('');
-  const [clientEmail, setClientEmail] = useState('');
-  const [industry, setIndustry] = useState('GENERAL BUSINESS');
-  const [category, setCategory] = useState('');
   const [categoryError, setCategoryError] = useState(false);
-  const [mobile, setMobile] = useState('');
-  const [website, setWebsite] = useState('');
-  const [systemPrompt, setSystemPrompt] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting] = useState(false);
 
-  // Multi-step voice entry state
+  // ─── Atomic Form State (single source of truth) ──────────────────
+  const [formState, setFormState] = useState<FormState>(INITIAL_FORM_STATE);
+
+  // ─── Multi-Step Voice Entry State ────────────────────────────────
   const [voiceEntryStep, setVoiceEntryStep] = useState<VoiceEntryStep>(0);
   const [isVoiceEntryMode, setIsVoiceEntryMode] = useState(false);
   const [voicePersonaTone, setVoicePersonaTone] = useState('');
-  
-  // Field highlighting states for real-time feedback
+  const [voiceEntryData, setVoiceEntryData] = useState<VoiceEntryData>(INITIAL_VOICE_ENTRY_DATA);
+
+  // Refs to avoid stale closures and forward-reference issues in async callbacks
+  const voiceEntryDataRef = useRef<VoiceEntryData>(voiceEntryData);
+  const processCommandRef = useRef<(manualTranscript?: string) => Promise<void>>(async () => {});
+  const transcribeAudioRef = useRef<(blob: Blob) => Promise<void>>(async () => {});
+
+  // Sync ref with latest voiceEntryData via effect (not during render)
+  useEffect(() => {
+    voiceEntryDataRef.current = voiceEntryData;
+  }, [voiceEntryData]);
+
+  // ─── UI Highlight & Conversation State ───────────────────────────
   const [highlightedField, setHighlightedField] = useState<'name' | 'email' | 'industry' | 'category' | 'mobile' | 'website' | 'vibe' | null>(null);
-  
-  // Stateful Interaction: Track current conversation step for Hannah to know which field she's interviewing
   const [, setConversationStep] = useState<'greeting' | 'name' | 'industry' | 'category' | 'email' | 'mobile' | 'website' | 'vibe' | 'review' | 'complete'>('greeting');
-  
-  // Validation Check: Track missing fields to prevent AI from repeating questions
   const [, setMissingFields] = useState<Set<string>>(new Set(['name', 'industry', 'category', 'email', 'mobile', 'website', 'vibe']));
-  
-  const [voiceEntryData, setVoiceEntryData] = useState({
+
+  // ─── Review Data ─────────────────────────────────────────────────
+  const [reviewData, setReviewData] = useState<ReviewData>({
     name: '',
     industry: '',
     category: '',
     email: '',
     mobile: '',
     website: '',
-    vibe: ''
-  });
-  
-  // Explicit Confirmation UI: Editable review data
-  const [reviewData, setReviewData] = useState({
-    name: '',
-    industry: '',
-    category: '',
-    email: '',
-    mobile: '',
-    website: '',
-    vibe: ''
+    vibe: '',
   });
 
+  // ─── Media Refs ──────────────────────────────────────────────────
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
 
-  // Production Excellence: Allowed industry enum values
+  // ─── Industry Enum & Normalization ───────────────────────────────
   const ALLOWED_INDUSTRIES = [
     'AUTOMOTIVE',
-    'RETAIL', 
+    'RETAIL',
     'HEALTHCARE',
     'INSURANCE',
-    'GENERAL BUSINESS'
+    'GENERAL BUSINESS',
   ] as const;
 
-  // Production Excellence: Industry normalization and fuzzy matching
-  const normalizeIndustry = (industry: string): string => {
+  const normalizeIndustry = useCallback((industry: string): string => {
     const upperIndustry = industry.toUpperCase().trim();
-    
-    // Exact match
+
     if ((ALLOWED_INDUSTRIES as readonly string[]).includes(upperIndustry)) {
       return upperIndustry;
     }
-    
-    // Fuzzy Matching: Snap common variations to exact enum values
+
     const fuzzyMap: Record<string, string> = {
       'INSURANCE': 'INSURANCE',
       'INSURE': 'INSURANCE',
@@ -137,33 +180,32 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
       'GENERAL': 'GENERAL BUSINESS',
       'BUSINESS': 'GENERAL BUSINESS',
       'GENERAL BUSINESS': 'GENERAL BUSINESS',
-      'OTHER': 'GENERAL BUSINESS'
+      'OTHER': 'GENERAL BUSINESS',
     };
-    
-    // Check fuzzy map
+
     for (const [key, value] of Object.entries(fuzzyMap)) {
       if (upperIndustry.includes(key)) {
         return value;
       }
     }
-    
-    return 'GENERAL BUSINESS';
-  };
 
-  // Website Parameter Transformer: Normalize website URLs with dot com replacement and space removal
-  // Keyword Delimiters: Multi-pass parser to split raw SST string at keywords
-  const parseWithKeywordDelimiters = (transcript: string): { name: string; industry?: string; category?: string; email?: string; mobile?: string; website?: string } => {
+    return 'GENERAL BUSINESS';
+  }, []);
+
+  // ─── Keyword Delimiter Parser ────────────────────────────────────
+  const parseWithKeywordDelimiters = useCallback((transcript: string): {
+    name: string; industry?: string; category?: string; email?: string; mobile?: string; website?: string;
+  } => {
     const lowerTranscript = transcript.toLowerCase();
     const keywords = ['industry', 'category', 'mapped to', 'email', 'mobile', 'phone', 'website'];
-    
+
     let name = transcript;
     let industry: string | undefined;
     let category: string | undefined;
     let email: string | undefined;
     let mobile: string | undefined;
     let website: string | undefined;
-    
-    // Multi-pass: Find all keyword positions
+
     const keywordPositions: { keyword: string; index: number }[] = [];
     for (const keyword of keywords) {
       const index = lowerTranscript.indexOf(keyword);
@@ -171,21 +213,16 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
         keywordPositions.push({ keyword, index });
       }
     }
-    
-    // Sort by position to process in order
+
     keywordPositions.sort((a, b) => a.index - b.index);
-    
-    // Extract fields based on keyword positions
+
     for (let i = 0; i < keywordPositions.length; i++) {
       const { keyword, index } = keywordPositions[i];
       const nextKeyword = keywordPositions[i + 1];
-      
-      // Extract value after current keyword until next keyword or end
       const startIndex = index + keyword.length;
       const endIndex = nextKeyword ? nextKeyword.index : transcript.length;
       const value = transcript.substring(startIndex, endIndex).trim();
-      
-      // Assign value to appropriate field
+
       if (keyword === 'industry') {
         industry = value;
       } else if (keyword === 'category' || keyword === 'mapped to') {
@@ -198,82 +235,75 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
         website = value;
       }
     }
-    
-    // Delimiter Enforcement: Extract name as everything before the first keyword
+
     if (keywordPositions.length > 0) {
       name = transcript.substring(0, keywordPositions[0].index).trim();
     }
-    
-    // Strip Command Prefixes: Remove phrases like "Client Name," "Company is," or "Name is"
+
     const commandPrefixes = [
       /^(client name|company name|name is|company is|the name is|the company is|the client name is)/i,
       /^(create client|add client|new client)/i,
-      /^(my company|our company|the company)/i
+      /^(my company|our company|the company)/i,
     ];
-    
+
     for (const prefix of commandPrefixes) {
       name = name.replace(prefix, '').trim();
     }
-    
-    // Punctuation Scrubbing: Strip trailing commas and special characters
-    name = name.replace(/[,\.;:!?\-\—\–]+$/, '').trim();
-    
-    return { name, industry, category, email, mobile, website };
-  };
 
-  // Verbal-to-Data Transformers: Sanitize SST strings for website_url and email fields
-  const sanitizeWebsiteUrl = (website: string): string | null => {
+    name = name.replace(/[,\.;:!?\-\—\–]+$/, '').trim();
+
+    return { name, industry, category, email, mobile, website };
+  }, []);
+
+  // ─── Sanitizers ──────────────────────────────────────────────────
+  const sanitizeWebsiteUrl = useCallback((website: string): string | null => {
     if (!website || website.trim() === '') return null;
-    
+
     let sanitized = website
-      .replace(/\s+dot\s+com/gi, '.com')  // "dot com" -> ".com"
-      .replace(/\s+dot\s+/gi, '.')           // "dot" -> "."
-      .replace(/\s+at\s+/gi, '@')           // " at " -> "@"
-      .replace(/\s+/g, '')                   // Strip all internal whitespace
+      .replace(/\s+dot\s+com/gi, '.com')
+      .replace(/\s+dot\s+/gi, '.')
+      .replace(/\s+at\s+/gi, '@')
+      .replace(/\s+/g, '')
       .toLowerCase()
       .trim();
-    
-    // Validation Logic: Check if it looks like a domain
+
     if (!sanitized.includes('.')) {
       return null;
     }
-    
-    // Ensure protocol
+
     if (!sanitized.startsWith('http://') && !sanitized.startsWith('https://')) {
       sanitized = `https://${sanitized}`;
     }
-    
-    return sanitized;
-  };
 
-  const sanitizeEmail = (email: string): string | null => {
+    return sanitized;
+  }, []);
+
+  const sanitizeEmail = useCallback((email: string): string | null => {
     if (!email || email.trim() === '') return null;
-    
+
     const sanitized = email
-      .replace(/\s+at\s+/gi, '@')           // " at " -> "@"
-      .replace(/\s+dot\s+/gi, '.')           // " dot " -> "."
-      .replace(/\s+/g, '')                   // Strip all internal whitespace
+      .replace(/\s+at\s+/gi, '@')
+      .replace(/\s+dot\s+/gi, '.')
+      .replace(/\s+/g, '')
       .toLowerCase()
       .trim();
-    
-    // Validation Logic: Basic email validation
+
     if (!sanitized.includes('@') || !sanitized.includes('.')) {
       return null;
     }
-    
-    return sanitized;
-  };
 
-  // Validation Logic: Fail-safe to return null for missing/invalid fields
-  const validateField = (value: string | null | undefined): string | null => {
+    return sanitized;
+  }, []);
+
+  const validateField = useCallback((value: string | null | undefined): string | null => {
     if (!value || value.trim() === '' || value === '---' || value === '...' || value === 'null') {
       return null;
     }
     return value.trim();
-  };
+  }, []);
 
-  // LLM-Driven Response Generation: Generate natural response for Hannah to speak
-  const generateHannahResponse = async (context: string, field: string, value?: string): Promise<string> => {
+  // ─── LLM Response Generation ─────────────────────────────────────
+  const generateHannahResponse = useCallback(async (context: string, field: string, value?: string): Promise<string> => {
     try {
       const response = await fetch('/api/ai/generate-response', {
         method: 'POST',
@@ -283,63 +313,55 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
 
       if (!response.ok) {
         console.error('Failed to generate Hannah response:', response.statusText);
-        return 'Got it.'; // Fallback to default response
+        return 'Got it.';
       }
 
       const data = await response.json();
       return data.response || 'Got it.';
-    } catch (error) {
-      console.error('Error generating Hannah response:', error);
-      return 'Got it.'; // Fallback to default response
+    } catch (_err) {
+      return 'Got it.';
     }
-  };
+  }, []);
 
-  // Cleanup effect for media streams and audio resources
+  // ─── Media Stream Cleanup ────────────────────────────────────────
   useEffect(() => {
     return () => {
-      // Stop media stream tracks
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
-      // Clean up media recorder
       if (mediaRecorderRef.current?.state === 'recording') {
         mediaRecorderRef.current.stop();
       }
     };
   }, []);
 
-  // Sync draftData to local state when in review step (race condition mitigation)
+  // ─── Sync draftData → formState when entering draft step ─────────
   useEffect(() => {
-    if (!draftData || step !== 'draft') {
-      return;
-    }
+    if (!draftData || step !== 'draft') return;
 
     let active = true;
-
     Promise.resolve().then(() => {
       if (!active) return;
-
-      setClientName(draftData.clientName);
-      setClientEmail(draftData.clientEmail);
-      setIndustry(draftData.industry);
-      setMobile(draftData.mobile);
-      setWebsite(draftData.website);
-      setSystemPrompt(draftData.systemPrompt);
-      console.log("OVG-PLATFORM-V2: CRM fields successfully integrated into UI and API.");
-      console.log("OVG-PLATFORM-V2: Personality and Analytics modules initialized.");
+      setFormState({
+        name: draftData.clientName,
+        email: draftData.clientEmail,
+        industry: draftData.industry,
+        category: draftData.category,
+        mobile: draftData.mobile,
+        website: draftData.website,
+        systemPrompt: draftData.systemPrompt,
+      });
     });
 
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, [draftData, step]);
 
-  const speak = async (text: string, metadata?: { resellerSlug?: string }) => {
+  // ─── TTS ─────────────────────────────────────────────────────────
+  const speak = useCallback(async (text: string, metadata?: { resellerSlug?: string }) => {
     try {
       setIsSpeaking(true);
       const ttsMetadata = { ...metadata, resellerSlug };
-      console.log("OVG-PLATFORM-V2: Hannah TTS context validated for reseller:", resellerSlug);
-      
+
       const response = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -364,14 +386,15 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
         };
         audio.play().catch(() => resolve());
       });
-    } catch (err) {
-      console.error('[Modal TTS] Failed:', err);
+    } catch (_err) {
+      console.error('[Modal TTS] Failed:', _err);
     } finally {
       setIsSpeaking(false);
     }
-  };
+  }, [resellerSlug]);
 
-  const startListening = async () => {
+  // ─── Microphone ──────────────────────────────────────────────────
+  const startListening = useCallback(async () => {
     try {
       setError(null);
       audioChunksRef.current = [];
@@ -388,40 +411,37 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
 
       mediaRecorder.onstop = async () => {
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        if (audioBlob.size > 0) await transcribeAudio(audioBlob);
+        if (audioBlob.size > 0) await transcribeAudioRef.current(audioBlob);
         stream.getTracks().forEach(t => t.stop());
       };
 
       mediaRecorderRef.current = mediaRecorder;
       mediaRecorder.start(100);
       setIsListening(true);
-      
-      // Start heartbeat pulsate animation when Hannah begins listening
       document.body.classList.add('animate-heartbeat-pulse-infinite');
     } catch {
       setError('Microphone access denied');
     }
-  };
+  }, []);
 
-  const stopListening = () => {
+  const stopListening = useCallback(() => {
     if (mediaRecorderRef.current?.state === 'recording') {
       mediaRecorderRef.current.stop();
     }
     setIsListening(false);
-    
-    // Stop heartbeat pulsate animation when Hannah stops listening
     document.body.classList.remove('animate-heartbeat-pulse-infinite');
-  };
+  }, []);
 
-  const toggleListening = () => {
+  const toggleListening = useCallback(() => {
     if (isListening) {
       stopListening();
     } else {
       startListening();
     }
-  };
+  }, [isListening, startListening, stopListening]);
 
-  const transcribeAudio = async (audioBlob: Blob) => {
+  // ─── Transcription ───────────────────────────────────────────────
+  const transcribeAudio = useCallback(async (audioBlob: Blob) => {
     try {
       setIsProcessing(true);
       const formData = new FormData();
@@ -434,168 +454,298 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
 
       if (!response.ok) throw new Error('STT failed');
       const { text } = await response.json();
-      setTranscript(text); // ← still fine for UI display
-
-      // ✅ Pass `text` directly — never `transcript` (stale state)
-      await processCommand(text);
+      setTranscript(text);
+      await processCommandRef.current(text);
     } catch {
       setError('Transcription failed — please try again');
     } finally {
       setIsProcessing(false);
     }
-  };
+  }, []);
 
-  // Multi-step voice entry functions
-  const startVoiceEntryMode = () => {
-    setIsVoiceEntryMode(true);
-    setVoiceEntryStep(0);
-    setVoiceEntryData({ name: '', industry: '', category: '', email: '', mobile: '', website: '', vibe: '' });
-    speak("Let's create a new client. First, tell me the client name and industry.");
-  };
+  // ─── Multi-Step Voice Entry ──────────────────────────────────────
+  const completeVoiceEntry = useCallback(async () => {
+    setHighlightedField(null);
 
-  const processVoiceEntryStep = async (transcript: string) => {
-    const lowerTranscript = transcript.toLowerCase();
-    
-    // Production Excellence: Step 3 validation check and implicit confirmation
-    if (voiceEntryStep === 2) {
-      const hasMobile = voiceEntryData.mobile && voiceEntryData.mobile.trim() !== '';
-      const hasWebsite = voiceEntryData.website && voiceEntryData.website.trim() !== '';
-      
-      console.log("OVG-PLATFORM-V2: Step 3 validation - Mobile:", hasMobile, "Website:", hasWebsite);
-      
-      // Implicit Confirmation: Check for navigation keywords when fields are complete
-      const isNavigationKeyword = lowerTranscript.includes('next') || 
-                                lowerTranscript.includes('continue') || 
-                                lowerTranscript.includes('done') ||
-                                lowerTranscript.includes('that\'s it') ||
-                                lowerTranscript.includes('finished') ||
-                                lowerTranscript.includes('ready');
-      
-      if (hasMobile && hasWebsite) {
-        console.log("OVG-PLATFORM-V2: Step 3 fields complete, checking for implicit confirmation");
-        
-        if (isNavigationKeyword) {
-          console.log("OVG-PLATFORM-V2: Implicit confirmation detected, auto-transitioning to Step 4");
-          setVoiceEntryStep(3);
-          setHighlightedField('vibe');
-          await speak("Finally, describe their business vibe or personality in a few words.");
-          return;
-        }
-      }
-    }
-    
-    switch (voiceEntryStep) {
-      case 0: // Step 1: Name and Industry
-        await processNameAndIndustry(transcript);
-        break;
-      case 1: // Step 2: Email
-        await processEmail(transcript);
-        break;
-      case 2: // Step 3: Mobile and Website
-        await processContactInfo(transcript);
-        break;
-      case 3: // Step 4: Vibe/Description
-        await processVibe(transcript);
-        break;
-      case 4: // Complete
+    // Read from ref to avoid stale closure
+    const currentData = voiceEntryDataRef.current;
+
+    setReviewData({
+      name: currentData.name,
+      industry: currentData.industry.toUpperCase(),
+      category: currentData.category.toUpperCase(),
+      email: currentData.email,
+      mobile: currentData.mobile,
+      website: currentData.website,
+      vibe: currentData.vibe,
+    });
+
+    setIsVoiceEntryMode(false);
+    await speak(`I've drafted the full profile for ${currentData.name}. Please review the details and correct any errors before I save this to your database.`);
+    setStep('review');
+  }, [speak]);
+
+  const processVibe = useCallback(async (transcript: string) => {
+    setHighlightedField('vibe');
+
+    try {
+      const visualStyle = {
+        industry: voiceEntryData.industry.toLowerCase(),
+        headerType: 'solid' as const,
+        primaryColor: '#0097b2',
+        secondaryColor: '#226683',
+        opacity: 0.8,
+        hasGlassmorphism: false,
+      };
+
+      const persona = mapVisualStyleToPersona(visualStyle);
+      const personaTone = `${persona.tone} and ${persona.vocabulary} with ${persona.pace} pace`;
+
+      setVoicePersonaTone(personaTone);
+      setVoiceEntryData(prev => ({ ...prev, vibe: transcript }));
+      setFormState(prev => ({ ...prev, systemPrompt: transcript }));
+
+      setMissingFields(prev => {
+        const updated = new Set(prev);
+        updated.delete('vibe');
+        return updated;
+      });
+
+      await speak(`Perfect! I've detected a ${personaTone} personality for this ${voiceEntryData.industry.toLowerCase()} business.`);
+
+      if (voiceEntryData.name && voiceEntryData.industry) {
+        setVoiceEntryStep(4);
         await completeVoiceEntry();
-        break;
+      }
+    } catch {
+      setVoiceEntryData(prev => ({ ...prev, vibe: transcript }));
+      setFormState(prev => ({ ...prev, systemPrompt: transcript }));
+      await speak('Got it. Let me finalize the profile.');
+      setVoiceEntryStep(4);
+      await completeVoiceEntry();
     }
-  };
+  }, [voiceEntryData, speak, completeVoiceEntry]);
 
-  const processNameAndIndustry = async (transcript: string) => {
-    setHighlightedField('name');
-    
-    // Session injection: ensure authenticated session before API calls
+  const processContactInfo = useCallback(async (transcript: string) => {
+    setHighlightedField('mobile');
+
     const supabase = createClient();
     const { data: { session } } = await supabase.auth.getSession();
-    
-    // Verify we have an authenticated session, not anonymous
+
     if (!session || !session.user) {
       await speak("I'm having trouble connecting to your secure vault. Please ensure you're logged in so I can save this for you.");
-      // Change Pierre AI heartbeat from Cyan to Red for RLS failure
       document.body.classList.add('heartbeat-error');
       setTimeout(() => document.body.classList.remove('heartbeat-error'), 3000);
       return;
     }
-    
-    // Keyword Delimiters: Apply look-ahead parser to prevent context leakage
+
+    const phoneRegex = /(\+?1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})/g;
+    const phones = transcript.match(phoneRegex);
+
+    const cleanTranscript = transcript.toLowerCase();
+    const fuzzyUrlRegex = /\b[a-z0-9.-]+\.[a-z]{2,}\b/gi;
+    const standardUrlRegex = /https?:\/\/[^\s]+/gi;
+    const normalizedTranscript = cleanTranscript.replace(/\s+dot\s+com/gi, '.com').replace(/\s+dot\s+/gi, '.');
+
+    let urls = transcript.match(standardUrlRegex);
+    if (!urls || urls.length === 0) {
+      urls = normalizedTranscript.match(fuzzyUrlRegex);
+    }
+
+    let hasWebsite = false;
+    let hasMobile = false;
+
+    if (phones && phones.length > 0) {
+      const phone = phones[0] || '';
+      setVoiceEntryData(prev => ({ ...prev, mobile: phone }));
+      setFormState(prev => ({ ...prev, mobile: phone }));
+
+      setMissingFields(prev => {
+        const updated = new Set(prev);
+        updated.delete('mobile');
+        return updated;
+      });
+
+      const mobileResponse = await generateHannahResponse('Mobile captured', 'mobile', phone);
+      await speak(mobileResponse);
+      hasMobile = true;
+    }
+
+    if (urls && urls.length > 0) {
+      const website = urls[0] || '';
+      const finalWebsite = sanitizeWebsiteUrl(website);
+
+      if (finalWebsite) {
+        setVoiceEntryData(prev => ({ ...prev, website: finalWebsite }));
+        setFormState(prev => ({ ...prev, website: finalWebsite }));
+
+        setMissingFields(prev => {
+          const updated = new Set(prev);
+          updated.delete('website');
+          return updated;
+        });
+
+        const websiteResponse = await generateHannahResponse('Website captured', 'website', finalWebsite);
+        await speak(websiteResponse);
+        hasWebsite = true;
+      }
+    }
+
+    const existingMobile = voiceEntryData.mobile;
+    const existingWebsite = voiceEntryData.website;
+    const hasExistingMobile = existingMobile && existingMobile.trim() !== '';
+    const hasExistingWebsite = existingWebsite && existingWebsite.trim() !== '';
+
+    const finalHasMobile = hasMobile || hasExistingMobile;
+    const finalHasWebsite = hasWebsite || hasExistingWebsite;
+
+    if (finalHasMobile || finalHasWebsite) {
+      if (finalHasWebsite && !finalHasMobile) {
+        if (!hasMobile) {
+          await speak("Got the site! And what's the mobile number?");
+        }
+        setHighlightedField('mobile');
+      } else if (finalHasMobile && !finalHasWebsite) {
+        if (!hasWebsite) {
+          await speak("Got mobile! And what's the website address?");
+        }
+        setHighlightedField('website');
+      } else {
+        setVoiceEntryStep(3);
+        setHighlightedField('vibe');
+        await speak('Finally, describe their business vibe or personality in a few words.');
+      }
+    } else {
+      await speak("I didn't catch a phone number or website. Can you provide at least one?");
+    }
+  }, [voiceEntryData, speak, sanitizeWebsiteUrl, generateHannahResponse]);
+
+  const processEmail = useCallback(async (transcript: string) => {
+    setHighlightedField('email');
+
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (!session || !session.user) {
+      await speak("I'm having trouble connecting to your secure vault. Please ensure you're logged in so I can save this for you.");
+      document.body.classList.add('heartbeat-error');
+      setTimeout(() => document.body.classList.remove('heartbeat-error'), 3000);
+      return;
+    }
+
+    const cleanEmail = transcript.toLowerCase()
+      .replace(/\s+at\s+/g, '@')
+      .replace(/\s+dot\s+/g, '.')
+      .replace(/\s+/g, '');
+
+    const emailRegex = /\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/g;
+    const emails = cleanEmail.match(emailRegex);
+
+    if (emails && emails.length > 0) {
+      const email = emails[0];
+      const finalEmail = sanitizeEmail(email);
+
+      if (finalEmail) {
+        setVoiceEntryData(prev => ({ ...prev, email: finalEmail }));
+        setFormState(prev => ({ ...prev, email: finalEmail }));
+
+        setMissingFields(prev => {
+          const updated = new Set(prev);
+          updated.delete('email');
+          return updated;
+        });
+      }
+
+      const response = await generateHannahResponse('Email captured', 'email', finalEmail || undefined);
+      await speak(response);
+
+      setVoiceEntryStep(2);
+      setHighlightedField('mobile');
+      setConversationStep('mobile');
+
+      const nextPrompt = await generateHannahResponse('Moving to next field', 'mobile');
+      await speak(nextPrompt);
+    } else {
+      const errorResponse = await generateHannahResponse('Missing information', 'email');
+      await speak(errorResponse);
+    }
+  }, [speak, sanitizeEmail, generateHannahResponse]);
+
+  const processNameAndIndustry = useCallback(async (transcript: string) => {
+    setHighlightedField('name');
+
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (!session || !session.user) {
+      await speak("I'm having trouble connecting to your secure vault. Please ensure you're logged in so I can save this for you.");
+      document.body.classList.add('heartbeat-error');
+      setTimeout(() => document.body.classList.remove('heartbeat-error'), 3000);
+      return;
+    }
+
     const parsed = parseWithKeywordDelimiters(transcript);
-    
-    // Fix 1: Always send full transcript to Groq
     const cleanedTranscript = transcript.trim();
-    
-    // Fix 2: Parser only overrides Groq when it found explicit keyword delimiters
     const parserFoundDelimiters = transcript.toLowerCase().includes('industry') ||
                                    transcript.toLowerCase().includes('email') ||
                                    transcript.toLowerCase().includes('mobile') ||
                                    transcript.toLowerCase().includes('website');
-    
-    console.log("OVG-PLATFORM-V2: Keyword delimiter parsing:", {
-      original: transcript,
-      parsedName: parsed.name,
-      parsedIndustry: parsed.industry,
-      cleaned: cleanedTranscript,
-      parserFoundDelimiters
-    });
-    
-    // Extract name and industry using Groq with cleaned transcript
+
     try {
       const response = await fetch('/api/ai/extract-client-info', {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
+          'Authorization': `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({ transcript: cleanedTranscript, fields: ['name', 'industry'] }),
       });
-      
+
       const data = await response.json();
-      
-      const finalName = parserFoundDelimiters 
+
+      const finalName = parserFoundDelimiters
         ? (parsed.name?.replace(/^[\s,]+/, '').trim() || data.name)
         : data.name;
 
-      const finalIndustry = (parserFoundDelimiters && parsed.industry?.trim()) 
-        ? parsed.industry.trim() 
+      const finalIndustry = (parserFoundDelimiters && parsed.industry?.trim())
+        ? parsed.industry.trim()
         : data.industry;
 
-      // Category: prefer voice-parsed keyword, then Groq extraction, then empty
       const finalCategory = (parserFoundDelimiters && parsed.category?.trim())
         ? parsed.category.trim().toUpperCase()
         : (data.category?.trim().toUpperCase() || '');
-      
+
+      // Atomic update: sync both voiceEntryData and formState
       if (finalName) {
         setVoiceEntryData(prev => ({ ...prev, name: finalName }));
-        setClientName(finalName);
+        setFormState(prev => ({ ...prev, name: finalName }));
         setMissingFields(prev => { const u = new Set(prev); u.delete('name'); return u; });
       }
-      
+
       if (finalIndustry) {
         setVoiceEntryData(prev => ({ ...prev, industry: finalIndustry }));
-        setIndustry(finalIndustry);
+        setFormState(prev => ({ ...prev, industry: finalIndustry.toUpperCase() }));
         setMissingFields(prev => { const u = new Set(prev); u.delete('industry'); return u; });
       }
 
       if (finalCategory) {
         setVoiceEntryData(prev => ({ ...prev, category: finalCategory }));
-        setCategory(finalCategory);
+        setFormState(prev => ({ ...prev, category: finalCategory }));
         setMissingFields(prev => { const u = new Set(prev); u.delete('category'); return u; });
       }
-      
+
       if (data.name && data.industry) {
         setConversationStep('name');
         const hannahResp = await generateHannahResponse('Creating client profile', 'name and industry', `${data.name} in ${data.industry}`);
         await speak(hannahResp);
 
-        // Proactive clarification: ask for category if not yet captured
         if (!finalCategory) {
           const industryLabel = finalIndustry || data.industry;
           await speak(`I've got the ${industryLabel} industry. To finalize the capability mapping, what is the specific category for this client?`);
           setHighlightedField('category');
-          return; // Stay on step 0 until category is provided
+          return;
         }
-        
+
         setVoiceEntryStep(1);
         setHighlightedField('email');
         setConversationStep('email');
@@ -609,314 +759,149 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
       const errorResponse = await generateHannahResponse('Error processing input', 'name and industry');
       await speak(errorResponse);
     }
-  };
+  }, [parseWithKeywordDelimiters, speak, generateHannahResponse]);
 
-  const processEmail = async (transcript: string) => {
-    setHighlightedField('email');
-    
-    // Session injection: ensure authenticated session before API calls
-    const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
-    
-    // Verify we have an authenticated session, not anonymous
-    if (!session || !session.user) {
-      await speak("I'm having trouble connecting to your secure vault. Please ensure you're logged in so I can save this for you.");
-      // Change Pierre AI heartbeat from Cyan to Red for RLS failure
-      document.body.classList.add('heartbeat-error');
-      setTimeout(() => document.body.classList.remove('heartbeat-error'), 3000);
-      return;
-    }
-    
-    // Normalization: Clean transcript for natural speech patterns
-    const cleanEmail = transcript.toLowerCase()
-      .replace(/\s+at\s+/g, '@')
-      .replace(/\s+dot\s+/g, '.')
-      .replace(/\s+/g, '');
-    
-    // Extract email using regex after normalization
-    const emailRegex = /\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/g;
-    const emails = cleanEmail.match(emailRegex);
-    
-    if (emails && emails.length > 0) {
-      const email = emails[0];
-      
-      // Verbal-to-Data Transformers: Use sanitizeEmail function
-      const finalEmail = sanitizeEmail(email);
-      console.log("OVG-PLATFORM-V2: Email sanitized:", finalEmail);
-      
-      if (finalEmail) {
-        setVoiceEntryData(prev => ({ ...prev, email: finalEmail }));
-        setClientEmail(finalEmail);
-        
-        // Validation Check: Update missingFields immediately
-        setMissingFields(prev => {
-          const updated = new Set(prev);
-          updated.delete('email');
-          return updated;
-        });
-      } else {
-        console.log("OVG-PLATFORM-V2: Email validation failed, returning null");
-      }
-      
-      // LLM-Driven Response Generation: Generate natural confirmation
-      const response = await generateHannahResponse('Email captured', 'email', finalEmail || undefined);
-      await speak(response);
-      
-      setVoiceEntryStep(2);
-      setHighlightedField('mobile');
-      setConversationStep('mobile');
-      
-      // Generate natural prompt for next field
-      const nextPrompt = await generateHannahResponse('Moving to next field', 'mobile');
-      await speak(nextPrompt);
-    } else {
-      const errorResponse = await generateHannahResponse('Missing information', 'email');
-      await speak(errorResponse);
-    }
-  };
+  const startVoiceEntryMode = useCallback(() => {
+    setIsVoiceEntryMode(true);
+    setVoiceEntryStep(0);
+    setVoiceEntryData(INITIAL_VOICE_ENTRY_DATA);
+    speak("Let's create a new client. First, tell me the client name and industry.");
+  }, [speak]);
 
-  const processContactInfo = async (transcript: string) => {
-    // Highlight both fields since we're listening for both
-    setHighlightedField('mobile');
-    
-    // Session injection: ensure authenticated session before API calls
-    const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
-    
-    // Verify we have an authenticated session, not anonymous
-    if (!session || !session.user) {
-      await speak("I'm having trouble connecting to your secure vault. Please ensure you're logged in so I can save this for you.");
-      // Change Pierre AI heartbeat from Cyan to Red for RLS failure
-      document.body.classList.add('heartbeat-error');
-      setTimeout(() => document.body.classList.remove('heartbeat-error'), 3000);
-      return;
-    }
-    
-    // Extract phone number
-    const phoneRegex = /(\+?1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})/g;
-    const phones = transcript.match(phoneRegex);
-    
-    console.log("OVG-PLATFORM-V2: Phone regex result:", phones);
-    
-    // Production Excellence: Case-insensitive domain extraction for STT transcripts
-    const cleanTranscript = transcript.toLowerCase();
-    console.log("OVG-PLATFORM-V2: Regex matching against transcript:", cleanTranscript);
-    
-    // Enhanced URL extraction - case insensitive, supports raw domains, hyphens, and STT artifacts
-    // Also handles "dot com" phrases spoken in natural language
-    const fuzzyUrlRegex = /\b[a-z0-9.-]+\.[a-z]{2,}\b/gi; // 'i' flag for case insensitive
-    const standardUrlRegex = /https?:\/\/[^\s]+/gi;
-    
-    // First, normalize "dot com" phrases to actual ".com"
-    const normalizedTranscript = cleanTranscript.replace(/\s+dot\s+com/gi, '.com').replace(/\s+dot\s+/gi, '.');
-    
-    // Try standard URL first, then fuzzy on normalized transcript
-    let urls = transcript.match(standardUrlRegex);
-    
-    if (!urls || urls.length === 0) {
-      urls = normalizedTranscript.match(fuzzyUrlRegex);
-      console.log("OVG-PLATFORM-V2: Fuzzy URL regex result (normalized):", urls);
-    } else {
-      console.log("OVG-PLATFORM-V2: Standard URL regex result:", urls);
-    }
-    
-    let hasWebsite = false;
-    let hasMobile = false;
-    
-    if (phones && phones.length > 0) {
-      const phone = phones[0] || '';
-      setVoiceEntryData(prev => ({ ...prev, mobile: phone }));
-      setMobile(phone);
-      console.log("OVG-PLATFORM-V2: Mobile field updated in state:", phone);
-      
-      // Validation Check: Update missingFields immediately
-      setMissingFields(prev => {
-        const updated = new Set(prev);
-        updated.delete('mobile');
-        return updated;
-      });
-      
-      // LLM-Driven Response Generation: Generate natural confirmation
-      const mobileResponse = await generateHannahResponse('Mobile captured', 'mobile', phone);
-      await speak(mobileResponse);
-      hasMobile = true;
-    }
-    
-    if (urls && urls.length > 0) {
-      const website = urls[0] || '';
-      
-      // Verbal-to-Data Transformers: Use sanitizeWebsiteUrl function
-      const finalWebsite = sanitizeWebsiteUrl(website);
-      console.log("OVG-PLATFORM-V2: Website sanitized:", finalWebsite);
-      
-      if (finalWebsite) {
-        setVoiceEntryData(prev => ({ ...prev, website: finalWebsite }));
-        setWebsite(finalWebsite);
-        console.log("OVG-PLATFORM-V2: Website field updated in state:", finalWebsite);
-        
-        // Validation Check: Update missingFields immediately
-        setMissingFields(prev => {
-          const updated = new Set(prev);
-          updated.delete('website');
-          return updated;
-        });
-        
-        // LLM-Driven Response Generation: Generate natural confirmation
-        const websiteResponse = await generateHannahResponse('Website captured', 'website', finalWebsite);
-        await speak(websiteResponse);
-        
-        hasWebsite = true;
-      } else {
-        console.log("OVG-PLATFORM-V2: Website validation failed, returning null");
-      }
-    }
-    
-    // Production Excellence: Persistence - Check existing values before validation
-    const existingMobile = voiceEntryData.mobile;
-    const existingWebsite = voiceEntryData.website;
-    const hasExistingMobile = existingMobile && existingMobile.trim() !== '';
-    const hasExistingWebsite = existingWebsite && existingWebsite.trim() !== '';
-    
-    console.log("OVG-PLATFORM-V2: Existing values - Mobile:", hasExistingMobile, "Website:", hasExistingWebsite);
-    
-    // Combine existing and new values for persistence
-    const finalHasMobile = hasMobile || hasExistingMobile;
-    const finalHasWebsite = hasWebsite || hasExistingWebsite;
-    
-    // Field validation chain - check if we need to prompt for missing info
-    if (finalHasMobile || finalHasWebsite) {
-      if (finalHasWebsite && !finalHasMobile) {
-        if (!hasMobile) {
-          // Only prompt if we didn't just get a mobile
-          await speak("Got the site! And what's the mobile number?");
-        }
-        setHighlightedField('mobile'); // Keep mobile highlighted
-      } else if (finalHasMobile && !finalHasWebsite) {
-        if (!hasWebsite) {
-          // Only prompt if we didn't just get a website
-          await speak("Got mobile! And what's the website address?");
-        }
-        setHighlightedField('website'); // Keep website highlighted
-      } else {
-        // Both fields captured - proceed to next step
+  const processVoiceEntryStep = useCallback(async (transcript: string) => {
+    const lowerTranscript = transcript.toLowerCase();
+
+    if (voiceEntryStep === 2) {
+      const hasMobile = voiceEntryData.mobile && voiceEntryData.mobile.trim() !== '';
+      const hasWebsite = voiceEntryData.website && voiceEntryData.website.trim() !== '';
+
+      const isNavigationKeyword = lowerTranscript.includes('next') ||
+                                  lowerTranscript.includes('continue') ||
+                                  lowerTranscript.includes('done') ||
+                                  lowerTranscript.includes("that's it") ||
+                                  lowerTranscript.includes('finished') ||
+                                  lowerTranscript.includes('ready');
+
+      if (hasMobile && hasWebsite && isNavigationKeyword) {
         setVoiceEntryStep(3);
         setHighlightedField('vibe');
-        await speak("Finally, describe their business vibe or personality in a few words.");
+        await speak('Finally, describe their business vibe or personality in a few words.');
+        return;
       }
-    } else {
-      await speak("I didn't catch a phone number or website. Can you provide at least one?");
     }
-    
-    // State Persistence: Log final state after processing
-    console.log("OVG-PLATFORM-V2: Final voiceEntryData state after contact processing:", voiceEntryData);
-  };
 
-  const processVibe = async (transcript: string) => {
-    setHighlightedField('vibe');
-    
-    // Use Persona Mapping Utility to generate voice_persona_tone
-    try {
-      const visualStyle = {
-        industry: voiceEntryData.industry.toLowerCase(),
-        headerType: 'solid' as const,
-        primaryColor: '#0097b2',
-        secondaryColor: '#226683',
-        opacity: 0.8,
-        hasGlassmorphism: false
-      };
-      
-      const persona = mapVisualStyleToPersona(visualStyle);
-      const personaTone = `${persona.tone} and ${persona.vocabulary} with ${persona.pace} pace`;
-      
-      setVoicePersonaTone(personaTone);
-      setVoiceEntryData(prev => ({ ...prev, vibe: transcript }));
-      setSystemPrompt(transcript);
-      
-      // Validation Check: Update missingFields immediately
-      setMissingFields(prev => {
-        const updated = new Set(prev);
-        updated.delete('vibe');
-        return updated;
-      });
-      
-      await speak(`Perfect! I've detected a ${personaTone} personality for this ${voiceEntryData.industry.toLowerCase()} business.`);
-      
-      // Check if all fields are complete
-      if (voiceEntryData.name && voiceEntryData.industry) {
-        setVoiceEntryStep(4);
+    switch (voiceEntryStep) {
+      case 0:
+        await processNameAndIndustry(transcript);
+        break;
+      case 1:
+        await processEmail(transcript);
+        break;
+      case 2:
+        await processContactInfo(transcript);
+        break;
+      case 3:
+        await processVibe(transcript);
+        break;
+      case 4:
         await completeVoiceEntry();
-      }
-    } catch {
-      setVoiceEntryData(prev => ({ ...prev, vibe: transcript }));
-      setSystemPrompt(transcript);
-      await speak("Got it. Let me finalize the profile.");
-      setVoiceEntryStep(4);
-      await completeVoiceEntry();
+        break;
     }
-  };
+  }, [voiceEntryStep, voiceEntryData, processNameAndIndustry, processEmail, processContactInfo, processVibe, completeVoiceEntry, speak]);
 
-  const completeVoiceEntry = async () => {
-    setHighlightedField(null);
-    
-    // Populate review data with voice entry data for user confirmation
-    setReviewData({
-      name: voiceEntryData.name,
-      industry: voiceEntryData.industry.toUpperCase(),
-      category: voiceEntryData.category.toUpperCase(),
-      email: voiceEntryData.email,
-      mobile: voiceEntryData.mobile,
-      website: voiceEntryData.website,
-      vibe: voiceEntryData.vibe
-    });
-    
-    setIsVoiceEntryMode(false);
-    
-    // The Big Reveal - show review step for explicit confirmation
-    await speak(`I've drafted the full profile for ${voiceEntryData.name}. Please review the details and correct any errors before I save this to your database.`);
-    
-    setStep('review');
-  };
+  // ─── Handle Create Command (Direct Voice) ────────────────────────
+  const handleCreateCommand = useCallback(async (command: string) => {
+    try {
+      if (!resellerSlug) {
+        console.error('OVG-PLATFORM-V2: Critical - No resellerSlug provided to UniversalCommandModal');
+        setError('Reseller context missing. Please refresh the page and try again.');
+        return;
+      }
 
-  const handleReviewConfirm = () => {
-    // Create draft data from review data
-    const draft = {
-      clientName: reviewData.name,
-      clientEmail: reviewData.email,
-      industry: reviewData.industry,
-      category: reviewData.category,
-      mobile: reviewData.mobile,
-      website: reviewData.website,
-      systemPrompt: reviewData.vibe,
-      parsedFromVoice: true,
-    };
-    
-    setDraftData(draft);
-    setStep('confirm');
-  };
+      const response = await fetch('/api/ai/create-client', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          voiceCommand: command,
+          resellerSlug,
+          parseOnly: true,
+        }),
+      });
 
-  const processCommand = async (manualTranscript?: string) => {
-    // Final Validation: Guard clause to ensure empty state updates never hit the API
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to process command');
+
+      // Atomic update: formState + draftData in sync
+      const p = data.parsed;
+      setFormState({
+        name: p.name || '',
+        email: p.email || '',
+        industry: p.industry || 'GENERAL BUSINESS',
+        category: p.category || '',
+        mobile: p.mobile || '',
+        website: p.website || '',
+        systemPrompt: p.systemPrompt || '',
+      });
+
+      setDraftData({
+        clientName: p.name || '',
+        clientEmail: p.email || '',
+        industry: p.industry || 'GENERAL BUSINESS',
+        category: p.category || '',
+        mobile: p.mobile || '',
+        website: p.website || '',
+        systemPrompt: p.systemPrompt || '',
+        parsedFromVoice: true,
+      });
+
+      setStep('draft');
+      const contactDetails = (p.mobile || p.website) ? ' with contact details' : '';
+      await speak(`I've drafted ${p.name} as a ${p.industry} client${contactDetails}. Please review and confirm.`);
+    } catch (err: unknown) {
+      setError(getErrorMessage(err) || 'Failed to process command');
+    }
+  }, [resellerSlug, speak]);
+
+  // ─── Handle Delete Command ───────────────────────────────────────
+  const handleDeleteCommand = useCallback(async (command: string) => {
+    try {
+      const response = await fetch('/api/ai/delete-client', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voiceCommand: command, resellerSlug: resellerSlug || 'acme-corp' }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Failed to delete client');
+
+      await speak(`${data.clientName} has been successfully removed.`);
+      onClose();
+    } catch (_err) {
+      setError(getErrorMessage(_err) || 'Could not identify client to delete. Please specify the exact client name.');
+    }
+  }, [resellerSlug, speak, onClose]);
+
+  // ─── Process Command (Root Dispatcher) ───────────────────────────
+  const processCommand = useCallback(async (manualTranscript?: string) => {
     const activeTranscript = manualTranscript || transcript;
     if (!activeTranscript || !activeTranscript.trim()) return;
-    
-    console.log('processCommand fired, transcript:', activeTranscript);
+
     setIsProcessing(true);
     setError(null);
 
     const lowerTranscript = activeTranscript.toLowerCase();
-    const isDeleteCommand = lowerTranscript.includes('delete') || 
-                            lowerTranscript.includes('remove') || 
+    const isDeleteCommand = lowerTranscript.includes('delete') ||
+                            lowerTranscript.includes('remove') ||
                             lowerTranscript.includes('deactivate');
 
-    // Hannah identity check - Pierre AI interface
-    const isIdentityQuestion = lowerTranscript.includes('who are you') || 
-                              lowerTranscript.includes('what is your name') || 
-                              lowerTranscript.includes('what\'s your name');
+    const isIdentityQuestion = lowerTranscript.includes('who are you') ||
+                              lowerTranscript.includes('what is your name') ||
+                              lowerTranscript.includes("what's your name");
 
     try {
       if (isIdentityQuestion) {
-        await speak("Universal command active. Use this bar to filter your portfolio, broadcast messages, or run cross-client analytics.");
-        if (!manualTranscript) setTranscript(''); // Only clear state if not using manual transcript
+        await speak('Universal command active. Use this bar to filter your portfolio, broadcast messages, or run cross-client analytics.');
+        if (!manualTranscript) setTranscript('');
         return;
       }
 
@@ -930,99 +915,39 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
     } finally {
       setIsProcessing(false);
     }
-  };
+  }, [transcript, isVoiceEntryMode, speak, processVoiceEntryStep, handleDeleteCommand, handleCreateCommand]);
 
-  const handleCreateCommand = async (command: string) => {
-    try {
-      // Validate resellerSlug before making API call
-    if (!resellerSlug) {
-      console.error('OVG-PLATFORM-V2: Critical - No resellerSlug provided to UniversalCommandModal');
-      setError('Reseller context missing. Please refresh the page and try again.');
-      return;
-    }
+  // ─── Review Confirm ──────────────────────────────────────────────
+  const handleReviewConfirm = useCallback(() => {
+    const draft: DraftData = {
+      clientName: reviewData.name,
+      clientEmail: reviewData.email,
+      industry: reviewData.industry,
+      category: reviewData.category,
+      mobile: reviewData.mobile,
+      website: reviewData.website,
+      systemPrompt: reviewData.vibe,
+      parsedFromVoice: true,
+    };
+    setDraftData(draft);
+    setStep('confirm');
+  }, [reviewData]);
 
-    console.log('OVG-PLATFORM-V2: Creating client with reseller context:', { resellerSlug, command });
-
-    const response = await fetch('/api/ai/create-client', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          voiceCommand: command,
-          resellerSlug: resellerSlug,
-          parseOnly: true,
-        }),
-      });
-
-      const data = await response.json();
-      console.log('[Modal] Parsed:', data);
-
-      if (!response.ok) throw new Error(data.error || 'Failed to process command');
-
-      console.log("OVG-PLATFORM-V2: Hydrating UI with", data.parsed.name);
-      
-      // Synchronous state updates before step change
-      setClientName(data.parsed.name);
-      setIndustry(data.parsed.industry);
-      setClientEmail(data.parsed.email || '');
-      setMobile(data.parsed.mobile || '');
-      setWebsite(data.parsed.website || '');
-      setSystemPrompt(data.parsed.systemPrompt || '');
-
-      setDraftData({
-        clientName: data.parsed.name,
-        clientEmail: data.parsed.email || '',
-        industry: data.parsed.industry,
-        category: data.parsed.category || '',
-        mobile: data.parsed.mobile || '',
-        website: data.parsed.website || '',
-        systemPrompt: data.parsed.systemPrompt || '',
-        parsedFromVoice: true,
-      });
-
-      setStep('draft');
-      const contactDetails = (data.parsed.mobile || data.parsed.website) ? ' with contact details' : '';
-      await speak(`I've drafted ${data.parsed.name} as a ${data.parsed.industry} client${contactDetails}. Please review and confirm.`);
-    } catch (err: unknown) {
-      setError(getErrorMessage(err) || 'Failed to process command');
-    }
-  };
-
-  const handleDeleteCommand = async (command: string) => {
-    try {
-      const response = await fetch('/api/ai/delete-client', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ voiceCommand: command, resellerSlug: resellerSlug || 'acme-corp' }),
-      });
-
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Failed to delete client');
-
-      await speak(`${data.clientName} has been successfully removed.`);
-      onClose();
-    } catch (err: unknown) {
-      setError(getErrorMessage(err) || 'Could not identify client to delete. Please specify the exact client name.');
-    }
-  };
-
-  const handleConfirm = async () => {
+  // ─── Handle Confirm (Final Submit) ───────────────────────────────
+  const handleConfirm = useCallback(async () => {
     if (!draftData) return;
     setIsProcessing(true);
 
     try {
-      console.log("OVG-PLATFORM-V2: CRM fields (Mobile/Website) hydrated.");
-      
-      // Session injection: ensure authenticated session before API calls
       const supabase = createClient();
       const { data: { session } } = await supabase.auth.getSession();
-      
+
       if (!session) {
         await speak("I'm having trouble connecting to your secure vault. Please ensure you're logged in so I can save this for you.");
         setIsProcessing(false);
         return;
       }
 
-      // Payload Enforcement: Get resellerId explicitly for foreign key assignment
       let resellerId = null;
       if (resellerSlug) {
         try {
@@ -1031,73 +956,78 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
             .select('id')
             .eq('slug', resellerSlug)
             .single();
-          
+
           if (resellerError || !resellerData) {
             console.error('OVG-PLATFORM-V2: Failed to get resellerId:', resellerError);
             await speak("I'm having trouble verifying your reseller account. Please try again.");
             setIsProcessing(false);
             return;
           }
-          
+
           resellerId = resellerData.id;
-          console.log('OVG-PLATFORM-V2: ResellerId resolved for payload:', { resellerSlug, resellerId });
-        } catch (err) {
-          console.error('OVG-PLATFORM-V2: Exception getting resellerId:', err);
-          await speak("There was an error preparing your client data. Please try again.");
+        } catch {
+          await speak('There was an error preparing your client data. Please try again.');
           setIsProcessing(false);
           return;
         }
       } else {
         console.error('OVG-PLATFORM-V2: No resellerSlug provided for payload enforcement');
-        await speak("Reseller context is missing. Please refresh the page and try again.");
+        await speak('Reseller context is missing. Please refresh the page and try again.');
         setIsProcessing(false);
         return;
       }
-      
+
+      // Read all data exclusively from draftData — single source of truth
       const response = await fetch('/api/ai/create-client', {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
+          'Authorization': `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
-          resellerSlug: resellerSlug,
-          resellerId: resellerId, // Payload Enforcement: Explicit foreign key assignment
+          resellerSlug,
+          resellerId,
           parseOnly: false,
           clientData: {
-            name: validateField(draftData.clientName) || 'Unknown Client', // Validation Logic: Fail-safe for name
+            name: validateField(draftData.clientName) || 'Unknown Client',
             industry: normalizeIndustry(validateField(draftData.industry) || 'GENERAL BUSINESS'),
-            category: validateField(category) || 'GENERAL',
-            email: validateField(draftData.clientEmail), // Validation Logic: Returns null if invalid
-            mobile: validateField(mobile),  // Schema Enforcement: Use camelCase key matching API schema
-            website: validateField(website),  // Schema Enforcement: Use camelCase key matching API schema
-            systemPrompt: validateField(systemPrompt), // Validation Logic: Returns null if invalid
-            reseller_id: resellerId, // Explicit foreign key in client data as well
+            category: validateField(draftData.category) || 'GENERAL',
+            email: validateField(draftData.clientEmail),
+            mobile: validateField(draftData.mobile),
+            website: validateField(draftData.website),
+            systemPrompt: validateField(draftData.systemPrompt),
+            reseller_id: resellerId,
           },
         }),
       });
 
       const data = await response.json();
-
       if (!response.ok) throw new Error(data.error || 'Failed to create client');
 
-      const hasContactDetails = mobile || website;
+      const hasContactDetails = draftData.mobile || draftData.website;
       const contactMessage = hasContactDetails ? ' with their contact information' : '';
       await speak(`${draftData.clientName} has been successfully added${contactMessage}.`);
-      
-      // Reset UI filters by calling parent callback
-      if (onClientCreated) {
-        onClientCreated();
-      }
-      
+
+      if (onClientCreated) onClientCreated();
       onClose();
     } catch (err: unknown) {
       setError(getErrorMessage(err) || 'Failed to create client');
     } finally {
       setIsProcessing(false);
     }
-  };
+  }, [draftData, resellerSlug, speak, validateField, normalizeIndustry, onClientCreated, onClose]);
 
+  // ─── Sync refs with latest callback values (after all callbacks are defined) ──
+  useEffect(() => {
+    processCommandRef.current = processCommand;
+  }, [processCommand]);
+  useEffect(() => {
+    transcribeAudioRef.current = transcribeAudio;
+  }, [transcribeAudio]);
+
+  // =================================================================
+  // RENDER
+  // =================================================================
   return (
     <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40 backdrop-blur-sm">
       <div className="w-full max-w-[600px] mx-4 backdrop-blur-2xl bg-white/[0.02] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
@@ -1157,7 +1087,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                     </div>
                   </div>
 
-                  {/* Real-time Field Highlighting */}
+                  {/* Real-time Field Highlighting — reads from voiceEntryData (preview) */}
                   <div className="grid grid-cols-2 gap-2">
                     <div className={`backdrop-blur-xl bg-white/[0.02] border rounded-lg p-2 transition-all ${
                       highlightedField === 'name' ? 'border-cyan-500 bg-cyan-500/10' : 'border-white/10'
@@ -1278,32 +1208,35 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
           {step === 'draft' && draftData && (
             <div className="space-y-6">
               <div className="backdrop-blur-xl bg-white/[0.01] border border-white/10 rounded-lg p-4 space-y-3">
-                {/* Client Name Input */}
+                {/* Client Name Input — bound to formState.name */}
                 <div className="flex justify-between items-center">
                   <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Client Name</span>
                   <input
                     type="text"
-                    value={clientName}
-                    onChange={(e) => setClientName(e.target.value)}
+                    value={formState.name}
+                    onChange={(e) => setFormState(prev => ({ ...prev, name: e.target.value }))}
                     className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
                   />
                 </div>
-                {/* Client Email Input */}
+                {/* Client Email Input — bound to formState.email */}
                 <div className="flex justify-between items-center">
                   <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Email</span>
                   <input
                     type="email"
-                    value={clientEmail}
-                    onChange={(e) => setClientEmail(e.target.value)}
+                    value={formState.email}
+                    onChange={(e) => setFormState(prev => ({ ...prev, email: e.target.value }))}
                     className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
                   />
                 </div>
-                {/* Industry Select */}
+                {/* Industry Select — bound to formState.industry */}
                 <div className="flex justify-between items-center">
                   <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Industry</span>
                   <select
-                    value={industry}
-                    onChange={(e) => { setIndustry(e.target.value); setCategory(''); setCategoryError(false); }}
+                    value={formState.industry}
+                    onChange={(e) => {
+                      setFormState(prev => ({ ...prev, industry: e.target.value, category: '' }));
+                      setCategoryError(false);
+                    }}
                     className="text-xs text-white bg-black/30 border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
                   >
                     {['AUTOMOTIVE', 'RETAIL', 'HEALTHCARE', 'INSURANCE', 'GENERAL BUSINESS'].map(i => (
@@ -1311,50 +1244,53 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                     ))}
                   </select>
                 </div>
-                {/* Category Select */}
+                {/* Category Select — bound to formState.category */}
                 <div className="flex justify-between items-center">
                   <span className={`text-xs uppercase tracking-[0.1em] ${categoryError ? 'text-amber-400' : 'text-white/60'}`}>Category {categoryError && '⚠ Required'}</span>
                   <select
-                    value={category}
-                    onChange={(e) => { setCategory(e.target.value); setCategoryError(false); }}
+                    value={formState.category}
+                    onChange={(e) => {
+                      setFormState(prev => ({ ...prev, category: e.target.value }));
+                      setCategoryError(false);
+                    }}
                     className={`text-xs text-white bg-black/30 border-b outline-none w-48 text-right transition-colors ${
                       categoryError ? 'border-amber-400 focus:border-amber-300' : 'border-white/20 focus:border-cyan-500/50'
                     }`}
                   >
                     <option value="">Select category...</option>
-                    {getCategoriesForIndustry(industry).map(c => (
+                    {getCategoriesForIndustry(formState.industry).map(c => (
                       <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>
                     ))}
                   </select>
                 </div>
-                {/* Mobile Number Input */}
+                {/* Mobile Number Input — bound to formState.mobile */}
                 <div className="flex justify-between items-center">
                   <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Mobile Number</span>
                   <input
                     type="tel"
-                    value={mobile}
-                    onChange={(e) => setMobile(e.target.value)}
+                    value={formState.mobile}
+                    onChange={(e) => setFormState(prev => ({ ...prev, mobile: e.target.value }))}
                     placeholder="+1234567890"
                     className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
                   />
                 </div>
-                {/* Website Input */}
+                {/* Website Input — bound to formState.website */}
                 <div className="flex justify-between items-center">
                   <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Website</span>
                   <input
                     type="url"
-                    value={website}
-                    onChange={(e) => setWebsite(e.target.value)}
+                    value={formState.website}
+                    onChange={(e) => setFormState(prev => ({ ...prev, website: e.target.value }))}
                     placeholder="https://example.com"
                     className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
                   />
                 </div>
-                {/* System Prompt Textarea */}
+                {/* System Prompt Textarea — bound to formState.systemPrompt */}
                 <div className="flex flex-col gap-2">
                   <span className="text-xs text-white/60 uppercase tracking-[0.1em]">System Prompt</span>
                   <textarea
-                    value={systemPrompt}
-                    onChange={(e) => setSystemPrompt(e.target.value)}
+                    value={formState.systemPrompt}
+                    onChange={(e) => setFormState(prev => ({ ...prev, systemPrompt: e.target.value }))}
                     placeholder="Describe the client's vibe, role, or personality (e.g., 'innovative tech startup', 'traditional family business')"
                     rows={2}
                     className="text-xs text-white bg-black/30 border border-white/20 focus:border-cyan-500/50 outline-none rounded p-2 resize-none"
@@ -1392,7 +1328,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                 <h3 className="text-sm font-light tracking-[0.2em] text-white uppercase">Review Client Details</h3>
                 <p className="text-xs text-white/60">Please correct any errors before saving to database</p>
               </div>
-              
+
               <div className="backdrop-blur-xl bg-white/[0.01] border border-white/10 rounded-lg p-4 space-y-3">
                 {/* Client Name Input */}
                 <div className="flex justify-between items-center">
@@ -1400,7 +1336,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                   <input
                     type="text"
                     value={reviewData.name}
-                    onChange={(e) => setReviewData({...reviewData, name: e.target.value})}
+                    onChange={(e) => setReviewData({ ...reviewData, name: e.target.value })}
                     className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
                   />
                 </div>
@@ -1409,7 +1345,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                   <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Industry</span>
                   <select
                     value={reviewData.industry}
-                    onChange={(e) => setReviewData({...reviewData, industry: e.target.value, category: ''})}
+                    onChange={(e) => setReviewData({ ...reviewData, industry: e.target.value, category: '' })}
                     className="text-xs text-white bg-black/30 border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
                   >
                     {['AUTOMOTIVE', 'RETAIL', 'HEALTHCARE', 'INSURANCE', 'GENERAL BUSINESS'].map(i => (
@@ -1422,7 +1358,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                   <span className={`text-xs uppercase tracking-[0.1em] ${!reviewData.category ? 'text-amber-400' : 'text-white/60'}`}>Category {!reviewData.category && '⚠'}</span>
                   <select
                     value={reviewData.category}
-                    onChange={(e) => setReviewData({...reviewData, category: e.target.value})}
+                    onChange={(e) => setReviewData({ ...reviewData, category: e.target.value })}
                     className={`text-xs text-white bg-black/30 border-b outline-none w-48 text-right transition-colors ${
                       !reviewData.category ? 'border-amber-400' : 'border-white/20 focus:border-cyan-500/50'
                     }`}
@@ -1439,7 +1375,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                   <input
                     type="email"
                     value={reviewData.email}
-                    onChange={(e) => setReviewData({...reviewData, email: e.target.value})}
+                    onChange={(e) => setReviewData({ ...reviewData, email: e.target.value })}
                     className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
                   />
                 </div>
@@ -1449,7 +1385,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                   <input
                     type="tel"
                     value={reviewData.mobile}
-                    onChange={(e) => setReviewData({...reviewData, mobile: e.target.value})}
+                    onChange={(e) => setReviewData({ ...reviewData, mobile: e.target.value })}
                     placeholder="+1234567890"
                     className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
                   />
@@ -1460,7 +1396,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                   <input
                     type="url"
                     value={reviewData.website}
-                    onChange={(e) => setReviewData({...reviewData, website: e.target.value})}
+                    onChange={(e) => setReviewData({ ...reviewData, website: e.target.value })}
                     placeholder="https://example.com"
                     className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
                   />
@@ -1470,7 +1406,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                   <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Vibe / Personality</span>
                   <textarea
                     value={reviewData.vibe}
-                    onChange={(e) => setReviewData({...reviewData, vibe: e.target.value})}
+                    onChange={(e) => setReviewData({ ...reviewData, vibe: e.target.value })}
                     placeholder="Describe the client's vibe (e.g., 'innovative tech startup')"
                     rows={2}
                     className="text-xs text-white bg-black/30 border border-white/20 focus:border-cyan-500/50 outline-none rounded p-2 resize-none"
@@ -1498,25 +1434,25 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
           {step === 'confirm' && draftData && (
             <div className="space-y-6">
               <div className="backdrop-blur-xl bg-white/[0.01] border border-white/10 rounded-lg p-4 space-y-3">
-                {/* Review Client Name */}
+                {/* Review Client Name — reads from draftData exclusively */}
                 <div className="flex justify-between">
                   <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Client Name</span>
-                  <span className="text-xs text-white capitalize">{clientName}</span>
+                  <span className="text-xs text-white capitalize">{draftData.clientName}</span>
                 </div>
-                {/* Review Email */}
+                {/* Review Email — reads from draftData exclusively */}
                 <div className="flex justify-between">
                   <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Email</span>
-                  <span className="text-xs text-white">{clientEmail}</span>
+                  <span className="text-xs text-white">{draftData.clientEmail}</span>
                 </div>
-                {/* Review Industry */}
+                {/* Review Industry — reads from draftData exclusively */}
                 <div className="flex justify-between">
                   <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Industry</span>
-                  <span className="text-xs text-white capitalize">{industry}</span>
+                  <span className="text-xs text-white capitalize">{draftData.industry}</span>
                 </div>
-                {/* Review Category */}
+                {/* Review Category — reads from draftData exclusively */}
                 <div className="flex justify-between">
                   <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Category</span>
-                  <span className="text-xs text-white">{category.replace(/_/g, ' ') || '—'}</span>
+                  <span className="text-xs text-white">{draftData.category.replace(/_/g, ' ') || '—'}</span>
                 </div>
               </div>
 
