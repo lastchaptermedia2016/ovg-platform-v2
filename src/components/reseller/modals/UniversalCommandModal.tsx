@@ -146,15 +146,14 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
   const streamRef = useRef<MediaStream | null>(null);
 
   // ─── Industry Enum & Normalization ───────────────────────────────
-  const ALLOWED_INDUSTRIES = [
-    'AUTOMOTIVE',
-    'RETAIL',
-    'HEALTHCARE',
-    'INSURANCE',
-    'GENERAL BUSINESS',
-  ] as const;
-
   const normalizeIndustry = useCallback((industry: string): string => {
+    const ALLOWED_INDUSTRIES = [
+      'AUTOMOTIVE',
+      'RETAIL',
+      'HEALTHCARE',
+      'INSURANCE',
+      'GENERAL BUSINESS',
+    ] as const;
     const upperIndustry = industry.toUpperCase().trim();
 
     if ((ALLOWED_INDUSTRIES as readonly string[]).includes(upperIndustry)) {
@@ -318,7 +317,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
 
       const data = await response.json();
       return data.response || 'Got it.';
-    } catch (_err) {
+    } catch {
       return 'Got it.';
     }
   }, []);

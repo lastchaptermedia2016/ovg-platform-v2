@@ -26,6 +26,7 @@ const CreateClientRequestSchema = z.object({
     industry: z.enum(ALLOWED_INDUSTRIES, {
       errorMap: () => ({ message: 'Industry must be one of: AUTOMOTIVE, RETAIL, HEALTHCARE, INSURANCE, GENERAL BUSINESS' })
     }),
+    category: z.string().optional(),
     email: z.string().email().nullable().optional(),
     mobile: z.string().nullable().optional(),
     website: z.string().nullable().optional(), // Flexible URL validation - will be normalized

@@ -22,6 +22,7 @@ export async function POST(request: Request) {
     const fieldDescriptions: Record<string, string> = {
       name: 'client business name (exact business name)',
       industry: 'industry sector (must be one of: AUTOMOTIVE, RETAIL, HEALTHCARE, INSURANCE, GENERAL BUSINESS)',
+      category: 'business vertical / capability category mapped from industry (e.g., VIN_DECODE, LOGISTICS, RETAIL_SALES, ECOMMERCE, BRICK_AND_MORTAR, CLINICAL, WELLNESS, CLAIMS, UNDERWRITING, GENERAL, CONSULTING, SERVICES)',
       email: 'email address (with @ and domain)',
       mobile: 'phone number (in E.164 format with + country code if possible)',
       website: 'website URL (with proper domain format, normalize "dot com" to ".com")',
@@ -38,13 +39,21 @@ Semantic Mapping Rules:
 - For mobile: Format to E.164 (+1 for US numbers if country code missing)
 - For industry: Map to exact enum values: AUTOMOTIVE, RETAIL, HEALTHCARE, INSURANCE, GENERAL BUSINESS
 - For name: Extract exact business name, no generic terms
+- For category: Map industry to its capability categories. Use the following exact mapping:
+  AUTOMOTIVE → VIN_DECODE, LOGISTICS, RETAIL_SALES
+  RETAIL → ECOMMERCE, BRICK_AND_MORTAR
+  HEALTHCARE → CLINICAL, WELLNESS
+  INSURANCE → CLAIMS, UNDERWRITING
+  GENERAL BUSINESS → GENERAL, CONSULTING, SERVICES
+  Pick the single most specific category based on transcript context; if unclear, use the first option for that industry.
 
 Return ONLY a JSON object with the extracted fields. If a field is not found, omit it from the JSON. Do not include any explanations or additional text.
 
 Example format:
 {
   "name": "Acme Corp",
-  "industry": "GENERAL BUSINESS",
+  "industry": "AUTOMOTIVE",
+  "category": "VIN_DECODE",
   "website": "acmecorp.com"
 }`;
 
@@ -90,6 +99,20 @@ Example format:
           transcript.toLowerCase().includes(industry.toLowerCase())
         );
         if (foundIndustry) extractedData.industry = foundIndustry;
+      }
+      
+      if (fields.includes('category')) {
+        const categoryKeywords = ['vin decode', 'vin_decoder', 'vin lookup', 'logistics', 'retail_sales', 'retail', 'ecommerce', 'e-commerce', 'brick and mortar', 'brick_and_mortar', 'clinical', 'wellness', 'claims', 'underwriting', 'consulting', 'services'];
+        const foundCategory = categoryKeywords.find(cat => 
+          transcript.toLowerCase().includes(cat.toLowerCase())
+        );
+        if (foundCategory) {
+          // Normalize to match expected format (e.g., "e-commerce" → "ECOMMERCE")
+          extractedData.category = foundCategory
+            .replace(/[\s-]+/g, '_')
+            .replace(/[^A-Z0-9_]/gi, '')
+            .toUpperCase();
+        }
       }
     }
 
