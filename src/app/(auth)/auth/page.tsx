@@ -6,7 +6,6 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { motion } from 'framer-motion';
 
-
 // Production Excellence: Stable Neural Link Messages
 const NEURAL_MESSAGES = [
   "OVG Engage: Neural Link establishing secure connection...",
@@ -26,7 +25,7 @@ export default function AuthPage() {
   const [currentGreeting, setCurrentGreeting] = useState(0);
   const [displayedText, setDisplayedText] = useState('');
   const [isTyping, setIsTyping] = useState(true);
-  
+
   const router = useRouter();
   const supabase = createClient();
 
@@ -72,115 +71,40 @@ export default function AuthPage() {
     };
   }, [currentGreeting, greetings]);
 
-  
-  // Function to update user reseller slug for authorization fix
-  const updateUserResellerSlug = async (newSlug: string) => {
-    try {
-      const response = await fetch('/api/auth/update-reseller-slug', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ newSlug })
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        console.log("OVG-PLATFORM-V2: Successfully updated reseller slug:", data);
-        return true;
-      } else {
-        console.error("OVG-PLATFORM-V2: Failed to update reseller slug");
-        return false;
-      }
-    } catch (error) {
-      console.error("OVG-PLATFORM-V2: Error updating reseller slug:", error);
-      return false;
-    }
-  };
-
-  // Production Excellence: Active session guard with metadata fix
+  // Production Excellence: Active session guard — getUser + user_resellers
   useEffect(() => {
-    const checkSession = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        
-        if (session) {
-          console.log("OVG-PLATFORM-V2: Active session detected, checking metadata");
-          
-          // Check if user has reseller_slug metadata
-          const userResellerSlug = session.user.user_metadata?.reseller_slug;
-          
-          if (!userResellerSlug) {
-            console.log("OVG-PLATFORM-V2: User missing reseller_slug, attempting to fix metadata");
-            
-            // Try to fix metadata automatically
-            try {
-              const response = await fetch('/api/auth/fix-metadata', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-              });
-              
-              if (response.ok) {
-                const data = await response.json();
-                console.log("OVG-PLATFORM-V2: Tenant created, slug:", data.slug);
-                
-                // If client-side update is needed, update user metadata
-                if (data.needsClientUpdate) {
-                  const { error: updateError } = await supabase.auth.updateUser({
-                    data: { 
-                      user_metadata: { 
-                        reseller_slug: data.slug,
-                        role: 'reseller'
-                      } 
-                    }
-                  });
-                  
-                  if (updateError) {
-                    console.error("OVG-PLATFORM-V2: Failed to update client metadata:", updateError);
-                    // Still redirect - tenant record exists
-                  } else {
-                    console.log("OVG-PLATFORM-V2: Client metadata updated successfully");
-                  }
-                }
-                
-                console.log("OVG-PLATFORM-V2: Redirecting to dashboard:", data.slug);
-                router.push(`/reseller/${data.slug}/clients`);
-                return;
-              }
-            } catch (fixError) {
-              console.error("OVG-PLATFORM-V2: Failed to auto-fix metadata:", fixError);
-            }
-          }
-          
-          // Get user's reseller slug from metadata
-          const userSlug = session.user.user_metadata?.reseller_slug;
-          
-          if (!userSlug) {
-            // Fallback for missing slug
-            router.push('/reseller/acme-corp/clients');
-            return;
-          }
-          
-          // Check if user has wrong reseller slug (acme-corp instead of lastchaptermedia2016)
-          if (userSlug === 'acme-corp') {
-            console.log("OVG-PLATFORM-V2: User has incorrect reseller slug, updating to lastchaptermedia2016");
-            
-            const updated = await updateUserResellerSlug('lastchaptermedia2016');
-            if (updated) {
-              console.log("OVG-PLATFORM-V2: Successfully updated reseller slug, redirecting to correct dashboard");
-              router.push('/reseller/lastchaptermedia2016/clients');
-              return;
-            } else {
-              console.error("OVG-PLATFORM-V2: Failed to update reseller slug, using fallback");
-            }
-          }
-          
-          router.push(`/reseller/${userSlug}/clients`);
-        }
-      } catch (error) {
-        console.error("OVG-PLATFORM-V2: Session check error:", error);
+    const checkUser = async () => {
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) return;
+
+      const { data: userResellerData, error: linkError } = await supabase
+        .from('user_resellers')
+        .select(`
+          role,
+          resellers (
+            slug,
+            tenant_id
+          )
+        `)
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (linkError) {
+        console.error('OVG-PLATFORM-V2: Error querying user_resellers:', linkError);
+        return;
+      }
+
+      const assignedReseller = userResellerData?.resellers as unknown as { slug: string; tenant_id: string } | null;
+      const resellerSlug = assignedReseller?.slug || assignedReseller?.tenant_id;
+
+      if (resellerSlug) {
+        router.push(`/reseller/${resellerSlug}/clients`);
+      } else {
+        setError('Your account is not linked to a reseller. Please contact support.');
       }
     };
 
-    checkSession();
+    checkUser();
   }, [router, supabase]);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -189,28 +113,13 @@ export default function AuthPage() {
     setError(null);
 
     try {
-      // Sheer Brilliance Grade: Verify credentials aren't null/undefined
-      console.log("OVG-PLATFORM-V2: Authentication attempt started");
-      console.log("OVG-PLATFORM-V2: Credential validation:", {
-        email: email,
-        emailLength: email?.length,
-        emailType: typeof email,
-        passwordProvided: !!password,
-        passwordLength: password?.length,
-        passwordType: typeof password,
-        emailEmpty: !email || email.trim() === '',
-        passwordEmpty: !password || password.trim() === ''
-      });
-
       if (!email || email.trim() === '') {
-        console.error("OVG-PLATFORM-V2: Email is null or empty");
         setError('Email is required');
         setIsLoading(false);
         return;
       }
 
       if (!password || password.trim() === '') {
-        console.error("OVG-PLATFORM-V2: Password is null or empty");
         setError('Password is required');
         setIsLoading(false);
         return;
@@ -222,32 +131,42 @@ export default function AuthPage() {
       });
 
       if (authError) {
-        console.error("OVG-PLATFORM-V2: Authentication error:", authError.message);
         setError(authError.message);
+        setIsLoading(false);
         return;
       }
 
       if (session) {
-        console.log("OVG-PLATFORM-V2: Handshake verified. User ID:", session.user.id);
-        console.log("OVG-PLATFORM-V2: User metadata:", session.user.user_metadata);
-        
-        // Get user's reseller slug from metadata
-        const userResellerSlug = session.user.user_metadata?.reseller_slug;
-        
-        if (userResellerSlug) {
-          console.log("OVG-PLATFORM-V2: Routing to user's reseller dashboard:", userResellerSlug);
-          router.push(`/reseller/${userResellerSlug}/clients`);
+        // Derive redirect from user_resellers table via nested join on resellers(slug)
+        const { data: userResellerData, error: linkError } = await supabase
+          .from('user_resellers')
+          .select(`
+            role,
+            resellers (
+              slug,
+              tenant_id
+            )
+          `)
+          .eq('user_id', session.user.id)
+          .maybeSingle();
+
+        if (linkError) {
+          console.error('OVG-PLATFORM-V2: Error querying user_resellers:', linkError);
+        }
+
+        const assignedReseller = userResellerData?.resellers as unknown as { slug: string; tenant_id: string } | null;
+        const resellerSlug = assignedReseller?.slug || assignedReseller?.tenant_id;
+
+        if (resellerSlug) {
+          router.push(`/reseller/${resellerSlug}/clients`);
         } else {
-          console.log("OVG-PLATFORM-V2: User missing reseller_slug, routing to default");
-          router.push('/reseller/lastchaptermedia2016/clients');
+          setError('Your account is not linked to a reseller. Please contact support.');
         }
       } else {
-        console.error("OVG-PLATFORM-V2: No session returned from authentication");
         setError('Authentication failed. Please try again.');
       }
 
-    } catch (err) {
-      console.error("OVG-PLATFORM-V2: Unexpected authentication error:", err);
+    } catch {
       setError('An unexpected error occurred. Please try again.');
     } finally {
       setIsLoading(false);
@@ -273,13 +192,11 @@ export default function AuthPage() {
     }
 
     try {
-      console.log("OVG-PLATFORM-V2: Reseller sign up attempt started");
-
       // Generate slug from company name for database trigger
       const slug = companyName.toLowerCase()
-        .replace(/[^a-z0-9\s-]/g, '') // Remove special characters
-        .replace(/\s+/g, '-') // Replace spaces with hyphens
-        .replace(/-+/g, '-') // Replace multiple hyphens with single
+        .replace(/[^a-z0-9\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
         .trim();
 
       const { data, error: authError } = await supabase.auth.signUp({
@@ -295,28 +212,25 @@ export default function AuthPage() {
       });
 
       if (authError) {
-        console.error("OVG-PLATFORM-V2: Sign up error:", authError.message);
         setError(authError.message);
+        setIsLoading(false);
         return;
       }
 
       // Production Excellence: Duplicate detection
       if (data.user && (!data.user.identities || data.user.identities.length === 0)) {
-        console.log("OVG-PLATFORM-V2: Duplicate account detected");
         setError('An account with this email already exists. Please sign in.');
+        setIsLoading(false);
         return;
       }
 
       if (data.session) {
-        console.log("OVG-PLATFORM-V2: Reseller account created successfully, redirecting to dashboard");
         router.push(`/reseller/${slug}/clients`);
       } else {
-        console.log("OVG-PLATFORM-V2: Sign up requires email confirmation");
         setError('Please check your email to confirm your account.');
       }
 
-    } catch (err) {
-      console.error("OVG-PLATFORM-V2: Unexpected sign up error:", err);
+    } catch {
       setError('An unexpected error occurred. Please try again.');
     } finally {
       setIsLoading(false);
@@ -326,14 +240,14 @@ export default function AuthPage() {
   return (
     <div className="min-h-screen relative flex flex-col justify-center p-4">
       {/* Production Excellence: Original Background Image - No Overlays */}
-      <div 
+      <div
         className="absolute inset-0 bg-cover bg-center bg-no-repeat"
         style={{
           backgroundImage: "url('/reseller-bg.jpg')",
           backgroundSize: 'cover',
         }}
       />
-      
+
       {/* Production Excellence: Fixed Branding Header */}
       <header className="fixed top-0 left-0 right-0 z-20 bg-black/40 backdrop-blur-md border-b border-white/10">
         <div className="max-w-7xl mx-auto px-6 py-3 flex justify-between items-center">
@@ -357,7 +271,7 @@ export default function AuthPage() {
               AI
             </motion.span>
           </div>
-          
+
           {/* Right Branding: OVG-Engage RESELLER */}
           <div className="flex items-center space-x-4">
             <span className="text-white/80 text-[10px] font-medium tracking-wider uppercase">
@@ -370,7 +284,7 @@ export default function AuthPage() {
           </div>
         </div>
       </header>
-      
+
       <div className="w-full max-w-md relative z-10 mt-16">
         <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl overflow-hidden">
           {/* Header */}
@@ -404,7 +318,7 @@ export default function AuthPage() {
                 )}
               </div>
             </motion.div>
-            
+
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -412,7 +326,7 @@ export default function AuthPage() {
               className="mt-4"
             >
               <p className="text-white/60 text-sm">
-                {mode === 'signin' 
+                {mode === 'signin'
                   ? 'Sign in to access your reseller dashboard'
                   : 'Sign up to start managing your clients'
                 }
@@ -555,26 +469,6 @@ export default function AuthPage() {
                   mode === 'signin' ? 'Sign In' : 'Create Account'
                 )}
               </button>
-
-              {/* Diagnostic Button - Production Excellence */}
-              <button
-                type="button"
-                onClick={async () => {
-                  console.log("OVG-PLATFORM-V2: Running authentication diagnostics...");
-                  try {
-                    const response = await fetch('/api/auth/diagnostics');
-                    const diagnostics = await response.json();
-                    console.log("OVG-PLATFORM-V2: Diagnostics results:", diagnostics);
-                    alert(`Diagnostics complete. Check console for details. User Status: ${diagnostics.user.status}, Reseller Status: ${diagnostics.reseller.status}`);
-                  } catch (err) {
-                    console.error("OVG-PLATFORM-V2: Diagnostics failed:", err);
-                    alert("Diagnostics failed. Check console for errors.");
-                  }
-                }}
-                className="w-full py-2 bg-white/5 border border-white/10 rounded-lg text-xs text-white/60 hover:bg-white/10 hover:border-white/20 transition-all duration-200"
-              >
-                🔍 Run Authentication Diagnostics
-              </button>
             </form>
           </div>
 
@@ -594,8 +488,8 @@ export default function AuthPage() {
 
         {/* Back to Home */}
         <div className="mt-6 text-center">
-          <Link 
-            href="/" 
+          <Link
+            href="/"
             className="text-white/60 hover:text-white text-sm transition-colors duration-200"
           >
             ← Back to Home

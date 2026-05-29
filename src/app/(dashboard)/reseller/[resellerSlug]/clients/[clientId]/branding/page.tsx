@@ -2,14 +2,23 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { isInvalidSlug } from '@/lib/utils/guard';
 import { ClientBrandingStudio } from '@/components/reseller/ClientBrandingStudio';
 import type { Client, Tenant } from '@/types';
 
 export default function ClientBrandingPage() {
   const params = useParams();
   const router = useRouter();
-  const resellerSlug = params.resellerSlug as string;
-  const clientId = params.clientId as string;
+  // CRITICAL: Use String() runtime coercion, not TypeScript's compile-time `as string`.
+  // useParams() can return a Proxy object during SSR/hydration that hasn't resolved
+  // to a primitive string yet. String() ensures a primitve is always passed downstream.
+  const resellerSlug = String(params.resellerSlug ?? '');
+  const clientId = String(params.clientId ?? '');
+
+  // 🔷 Production Excellence: Detect Next.js hydration issues with route params
+  if (isInvalidSlug(resellerSlug) || isInvalidSlug(clientId)) {
+    console.error('%c[Pierre] ❌ Route parameter failed to resolve (client branding):', 'color: #0097b2; font-weight: bold;', { resellerSlug, clientId, params });
+  }
 
   const [isLoading, setIsLoading] = useState(true);
   const [clientData, setClientData] = useState<Tenant | null>(null);
@@ -39,7 +48,7 @@ export default function ClientBrandingPage() {
       }
     }
 
-    if (clientId) {
+    if (clientId && !isInvalidSlug(clientId) && !isInvalidSlug(resellerSlug)) {
       fetchData();
     }
   }, [clientId, resellerSlug]);
@@ -83,6 +92,7 @@ export default function ClientBrandingPage() {
           <p className="text-white/60">Customize widget appearance for {clientData?.name}</p>
         </div>
         <ClientBrandingStudio
+          key={resellerSlug}
           clientId={clientId}
           resellerSlug={resellerSlug}
           initialConfig={initialBrandingConfig}

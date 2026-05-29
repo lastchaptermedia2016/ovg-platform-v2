@@ -1,6 +1,6 @@
 // Production Excellence: Fix missing reseller_slug metadata for current user
 import { createClient } from "@/lib/supabase/server";
-import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { NextResponse } from "next/server";
 import { fixUserResellerMetadata } from "@/lib/auth/fix-user-metadata";
 
@@ -37,10 +37,7 @@ export async function POST() {
     }
     
     // Create admin client with service role for metadata update
-    const supabaseAdmin = createAdminClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    // supabaseAdmin is imported from @/lib/supabase/admin
 
     // Update user metadata with admin client
     const { error: metaError } = await supabaseAdmin.auth.admin.updateUserById(

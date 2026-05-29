@@ -1,25 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Groq from 'groq-sdk';
 import { createClient as createSupabaseClient } from '@/lib/supabase/server';
-import { createClient as createServiceClient } from '@supabase/supabase-js';
+import { supabaseAdmin } from '@/lib/supabase/admin';
 import { z } from 'zod';
+import { normalizeEmail } from '@/lib/utils/sanitize-email';
+import { resolveResellerId } from '@/lib/supabase/resolve-reseller-id';
 
 export const dynamic = 'force-dynamic';
 
 // Production Excellence: Allowed industry enum values
 const ALLOWED_INDUSTRIES = [
   'AUTOMOTIVE',
-  'RETAIL', 
+  'RETAIL',
   'HEALTHCARE',
   'INSURANCE',
   'GENERAL BUSINESS'
 ] as const;
 
 // Zod schema for request validation
+// - is_override: boolean indicating if the user explicitly stated an industry
+// - confidence: 0.0-1.0 confidence in the extraction
+// - email: auto-sanitized via .transform() to handle STT artifacts
 const CreateClientRequestSchema = z.object({
   voiceCommand: z.string().optional(),
   resellerSlug: z.string().min(1),
-  resellerId: z.string().uuid().optional(), // Payload Enforcement: Explicit resellerId
+  resellerId: z.string().uuid().optional(),
   parseOnly: z.boolean().default(false),
   clientData: z.object({
     name: z.string().min(1),
@@ -27,11 +32,17 @@ const CreateClientRequestSchema = z.object({
       errorMap: () => ({ message: 'Industry must be one of: AUTOMOTIVE, RETAIL, HEALTHCARE, INSURANCE, GENERAL BUSINESS' })
     }),
     category: z.string().optional(),
-    email: z.string().email().nullable().optional(),
+    email: z.string().email().nullable().optional().transform((val) => {
+      // Layer 3 (Zod Contract): Auto-sanitize email via normalizeEmail
+      if (val === null || val === undefined) return val;
+      return normalizeEmail(val) ?? val; // fall back to original if normalize fails
+    }),
     mobile: z.string().nullable().optional(),
-    website: z.string().nullable().optional(), // Flexible URL validation - will be normalized
+    website: z.string().nullable().optional(),
     systemPrompt: z.string().nullable().optional(),
-    reseller_id: z.string().uuid().optional(), // Payload Enforcement: Explicit foreign key in client data
+    reseller_id: z.string().uuid().optional(),
+    is_override: z.boolean().optional().default(false),
+    confidence: z.number().min(0).max(1).optional().default(0),
   }).optional(),
 });
 
@@ -85,28 +96,57 @@ const sanitizeMobile = (mobile: string | null | undefined): string | null => {
 };
 
 const SYSTEM_PROMPT = `You are a client onboarding assistant. Extract client details from the user's voice command.
-Return ONLY valid JSON in this exact format:
+
+CRITICAL DATA EXTRACTION CONTRACT:
+You must ALWAYS return a complete JSON object with the following keys.
+If a field is not found in the user input, you MUST set its value to null.
+Do not omit any keys.
+
+Required JSON Structure:
 {
-  "name": "client business name",
-  "industry": "one of: AUTOMOTIVE, RETAIL, HEALTHCARE, INSURANCE, GENERAL BUSINESS",
-  "email": "email if mentioned or null",
-  "mobile": "mobile number in E.164 format (e.g., +1234567890) if mentioned or null",
-  "website": "website URL with protocol (e.g., https://example.com) if mentioned or null",
-  "systemPrompt": "client personality/vibe description if mentioned (e.g., 'innovative tech startup', 'traditional family business') or null",
+  "name": string | null,
+  "industry": string | null,
+  "category": string | null,
+  "email": string | null,
+  "mobile": string | null,
+  "website": string | null,
+  "systemPrompt": string | null,
+  "is_override": boolean,
+  "confidence": number,
   "confirmed": true
 }
-Rules:
+
+SPECIAL INSTRUCTIONS FOR EMAIL:
+- If the user provides an email-like string (e.g., "name dot com", "www dot name dot gmail dot com"),
+  you must normalize it into a standard email format (e.g., "name@gmail.com").
+- You must prioritize capturing these strings as the "email" field, even if the user omits the "@" symbol.
+- Strip leading "www." if present but only if the result looks like an email (contains "@" after normalization).
+- If the normalized value looks like a website URL instead of an email, set email to null.
+
+INDUSTRY ENUM VALUES (exact only, must be UPPERCASE):
+AUTOMOTIVE, RETAIL, HEALTHCARE, INSURANCE, GENERAL BUSINESS
+
+CATEGORY MAPPING (use exact enum values):
+  AUTOMOTIVE → VIN_DECODE, LOGISTICS, RETAIL_SALES
+  RETAIL → ECOMMERCE, BRICK_AND_MORTAR
+  HEALTHCARE → CLINICAL, WELLNESS
+  INSURANCE → CLAIMS, UNDERWRITING
+  GENERAL BUSINESS → GENERAL, CONSULTING, SERVICES
+
+LITERAL EXTRACTION PRIORITY:
+- If the user EXPLICITLY states an industry (e.g., "industry General"), return that exact value — do not override it with semantic classification.
+- is_override = true if the user explicitly stated an industry, false if not mentioned.
+- confidence = 1.0 if user stated industry, 0.0-0.95 if auto-classified from company name.
+
+RULES:
 - Extract the business/client name exactly as spoken
-- Map industry to EXACTLY one of these values: AUTOMOTIVE, RETAIL, HEALTHCARE, INSURANCE, GENERAL BUSINESS
 - If industry is unclear or not mentioned, use GENERAL BUSINESS
-- If no email mentioned, set email to null
 - Format mobile numbers to E.164 format (include country code with + prefix)
 - Ensure website URLs include the protocol (http:// or https://)
-- If no mobile or website mentioned, set them to null
-- Extract systemPrompt when user describes the client's vibe, role, or personality (e.g., "innovative", "traditional", "fast-paced", "family-owned")
+- Extract systemPrompt when user describes the client's vibe, role, or personality
 - If no personality/vibe mentioned, set systemPrompt to null
 - Always set confirmed to true
-- Output ONLY the JSON object, no other text`;
+- Output ONLY valid JSON — no explanations, no markdown, no extra text.`;
 
 export async function POST(request: NextRequest) {
   const apiKey = process.env.GROQ_API_KEY;
@@ -140,43 +180,32 @@ export async function POST(request: NextRequest) {
     let reseller = null;
 
     if (!resellerId) {
-      // Resolve reseller slug to UUID (fallback logic)
-      const { data: resellerData, error: resellerError } = await supabase
-        .from('resellers')
-        .select('id')
-        .eq('slug', resellerSlug)
-        .single();
+      // Resolve reseller slug to UUID via the shared utility
+      // resolveResellerId queries slug first (text column), then falls back to tenant_id (UUID column)
+      const resolvedId = await resolveResellerId(supabase, resellerSlug);
 
-      if (resellerError || !resellerData) {
+      if (!resolvedId) {
         return NextResponse.json({ error: 'Reseller not found' }, { status: 404 });
       }
-      
-      resellerId = resellerData.id;
-      reseller = resellerData;
+
+      resellerId = resolvedId;
+      reseller = { id: resolvedId };
     } else {
       console.log('OVG-PLATFORM-V2: Using explicit resellerId from payload:', { resellerId, resellerSlug });
-      // Verify the explicit resellerId matches the slug
-      const { data: resellerData, error: verifyError } = await supabase
-        .from('resellers')
-        .select('id')
-        .eq('slug', resellerSlug)
-        .eq('id', resellerId)
-        .single();
-      
-      if (verifyError || !resellerData) {
+      // Verify the explicit resellerId matches the slug using resolveResellerId
+      const resolvedId = await resolveResellerId(supabase, resellerSlug);
+
+      if (!resolvedId || resolvedId !== resellerId) {
         return NextResponse.json({ error: 'Reseller ID and slug mismatch' }, { status: 400 });
       }
-      
-      reseller = resellerData;
+
+      reseller = { id: resolvedId };
     }
 
     // MODE 1: Insert confirmed clientData directly (from handleConfirm)
     if (clientData && !parseOnly) {
       // Production Excellence: Use service role client for system-level tenant creation
-      const serviceClient = createServiceClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.SUPABASE_SERVICE_ROLE_KEY!
-      );
+      // supabaseAdmin is imported from @/lib/supabase/admin
 
       // RLS Debug: Log auth context and reseller matching
       const { data: { user }, error: authError } = await supabase.auth.getUser();
@@ -188,12 +217,15 @@ export async function POST(request: NextRequest) {
         usingServiceRole: true
       });
 
+      // Layer 2 (Backend Rescue): Normalize email before sanitization
+      const rescuedEmail = normalizeEmail(clientData.email);
+
       // Normalize website URL before database insertion
       const normalizedWebsite = normalizeUrl(clientData.website);
       
       // Sanitize Inputs: Apply string formatters to prevent database crashes
       const sanitizedName = sanitizeString(clientData.name);
-      const sanitizedEmail = sanitizeString(clientData.email);
+      const sanitizedEmail = sanitizeString(rescuedEmail);
       const sanitizedMobile = sanitizeMobile(clientData.mobile);
       const sanitizedSystemPrompt = sanitizeString(clientData.systemPrompt);
       
@@ -210,10 +242,10 @@ export async function POST(request: NextRequest) {
       });
 
       // NULL Prevention Guard: Validate required fields before insert
+      // Email is optional (nullable in DB, optional in Zod) — skip required check
       const missingFields: string[] = [];
       if (!sanitizedName || sanitizedName.trim() === '') missingFields.push('name');
       if (!clientData.industry || clientData.industry.trim() === '') missingFields.push('industry');
-      if (!sanitizedEmail || sanitizedEmail.trim() === '') missingFields.push('email');
 
       if (missingFields.length > 0) {
         console.error('[CreateClient] NULL Prevention Guard: Missing required fields:', missingFields);
@@ -245,7 +277,7 @@ export async function POST(request: NextRequest) {
         resellerIdConfirmed: insertPayload.reseller_id
       });
 
-      const { data: newTenant, error: insertError } = await serviceClient
+      const { data: newTenant, error: insertError } = await supabaseAdmin
         .from('tenants')
         .insert(insertPayload)
         .select('id, name, industry')
@@ -290,7 +322,7 @@ export async function POST(request: NextRequest) {
           widgetConfig = vibeData.widgetConfig;
           
           // Update tenant with AI-generated widget_config using service role
-          await serviceClient
+          await supabaseAdmin
             .from('tenants')
             .update({ widget_config: widgetConfig })
             .eq('id', newTenant.id);
@@ -340,8 +372,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Could not extract client details', parsed }, { status: 422 });
     }
 
-    // Return parsed data only — no DB insert
-    return NextResponse.json({ success: true, parsed });
+    // Extract is_override and confidence from AI response with safe defaults
+    // These fields tell the frontend whether the user explicitly stated the industry
+    // or if the AI had to auto-classify it
+    const isOverride = typeof parsed.is_override === 'boolean' ? parsed.is_override : false;
+    const confidence = typeof parsed.confidence === 'number' ? Math.min(1, Math.max(0, parsed.confidence)) : 0;
+
+    // Return parsed data with extraction metadata — no DB insert
+    return NextResponse.json({
+      success: true,
+      parsed: {
+        ...parsed,
+        is_override: isOverride,
+        confidence,
+      },
+    });
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

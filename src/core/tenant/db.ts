@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { createClient } from "@/lib/supabase/server";
 import { z } from "zod";
 
 // Safe Version of TenantSchema with .transform() for branding_colors
@@ -48,6 +48,7 @@ export function safeParseTenant(data: unknown): Tenant | null {
 
 export async function getTenantBySlug(slug: string): Promise<Tenant | null> {
   try {
+    const supabase = await createClient();
     const { data, error } = await supabase
       .from("tenants")
       .select("*")

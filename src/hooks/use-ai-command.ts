@@ -9,9 +9,9 @@ interface TenantContext {
 
 interface AICommandResponse {
   success: boolean;
-  actionType: 'SINGLE' | 'BULK';
-  targetIds: string[];
-  payload: Record<string, unknown>;
+  actionType: 'SINGLE' | 'BULK' | 'NO_MATCH';
+  targetIds?: string[];
+  payload?: Record<string, unknown>;
   summary: string;
   metadata: {
     processedAt: string;
@@ -169,7 +169,9 @@ export function useAICommand(): UseAICommandReturn {
 
       // Legacy support - still set these for modal
       setTechnicalSummary(transformedResponse.summary);
-      setConfigPatch(transformedResponse.payload);
+      if (transformedResponse.payload) {
+        setConfigPatch(transformedResponse.payload);
+      }
 
       // Call the callback with transformed response
       onResponse?.(transformedResponse);

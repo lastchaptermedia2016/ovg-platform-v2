@@ -1,9 +1,24 @@
 // Admin API to clean up tenant entries for testing
-import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { createClient } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { NextResponse } from "next/server";
 
 export async function POST(request: Request) {
   try {
+    // Auth guard: verify session
+    const supabase = await createClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // Role check: only admin users may proceed
+    const role = user.app_metadata?.role ?? user.user_metadata?.role;
+    if (role !== 'admin') {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const { resellerSlug, cleanupTestEntries } = await request.json();
     
     if (!resellerSlug) {
@@ -13,17 +28,13 @@ export async function POST(request: Request) {
       );
     }
 
-    // Create admin client with service role
-    const supabaseAdmin = createAdminClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    // supabaseAdmin is imported from @/lib/supabase/admin
 
     // Get reseller ID first
     const { data: reseller, error: resellerError } = await supabaseAdmin
       .from('resellers')
       .select('id')
-      .eq('slug', resellerSlug)
+      .eq('tenant_id', resellerSlug)
       .single();
     
     if (resellerError || !reseller) {

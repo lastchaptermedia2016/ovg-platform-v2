@@ -1,10 +1,11 @@
 "use server";
 
-import { supabase } from "@/lib/supabase";
+import { createClient } from "@/lib/supabase/server";
 import { Tenant, TenantSchema } from "@/types";
 
 export async function getTenantData(slug: string): Promise<Tenant | null> {
   try {
+    const supabase = await createClient();
     const { data, error } = await supabase
       .from("tenants")
       .select("id, slug, name, branding_colors, voice_id, system_prompt")

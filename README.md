@@ -1,13 +1,15 @@
 # OVG-Platform-V2 | Enterprise Reseller Infrastructure
 
 ## Project Overview
-OVG-Platform-V2 is a high-performance, multi-tenant SaaS platform designed for "Production Excellence." It enables a white-labeled reseller model where partners can manage their own clients, branding, and revenue streams with total isolation.
+OVG-Platform-V2 is a high-performance, multi-tenant SaaS platform designed for **Production Excellence**. It enables a white-labeled reseller model where partners can manage their own clients, branding, and revenue streams with total isolation.
 
 ## Core Architecture
-- **Tech Stack:** Next.js 16.2.4, Supabase, Tailwind CSS, Stripe Connect, Groq AI
+- **Tech Stack:** Next.js ^16.2.6, Supabase, Tailwind CSS v4, Paystack, Groq AI, Zustand
 - **Design Language:** Electric Blue (#0097b2) and Deep Gold/Blue (#226683)
-- **Data Integrity:** Strict Zod-backed TypeScript interfaces and a Singleton Supabase Client pattern
+- **Data Integrity:** Strict Zod-backed TypeScript interfaces and canonical Supabase client pattern
 - **AI Integration:** Groq-powered STT/TTS with Hannah AI assistant
+- **State Management:** Zustand for predictable, typed store
+- **Animation:** Framer Motion for UI transitions
 
 ## 🚀 Current Project State: Complete Branding & AI System
 
@@ -17,36 +19,41 @@ The **OVG Platform** is now a fully-functional enterprise solution with advanced
 
 #### 1. **Reseller Infrastructure**
 - Multi-tenant client management with Row Level Security (RLS)
-- Stripe Connect integration for revenue sharing
+- Paystack payment integration for revenue sharing
 - Plan tier system (Standard, Premium, Enterprise)
-- Secure authentication and session management
+- Secure authentication and session management via Supabase SSR
+- `user_resellers` table for secure reseller-user association
 
 #### 2. **Advanced Branding Studio**
 - Real-time visual customization with Live Preview
 - Glassmorphism effects and gradient backgrounds
 - Color harmony and opacity tuning
 - Image background support with error handling
-- Instant save functionality
+- **Atomic Branding Commit** — Optimistic concurrency control via `sync_reseller_branding` RPC with `SELECT...FOR UPDATE` locking
+- `branding_bag` JSONB column for atomic read/write of all branding tokens
+- Version-stamped optimistic locking prevents race conditions
 
 #### 3. **AI-Powered Voice System**
-- **Hannah AI Assistant** - Professional design companion
-- **Speech-to-Text (STT)** - Groq Whisper-v3 model
-- **Text-to-Speech (TTS)** - Groq Orpheus model with "Hannah" voice
-- **Voice Commands** - Natural language design controls
-- **Audio Cleanup** - Prevents double-audio and manages streams
+- **Hannah AI Assistant** — Professional design companion
+- **Speech-to-Text (STT)** — Groq Whisper-v3 model
+- **Text-to-Speech (TTS)** — Groq Orpheus model with "Hannah" voice
+- **Voice Commands** — Natural language design controls
+- **Audio Cleanup** — Prevents double-audio and manages streams
 
 #### 4. **High-Skill Assistant Persona**
-- **Service Catalog** - 7+ specialized capabilities
-- **Dynamic Capability Briefing** - Context-aware introductions
-- **Contextual Suggestions** - Industry-specific recommendations
-- **Collaborative Listener** - Natural commands like "Do your thing, Hannah"
-- **Action Confirmation** - Real-time design validation
+- **Service Catalog** — Multiple specialized capabilities
+- **Dynamic Capability Briefing** — Context-aware introductions
+- **Contextual Suggestions** — Industry-specific recommendations
+- **Collaborative Listener** — Natural commands like "Do your thing, Hannah"
+- **Action Confirmation** — Real-time design validation
+- **Universal Command Modal** — Centralized voice + text command interface
 
 #### 5. **Voice-Visual Harmony** 🎵
-- **Persona Mapping** - Visual styles → Voice personalities
-- **Automated Greeting Generation** - AI creates harmonious welcome messages
-- **The Reveal** - Hannah explains voice-visual connections
-- **Instant Save** - Dual transaction for visuals + greeting
+- **Persona Mapping** — Visual styles → Voice personalities
+- **Automated Greeting Generation** — AI creates harmonious welcome messages
+- **The Reveal** — Hannah explains voice-visual connections
+- **Instant Save** — Dual transaction for visuals + greeting
+- **Tenant-Level Config** — Per-tenant widget_config with greeting storage
 
 ### 🎯 Key Capabilities
 
@@ -75,43 +82,128 @@ The **OVG Platform** is now a fully-functional enterprise solution with advanced
 
 #### API Endpoints
 ```
-/api/ai/stt              # Speech-to-Text
-/api/ai/speech           # Text-to-Speech  
-/api/ai/voice-design     # Voice command parsing
-/api/ai/apply-vibe       # AI vibe generation
-/api/ai/sync-brand       # Website brand analysis
-/api/tenants/update-config-with-greeting # Dual save
+## AI Services
+POST /api/ai/stt                         # Speech-to-Text (Groq Whisper-v3)
+POST /api/ai/speech                      # Text-to-Speech (Groq Orpheus)
+POST /api/ai/voice-design                # Voice command parsing
+POST /api/ai/apply-vibe                  # AI vibe generation
+POST /api/ai/sync-brand                  # Website brand analysis
+POST /api/ai/create-client               # Create client via AI
+POST /api/ai/delete-client               # Delete client via AI
+POST /api/ai/process-command             # Universal command processing
+POST /api/ai/extract-client-info         # Extract client data from text
+POST /api/ai/generate-response           # AI response generation
+POST /api/ai/automotive                  # Automotive AI endpoint
+
+## Chat & Voice
+POST /api/chat/voice                     # Voice chat session
+POST /api/hannah/speech                  # Hannah TTS endpoint
+POST /api/tts                            # Generic TTS
+
+## Tenant Management
+GET  /api/tenants/[tenantId]             # Get tenant by ID
+POST /api/tenants/update-config          # Update tenant widget_config
+POST /api/tenants/update-config-with-greeting  # Dual save: config + greeting
+POST /api/tenants/bulk-update            # Bulk tenant operations
+
+## Reseller Operations
+GET  /api/reseller/[resellerSlug]/branding     # Get branding bag
+PUT  /api/reseller/[resellerSlug]/branding     # Update branding bag
+POST /api/reseller/[resellerSlug]/sync-brand   # Sync brand colors
+GET  /api/reseller/[resellerSlug]/clients      # List reseller clients
+POST /api/resellers/create                     # Create reseller account
+
+## Admin & Auth
+POST /api/admin/cleanup-tenants          # Admin: purge orphaned tenants
+POST /api/auth/update-reseller-slug      # Update reseller slug
+GET  /api/auth/diagnostics               # Auth diagnostics (to be removed)
+POST /api/auth/fix-metadata              # Fix user metadata (to be removed)
+
+## Payments
+POST /api/paystack/initialize            # Paystack payment initialization
 ```
 
 #### Core Components
 ```
-ClientBrandingStudio.tsx    # Main branding interface
-use-voice-command.ts         # Voice capture & AI pipeline
-hannah-service-catalog.ts    # AI capabilities & personas
-voice-visual-harmony.ts     # Voice-visual mapping
+components/reseller/
+├── ClientBrandingStudio.tsx      # Main branding interface
+├── ClientsGrid.tsx               # Multi-client dashboard
+├── ClientCard.tsx                # Client summary card
+├── BrandKit.tsx                  # Branding configuration panel
+├── LivePreview.tsx               # Real-time branding preview
+├── ResellerHUDClient.tsx         # Reseller heads-up display
+├── DiagnosticPanel.tsx           # Debug/diagnostic panel
+├── UploadZone.tsx                # File upload with preview
+└── modals/
+    └── UniversalCommandModal.tsx # Centralized voice/text command modal
+
+hooks/
+├── use-voice-command.ts          # Voice capture & AI pipeline
+├── use-branding-studio.ts        # Branding state management
+├── use-reseller.ts               # Reseller data fetching
+└── use-voice-command.ts          # Voice command orchestration
+
+providers/
+└── reseller-provider.tsx         # Reseller context provider
 ```
 
-### 🔧 Technical Implementation
+#### Database Schema
+```sql
+-- Resellers
+resellers {
+  id: uuid (PK)
+  tenant_id: text (unique)
+  name: text
+  slug: text (unique)
+  branding_color: text
+  accent_color: text
+  logo_url: text
+  branding_bag: jsonb            # Atomic branding tokens container
+  version_stamp: integer         # Optimistic concurrency counter
+  is_active: boolean
+  paystack_account_id: text
+  created_at: timestamp
+  updated_at: timestamp
+}
 
-#### Voice Pipeline
-1. **Capture**: MediaRecorder API → Audio blobs
-2. **Transcribe**: Groq Whisper-v3 → Text
-3. **Process**: Groq Llama-3.1 → Structured commands
-4. **Execute**: React state updates → Visual changes
-5. **Confirm**: Groq Orpheus → Hannah's voice feedback
+-- Tenants (Clients)
+tenants {
+  id: uuid (PK)
+  tenant_id: text
+  name: text
+  industry: text
+  reseller_id: uuid (FK → resellers)
+  pricing_tier_key: text
+  widget_config: jsonb           # Branding + AI settings + greeting
+  branding_colors: jsonb
+  custom_assets: jsonb
+  show_ovg_branding: boolean
+  voice_id: text
+  system_prompt: text
+  is_active: boolean
+  created_at: timestamp
+  updated_at: timestamp
+}
 
-#### Visual-Voice Mapping
-- **Colors**: Warm tones → Friendly voice, Cool tones → Professional
-- **Headers**: Solid → Stable, Gradient → Modern, Image → Contextual
-- **Opacity**: High transparency → Energetic, Low → Calm
-- **Industry**: Automatic persona adaptation
+-- User-Reseller Association
+user_resellers {
+  id: uuid (PK)
+  user_id: uuid
+  reseller_id: uuid (FK → resellers)
+  reseller_slug: text
+  role: text
+  created_at: timestamp
+}
+```
 
-### 🎨 Design System
-- **Primary**: Electric Blue (#0097b2)
-- **Secondary**: Deep Blue (#226683)  
-- **Accent**: Gold (#FFD700)
-- **Glass**: backdrop-blur-xl with rgba transparency
-- **Typography**: Inter font with optimized readability
+### 🔐 Security Features
+- **Row Level Security (RLS)**: Strict tenant isolation policies
+- **Service Role**: Admin operations with bypass capability
+- **Session Management**: Secure cookie handling via Supabase SSR
+- **Input Validation**: Zod schema protection on all API routes
+- **`getUser()` Checks**: Server-side token verification in middleware and API routes
+- **Reseller Ownership Checks**: `user_resellers` table ensures proper authorization
+- **Optimistic Locking**: Version-stamped `branding_bag` prevents write conflicts
 
 ### 🚀 Performance Features
 - **Sub-500ms Response**: Voice command to UI update
@@ -120,36 +212,115 @@ voice-visual-harmony.ts     # Voice-visual mapping
 - **Type Safety**: 100% TypeScript coverage
 - **Optimized Builds**: Turbopack for rapid development
 
-### 📊 Database Schema
-```sql
-tenants {
-  id: uuid (PK)
-  name: text
-  industry: text
-  pricing_tier_key: text
-  widget_config: jsonb  # Branding + AI settings
-  reseller_id: uuid (FK)
-  created_at: timestamp
-  updated_at: timestamp
-}
+### 🎨 Design System
+- **Primary**: Electric Blue (#0097b2)
+- **Secondary**: Deep Blue (#226683)
+- **Accent**: Gold (#D4AF37)
+- **Glass**: `backdrop-blur-xl` with rgba transparency
+- **Typography**: Inter font with optimized readability
 
-resellers {
-  id: uuid (PK)
-  name: text
-  slug: text (unique)
-  stripe_account_id: text
-  created_at: timestamp
-}
+## 🚦 Getting Started
+
+### Prerequisites
+- Node.js >= 20
+- npm
+
+### Installation
+```bash
+npm install
 ```
 
-### 🔐 Security Features
-- **Row Level Security**: Tenant isolation
-- **Service Role**: Admin operations with bypass
-- **Session Management**: Secure cookie handling
-- **Input Validation**: Zod schema protection
-- **API Rate Limiting**: Prevent abuse
+### Environment Variables
+Create a `.env.local` file in the project root:
 
-### 🎯 User Experience
+```env
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+
+# Groq AI
+GROQ_API_KEY=your_groq_api_key
+
+# Paystack (optional, for payment features)
+NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY=your_paystack_public_key
+PAYSTACK_SECRET_KEY=your_paystack_secret_key
+
+# ElevenLabs (optional, alternative TTS)
+ELEVENLABS_API_KEY=your_elevenlabs_api_key
+```
+
+### Development
+```bash
+npm run dev        # Start dev server on http://localhost:3000
+npm run build      # Production build
+npm run start      # Start production server
+npm run lint       # Run ESLint
+npm run lint:fix   # Auto-fix lint issues
+```
+
+## 📁 Project Structure
+```
+ovg-platform-v2/
+├── src/
+│   ├── app/
+│   │   ├── (auth)/           # Authentication pages
+│   │   ├── (dashboard)/      # Dashboard layouts & pages
+│   │   └── api/              # API route handlers
+│   ├── components/
+│   │   └── reseller/         # Reseller-facing components
+│   ├── contexts/             # React context providers
+│   ├── core/                 # Domain logic & DB access
+│   ├── features/             # Feature modules
+│   ├── hooks/                # Custom React hooks
+│   ├── lib/
+│   │   └── supabase/         # Canonical Supabase clients
+│   │       ├── server.ts     # Server component client
+│   │       ├── client.ts     # Browser client
+│   │       └── admin.ts      # Service role admin client
+│   ├── providers/            # Provider components
+│   ├── store/                # Zustand stores
+│   ├── types/                # TypeScript types & Zod schemas
+│   └── utils/                # Utility functions
+├── supabase/
+│   ├── migrations/           # Database migrations
+│   └── seeds/                # Seed data scripts
+├── docs/                     # Documentation
+├── public/                   # Static assets
+├── middleware.ts             # Next.js middleware (auth guard)
+├── next.config.ts            # Next.js configuration
+├── tailwind.config.ts        # Tailwind CSS v4 configuration
+├── eslint.config.mjs         # ESLint flat config
+└── tsconfig.json             # TypeScript configuration
+```
+
+## 📋 Refactoring Status
+
+An active refactor is underway across three phases. See `.kiro/specs/ovg-platform-refactor/tasks.md` for the full implementation plan.
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1 | Canonical Supabase Clients & Import Migration | ✅ Complete |
+| 2 | Security Hardening (getUser, admin guards, diagnostics cleanup) | 🏗️ In Progress |
+| 3 | Architecture Cleanups (hardcoded slugs, type standards, lint fixes) | 📋 Planned |
+
+## 📊 Key Implementation Details
+
+#### Voice Pipeline
+1. **Capture**: MediaRecorder API → Audio blobs
+2. **Transcribe**: Groq Whisper-v3 → Text
+3. **Process**: Groq Llama-3.1 → Structured commands
+4. **Execute**: React state updates → Visual changes
+5. **Confirm**: Groq Orpheus → Hannah's voice feedback
+
+#### Atomic Branding Commit
+1. **Read**: Fetch `branding_bag` + `version_stamp` from resellers row
+2. **Lock**: `SELECT...FOR UPDATE` locks the row exclusively
+3. **Verify**: Compare `version_stamp` against expected value
+4. **Write**: Atomic update increments `version_stamp` and writes new `branding_bag`
+5. **Resolve**: On conflict, return diff for UI to reconcile
+
+## 🎯 User Experience
 
 #### Onboarding Flow
 1. **Welcome**: Hannah introduces capabilities based on plan tier
@@ -168,14 +339,16 @@ resellers {
 
 ## 🎉 Production Ready
 
-OVG-Platform-V2 is now a complete, enterprise-grade solution with:
+OVG-Platform-V2 is a complete, enterprise-grade solution with:
 - ✅ Full AI integration (STT/TTS/Voice Commands)
 - ✅ Advanced branding with voice-visual harmony
-- ✅ Multi-tenant reseller infrastructure  
+- ✅ Multi-tenant reseller infrastructure
 - ✅ Industry-specific intelligence
 - ✅ Professional design validation
 - ✅ Error-free audio management
 - ✅ Type-safe architecture
 - ✅ Production-optimized performance
+- ✅ Atomic branding commits with conflict resolution
+- ✅ Paystack payment integration
 
 **The future of AI-powered branding is here.** 🚀

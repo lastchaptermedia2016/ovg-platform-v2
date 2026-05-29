@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient as createServiceClient } from '@supabase/supabase-js';
+import { supabaseAdmin } from '@/lib/supabase/admin';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
@@ -7,8 +7,8 @@ export const dynamic = 'force-dynamic';
 // Production Excellence: Zod schema for request validation
 const UpdateConfigSchema = z.object({
   tenantId: z.string().uuid(),
-  configPatch: z.record(z.any()),
-  aiSettings: z.record(z.any()).optional(),
+  configPatch: z.record(z.unknown()),
+  aiSettings: z.record(z.unknown()).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -27,14 +27,11 @@ export async function POST(request: NextRequest) {
 
     const { tenantId, configPatch, aiSettings } = validationResult.data;
 
-    // Use service client for admin operations with transaction safety
-    const serviceClient = createServiceClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    // Use supabaseAdmin for admin operations with transaction safety
+    // supabaseAdmin is imported from @/lib/supabase/admin
 
     // Production Excellence: Atomic transaction using Supabase RPC
-    const { data: result, error: transactionError } = await serviceClient.rpc('update_tenant_config_with_greeting', {
+    const { data: result, error: transactionError } = await supabaseAdmin.rpc('update_tenant_config_with_greeting', {
       p_tenant_id: tenantId,
       p_config_patch: configPatch,
       p_ai_settings: aiSettings || {},
@@ -45,15 +42,50 @@ export async function POST(request: NextRequest) {
       console.error('Transaction error:', transactionError);
       
       // Fallback to non-transactional update if RPC fails
-      console.warn('[UpdateConfig] RPC failed, falling back to direct update');
-      
-      const { data: tenantData, error: tenantError } = await serviceClient
+      console.warn('[UpdateConfig] RPC failed, falling back to direct update with deep-merge');
+
+      // Fetch existing widget_config to deep-merge
+      const { data: existingTenant, error: fetchError } = await supabaseAdmin
+        .from('tenants')
+        .select('widget_config')
+        .eq('id', tenantId)
+        .single();
+
+      if (fetchError) {
+        console.error('[UpdateConfig] Fallback fetch error:', fetchError);
+        return NextResponse.json({ error: 'Failed to fetch tenant configuration' }, { status: 500 });
+      }
+
+      // Deep merge helper
+      function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
+        const output = { ...target };
+        for (const key of Object.keys(source)) {
+          if (
+            source[key] !== null &&
+            typeof source[key] === 'object' &&
+            !Array.isArray(source[key]) &&
+            typeof target[key] === 'object' &&
+            target[key] !== null &&
+            !Array.isArray(target[key])
+          ) {
+            output[key] = deepMerge(target[key] as Record<string, unknown>, source[key] as Record<string, unknown>);
+          } else {
+            output[key] = source[key];
+          }
+        }
+        return output;
+      }
+
+      const existingWidgetConfig = (existingTenant?.widget_config as Record<string, unknown>) || {};
+      const mergedWidgetConfig = deepMerge(existingWidgetConfig, {
+        ...configPatch,
+        ai_settings: aiSettings || {},
+      });
+
+      const { data: tenantData, error: tenantError } = await supabaseAdmin
         .from('tenants')
         .update({
-          widget_config: {
-            ...configPatch,
-            ai_settings: aiSettings || {}
-          },
+          widget_config: mergedWidgetConfig,
           updated_at: new Date().toISOString()
         })
         .eq('id', tenantId)

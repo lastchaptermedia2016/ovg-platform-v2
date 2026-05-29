@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { createClient as createServiceClient } from '@supabase/supabase-js';
+import { supabaseAdmin } from '@/lib/supabase/admin';
+import { resolveResellerId } from '@/lib/supabase/resolve-reseller-id';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
@@ -31,51 +32,25 @@ export async function GET(
 
     const { resellerSlug } = validationResult.data;
     
-    // First try with user session (for RLS compliance)
+    // Resolve slug to UUID — Sequential lookup: try slug first, then tenant_id
     const supabase = await createClient();
-    
-    // If that fails due to RLS, use service role for admin operations
-    const serviceClient = createServiceClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    let resolvedId = await resolveResellerId(supabase, resellerSlug);
 
-    // Resolve slug to UUID - try user session first, fallback to service client
-    let reseller, resellerError;
-    
-    try {
-      const result = await supabase
-        .from('resellers')
-        .select('id')
-        .eq('slug', resellerSlug)
-        .single();
-      reseller = result.data;
-      resellerError = result.error;
-    } catch {
-      console.log('User session failed, trying service client');
+    // Fallback to service-role client if user-session resolution fails
+    if (!resolvedId) {
+      resolvedId = await resolveResellerId(supabaseAdmin, resellerSlug);
     }
 
-    // If user session fails, use service client
-    if (resellerError || !reseller) {
-      const result = await serviceClient
-        .from('resellers')
-        .select('id')
-        .eq('slug', resellerSlug)
-        .single();
-      reseller = result.data;
-      resellerError = result.error;
-    }
-
-    if (resellerError || !reseller) {
+    if (!resolvedId) {
       return NextResponse.json({ error: 'Reseller not found' }, { status: 404 });
     }
 
     // Fetch all active clients for this reseller
     // Skip user session - RLS returns empty array instead of error, blocking fallback
-    const { data: clients, error: clientsError } = await serviceClient
+    const { data: clients, error: clientsError } = await supabaseAdmin
       .from('tenants')
       .select('id, name, category, is_active, branding_colors, custom_assets, created_at')
-      .eq('reseller_id', reseller.id)
+      .eq('reseller_id', resolvedId)
       .eq('is_active', true)
       .order('created_at', { ascending: false });
 

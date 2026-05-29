@@ -2,7 +2,7 @@
  * Supabase Realtime Alert System
  */
 
-import { createClient } from "@supabase/supabase-js";
+import { createClient } from "@/lib/supabase/client";
 
 export type IntentType = "lead_capture" | "booking" | "question" | "complaint" | "general";
 
@@ -22,25 +22,9 @@ export interface AlertPayload {
 
 type AlertCallback = (alert: AlertPayload) => void;
 
-let supabaseClient: ReturnType<typeof createClient> | null = null;
-
-function getSupabaseClient() {
-  if (!supabaseClient) {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    
-    if (!supabaseUrl || !supabaseAnonKey) {
-      throw new Error("Missing Supabase environment variables");
-    }
-    
-    supabaseClient = createClient(supabaseUrl, supabaseAnonKey);
-  }
-  return supabaseClient;
-}
-
 export async function broadcastIntentAlert(payload: AlertPayload): Promise<boolean> {
   try {
-    const supabase = getSupabaseClient();
+    const supabase = createClient();
     
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const insertPayload: Record<string, any> = {
@@ -80,7 +64,7 @@ export function subscribeToResellerAlerts(
   resellerId: string,
   callback: AlertCallback
 ): () => void {
-  const supabase = getSupabaseClient();
+  const supabase = createClient();
   
   const subscription = supabase
     .channel(`reseller-alerts-${resellerId}`)
@@ -106,7 +90,7 @@ export function subscribeToResellerAlerts(
 }
 
 export function subscribeToAllAlerts(callback: AlertCallback): () => void {
-  const supabase = getSupabaseClient();
+  const supabase = createClient();
   
   const subscription = supabase
     .channel("all-intent-alerts")
@@ -135,7 +119,7 @@ export async function acknowledgeAlert(
   agentId: string
 ): Promise<boolean> {
   try {
-    const supabase = getSupabaseClient();
+    const supabase = createClient();
     
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (supabase.from("intent_alerts") as any)
@@ -164,7 +148,7 @@ export async function getRecentAlerts(
   status?: "pending" | "viewed" | "acknowledged" | "resolved"
 ): Promise<AlertPayload[]> {
   try {
-    const supabase = getSupabaseClient();
+    const supabase = createClient();
     
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let query = (supabase.from("intent_alerts") as any)
@@ -193,7 +177,7 @@ export async function getRecentAlerts(
 
 export async function getPendingAlertCount(resellerId: string): Promise<number> {
   try {
-    const supabase = getSupabaseClient();
+    const supabase = createClient();
     
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { count, error } = await (supabase.from("intent_alerts") as any)

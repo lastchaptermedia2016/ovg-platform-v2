@@ -1,6 +1,5 @@
 'use client';
 
-import { useRef, useEffect } from 'react';
 import { Mic } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { SignOutButton } from './SignOutButton';
@@ -21,36 +20,15 @@ export function MasterpieceHeader({
   isAwaitingVoiceConfirm = false,
   transcribedText,
   isCommunicating = false,
-  playVoice
+  playVoice: _playVoice
 }: MasterpieceHeaderProps) {
-  // Track previous listening state to detect transitions
-  const prevListeningRef = useRef(isListening);
-  const prevCommunicatingRef = useRef(isCommunicating);
-  const playedWelcomeRef = useRef(false);
-
-  // Purpose-driven voice scripts for Global Header state transitions
-  useEffect(() => {
-    if (!playVoice) return;
-
-    // On mount, announce voice readiness once
-    if (!playedWelcomeRef.current && !isListening && !isCommunicating) {
-      playedWelcomeRef.current = true;
-      // No automatic welcome — only on user interaction
-    }
-
-    // Listening started transition – SYSTEM scope announcement
-    if (isListening && !prevListeningRef.current) {
-      playVoice("System control active. Use this interface for global configuration, reseller settings, and platform-wide monitoring.");
-    }
-
-    // Communicating (speaking) started transition
-    if (isCommunicating && !prevCommunicatingRef.current) {
-      playVoice("");
-    }
-
-    prevListeningRef.current = isListening;
-    prevCommunicatingRef.current = isCommunicating;
-  }, [isListening, isCommunicating, playVoice]);
+  // ── Fix 2: Eliminated Trigger C — automated playVoice on state transitions ──
+  // The old useEffect auto-triggered an unwanted "System control active" TTS
+  // every time isListening became true, causing duplicate audio (Trigger C).
+  // All TTS is now exclusively initiated by command response logic in page.tsx.
+  // The prop is retained in the interface for parent compatibility but unused here.
+  void _playVoice;
+  // ────────────────────────────────────────────────────────────────────────────
 
   return (
     <>

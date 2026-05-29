@@ -5,7 +5,7 @@ import { z } from 'zod';
 // Request validation schema
 const UpdateConfigSchema = z.object({
   tenantId: z.string().uuid(),
-  configPatch: z.record(z.any()),
+  configPatch: z.record(z.unknown()),
 });
 
 export async function POST(request: NextRequest) {

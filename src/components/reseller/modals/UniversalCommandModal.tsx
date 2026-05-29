@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { mapVisualStyleToPersona } from '@/lib/voice-visual-harmony';
 import { createClient } from '@/lib/supabase/client';
+import { resolveResellerId } from '@/lib/supabase/resolve-reseller-id';
 
 type Step = 'command' | 'draft' | 'review' | 'confirm';
 type VoiceEntryStep = 0 | 1 | 2 | 3 | 4; // Multi-step voice entry
@@ -28,6 +29,8 @@ interface DraftData {
   website: string;
   systemPrompt: string;
   parsedFromVoice: boolean;
+  is_override?: boolean;
+  confidence?: number;
 }
 
 interface UniversalCommandModalProps {
@@ -832,6 +835,11 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
 
       // Atomic update: formState + draftData in sync
       const p = data.parsed;
+
+      // Extract is_override and confidence with safe defaults
+      const isOverride = typeof p.is_override === 'boolean' ? p.is_override : false;
+      const confidence = typeof p.confidence === 'number' ? Math.min(1, Math.max(0, p.confidence)) : 0;
+
       setFormState({
         name: p.name || '',
         email: p.email || '',
@@ -851,6 +859,8 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
         website: p.website || '',
         systemPrompt: p.systemPrompt || '',
         parsedFromVoice: true,
+        is_override: isOverride,
+        confidence,
       });
 
       setStep('draft');
@@ -950,20 +960,16 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
       let resellerId = null;
       if (resellerSlug) {
         try {
-          const { data: resellerData, error: resellerError } = await supabase
-            .from('resellers')
-            .select('id')
-            .eq('slug', resellerSlug)
-            .single();
+          const resolvedId = await resolveResellerId(supabase, resellerSlug);
 
-          if (resellerError || !resellerData) {
-            console.error('OVG-PLATFORM-V2: Failed to get resellerId:', resellerError);
+          if (!resolvedId) {
+            console.error('OVG-PLATFORM-V2: Failed to resolve resellerId for slug:', resellerSlug);
             await speak("I'm having trouble verifying your reseller account. Please try again.");
             setIsProcessing(false);
             return;
           }
 
-          resellerId = resellerData.id;
+          resellerId = resolvedId;
         } catch {
           await speak('There was an error preparing your client data. Please try again.');
           setIsProcessing(false);
@@ -1229,7 +1235,21 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                 </div>
                 {/* Industry Select — bound to formState.industry */}
                 <div className="flex justify-between items-center">
-                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Industry</span>
+                  <span className="text-xs text-white/60 uppercase tracking-[0.1em] flex items-center gap-1">
+                    Industry
+                    {draftData.is_override && (
+                      <span title="Industry explicitly stated by user — not auto-classified" className="inline-flex items-center">
+                        <svg className="w-3 h-3 text-emerald-400" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
+                      </span>
+                    )}
+                    {draftData.confidence !== undefined && (
+                      <span className="text-[10px] text-white/40 font-normal tracking-normal">
+                        {Math.round(draftData.confidence * 100)}%
+                      </span>
+                    )}
+                  </span>
                   <select
                     value={formState.industry}
                     onChange={(e) => {

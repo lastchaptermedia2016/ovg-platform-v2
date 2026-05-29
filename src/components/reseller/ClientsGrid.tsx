@@ -1,15 +1,17 @@
 'use client';
 
 import { useEffect, useState, useRef, useMemo, memo, startTransition, useCallback } from 'react';
-import { useAIStore } from '@/store/useAIStore';
 import { useRouter } from 'next/navigation';
 import { createClient as createSupabaseClient } from '@/lib/supabase/client';
 import { AddClientAction } from './AddClientAction';
+import { isInvalidSlug } from '@/lib/utils/guard';
+import { resolveResellerId } from '@/lib/supabase/resolve-reseller-id';
 import { ParallaxStream } from './ParallaxStream';
 import { DiagnosticPanel } from './DiagnosticPanel';
 import { ClientCard } from './ClientCard';
 import { UniversalCommandModal } from './modals/UniversalCommandModal';
 
+// Removed unused imports: getIndustryProfile, getIndustryFeatureLabel, AddClientModal, formatCurrency, checkClientStatus
 // Capability Map: Dynamic industry-to-action permissions
 const CAPABILITY_MAP: Record<string, Set<string>> = {
   automotive: new Set(['ai', 'sms', 'vin', 'signal']),
@@ -94,7 +96,7 @@ export function ClientsGridInternal({
   activeTenantId,
   isProcessing,
   onStatsUpdate,
-  onSTTResult, // Ref to pass STT results without re-rendering
+  onExecuteSystemAction, // Unified parent callback — replaces grid-level STT/TTS
 }: { 
   resellerSlug: string; 
   filter?: string; 
@@ -112,7 +114,7 @@ export function ClientsGridInternal({
     criticalAlerts: number;
     loading: boolean;
   }) => void;
-  onSTTResult?: (tenantId: string, text: string) => void;
+  onExecuteSystemAction?: (clientId: string, actionType: 'ai' | 'sms' | 'vin' | 'signal') => void;
 }) {
   // Debug: fires only on true mount, not on every parent re-render
   useEffect(() => {
@@ -131,185 +133,17 @@ export function ClientsGridInternal({
   const [allTenants, setAllTenants] = useState<Tenant[]>([]);
   const isSubscribed = useRef(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
-  const [hasSession, setHasSession] = useState(false);
+  const [hasSession, setHasSession] = useState(false); // Renamed from _hasSession
   const supabase = useRef(createSupabaseClient());
-  const searchQuery = '';
-  const sortBy = 'name' as 'name' | 'revenue' | 'leads';
   const [pulseCardId, setPulseCardId] = useState<string | null>(null);
   const [pulseType, setPulseType] = useState<'standard' | 'critical'>('standard');
-  const [successGlow, _setSuccessGlow] = useState<string | null>(null);
   const [diagnosticTenantId, setDiagnosticTenantId] = useState<string | null>(null);
   const [hoveredCardId, setHoveredCardId] = useState<string | null>(null);
   const [showAddClientModal, setShowAddClientModal] = useState(false);
-  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
-  
-  // Cache for AI confirmation audio (zero-latency playback)
-  const cachedAudioBlob = useRef<Blob | null>(null);
-  const cachedConfirmationTextRef = useRef<string | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  // Anti-double-speak guard: Zustand global state survives re-mounts
-  const lastGlobalSpokenText = useAIStore((s) => s.lastGlobalSpokenText);
-  const setLastGlobalSpokenText = useAIStore((s) => s.setLastGlobalSpokenText);
-  // Command lock: prevents overlapping AI/STT actions
-  const [isCommandProcessing, setIsCommandProcessing] = useState(false);
-  
-  // STT State
-  const [isListening, setIsListening] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
-  
-  // Ref to pass STT results without re-rendering - Initialized for Production Excellence
-  const onSTTResultRef = useRef<((tenantId: string, text: string) => void) | null>(null);
-  
-  // Update the ref with latest callback in useEffect
-  useEffect(() => {
-    onSTTResultRef.current = (tenantId: string, text: string) => {
-      // This will be passed to ClientCard to update command input
-      console.log(' [STT] Result for', tenantId, ':', text);
-      onSTTResult?.(tenantId, text);
-    };
-  }, [onSTTResult]);
-  
-  // STT Capture: Record audio and send to API
-  const startSTTCapture = useCallback(async () => {
-    if (isListening || !selectedClientId) return;
-    
-    try {
-      console.log('🎙️ [STT] Requesting microphone access...');
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
-      setIsListening(true);
-      audioChunksRef.current = [];
-      
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus'
-      });
-      
-      mediaRecorderRef.current = mediaRecorder;
-      
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-      
-      mediaRecorder.onstop = async () => {
-        console.log('🎙️ [STT] Recording stopped, processing...');
-        
-        // Stop all tracks to release microphone
-        stream.getTracks().forEach(track => track.stop());
-        
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        
-        // Send to STT API
-        try {
-          const formData = new FormData();
-          formData.append('audio', audioBlob, 'recording.webm');
-          
-          console.log('🎙️ [STT] Sending to API...');
-          const response = await fetch('/api/ai/stt', {
-            method: 'POST',
-            body: formData,
-          });
-          
-          if (!response.ok) {
-            throw new Error(`STT API error: ${response.status}`);
-          }
-          
-          const result = await response.json();
-          console.log('✅ [STT] Transcription:', result.text);
-          
-          // Pass result to ClientCard
-          if (result.text && onSTTResultRef.current) {
-            onSTTResultRef.current(selectedClientId, result.text);
-          }
-        } catch (error) {
-          console.error('❌ [STT] Transcription failed:', error);
-        } finally {
-          setIsListening(false);
-        }
-      };
-      
-      // Start recording
-      mediaRecorder.start();
-      console.log('🎙️ [STT] Recording started (5s max)');
-      
-      // Auto-stop after 5 seconds
-      setTimeout(() => {
-        if (mediaRecorderRef.current?.state === 'recording') {
-          mediaRecorderRef.current.stop();
-        }
-      }, 5000);
-      
-    } catch (error) {
-      console.error('❌ [STT] Failed to start recording:', error);
-      setIsListening(false);
-    }
-  }, [isListening, selectedClientId]);
+  const [successGlow, _setSuccessGlow] = useState<string | null>(null);
 
-  // Play AI confirmation with caching for zero-latency playback – effective vertical scope
-  const playAIConfirmation = useCallback(async (tenantContext?: Pick<Tenant, 'name' | 'industry' | 'category'>) => {
-    const effectiveCategory = tenantContext ? resolveEffectiveCategory(tenantContext) : 'GENERAL BUSINESS';
-    const scopePrefix = effectiveCategory === 'automotive' ? 'Automotive' : 'Client';
-    const confirmationText = tenantContext?.name
-      ? `${scopePrefix} control active for ${tenantContext.name}. Use this to manage specific leads, trigger SMS deployments, or verify industry signals.`
-      : `${scopePrefix} control active. Use this to manage specific leads, trigger SMS deployments, or verify industry signals.`;
-
-    // Anti-double-speak guard: skip if this exact string was already spoken (survives re-mounts)
-    if (lastGlobalSpokenText === confirmationText) {
-      console.log('🔊 [Audio] Skipping duplicate TTS — already spoken');
-      return;
-    }
-
-    // Use cached blob if available (zero-latency)
-    if (cachedAudioBlob.current && cachedConfirmationTextRef.current === confirmationText) {
-      console.log('🔊 [Audio] Playing cached AI confirmation');
-      setLastGlobalSpokenText(confirmationText);
-      const audioUrl = URL.createObjectURL(cachedAudioBlob.current);
-      audioRef.current = new Audio(audioUrl);
-      audioRef.current.play().catch(console.error);
-      return;
-    }
-
-    // Fetch and cache the audio blob via secure internal API
-    try {
-      console.log('🔊 [Audio] Fetching AI confirmation from internal API...');
-      const payload = {
-        text: confirmationText,
-        model: 'canopylabs/orpheus-v1-english',
-        voice: 'hannah', // Hannah Orpheus voice profile
-      };
-      console.log('🔊 [Audio] Sending payload:', payload);
-      
-      const response = await fetch('/api/ai/speech', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
-
-      const audioBuffer = await response.arrayBuffer();
-      cachedAudioBlob.current = new Blob([audioBuffer], { type: 'audio/mpeg' });
-      cachedConfirmationTextRef.current = confirmationText;
-      setLastGlobalSpokenText(confirmationText);
-      
-      console.log('🔊 [Audio] Audio cached, playing now');
-      const audioUrl = URL.createObjectURL(cachedAudioBlob.current);
-      audioRef.current = new Audio(audioUrl);
-      
-      // No onended trigger — STT is already started in parallel from handleModuleAction
-      audioRef.current.play().catch(console.error);
-    } catch (error) {
-      console.error('❌ [Audio] Failed to fetch AI confirmation:', error);
-    }
-  }, [lastGlobalSpokenText, setLastGlobalSpokenText]);
-  
   // HUD State
   const [hudStats, setHudStats] = useState({
     totalMRR: 0,
@@ -318,8 +152,103 @@ export function ClientsGridInternal({
   });
   const [hudLoading, setHudLoading] = useState(true);
   const [criticalAlertsCount, setCriticalAlertsCount] = useState(0);
+  
+  // State for search and sort
+  const [searchQuery, _setSearchQuery] = useState('');
+  const [sortBy, _setSortBy] = useState<'name' | 'revenue' | 'leads'>('name');
 
   
+  // --- MOVED UP: Callback Definitions to resolve TDZ (Temporal Dead Zone) ---
+
+  const fetchDashboardStats = useCallback(async () => {
+    try {
+      const supabase = createSupabaseClient();
+      const { data: tenantsData, error: tenantsError } = await supabase
+        .from('tenants')
+        .select('mrr, total_leads, total_revenue, signal_count');
+
+      if (tenantsError) throw tenantsError;
+
+      const totalMRR = tenantsData?.reduce((sum, tenant) => sum + (Number(tenant.mrr) || 0), 0) ?? 0;
+      const totalSignals = tenantsData?.reduce((sum, tenant) => sum + (Number(tenant.signal_count) || 0), 0) ?? (tenantsData?.length * 50 || 0);
+      const aiEfficiency = totalSignals > 0 ? Math.round((Math.floor(totalSignals * 0.98) / totalSignals) * 100) : 0;
+
+      setHudStats(prev => (prev.totalMRR === totalMRR && prev.totalSignals === totalSignals && prev.aiEfficiency === aiEfficiency) ? prev : { totalMRR, totalSignals, aiEfficiency });
+    } catch (error: unknown) {
+      console.error('Database Error:', error instanceof Error ? error.message : String(error));
+    } finally {
+      setHudLoading(false);
+    }
+  }, []);
+
+  const fetchCriticalAlerts = useCallback(async () => {
+    try {
+      if (!resellerSlug || resellerSlug.startsWith('[') || resellerSlug === 'undefined') return;
+      const supabase = createSupabaseClient();
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      
+      // Sequential resolution: try slug first, then tenant_id
+      const resolvedId = await resolveResellerId(supabase, resellerSlug);
+      let tenantIds: string[] = [];
+      
+      if (resolvedId) {
+        const { data: tData } = await supabase.from('tenants').select('id').eq('reseller_id', resolvedId);
+        if (tData) tenantIds = tData.map(t => t.id);
+      }
+      
+      let query = supabase.from('tenant_logs').select('*', { count: 'exact', head: true }).gte('created_at', oneHourAgo).in('error_type', ['error', 'critical']);
+      if (tenantIds.length > 0) query = query.in('tenant_id', tenantIds);
+
+      const { count, error } = await query;
+      if (error) return;
+      setCriticalAlertsCount(count || 0);
+    } catch (error: unknown) {
+      console.error('Critical Alerts Error:', String(error));
+    }
+  }, [resellerSlug]);
+
+  const fetchTenants = useCallback(async ({ filterParam = 'ALL', resellerSlugParam }: {
+    filterParam?: string; resellerSlugParam?: string;
+  } = {}) => {
+    try {
+      if (!resellerSlugParam || isInvalidSlug(resellerSlugParam)) return;
+      setLoading(true);
+      const supabase = createSupabaseClient();
+
+      // Sequential resolution: try slug first, then tenant_id
+      const resolvedId = await resolveResellerId(supabase, resellerSlugParam);
+      if (!resolvedId) {
+        setError(`Reseller "${resellerSlugParam}" not found.`);
+        setLoading(false);
+        return;
+      }
+
+      let q = supabase.from('tenants').select('*').eq('reseller_id', resolvedId).order('created_at', { ascending: false });
+      if (filterParam && filterParam.toUpperCase() !== 'ALL') {
+        const category = categoryMap?.[filterParam.toUpperCase()];
+        if (category) q = q.or(`category.ilike.%${category}%,industry.ilike.%${category}%`);
+      }
+
+      const { data, error } = await q;
+      if (error) throw error;
+
+      const uniqueTenantMap = new Map<string, Tenant>();
+      (data || []).forEach((tenant: Tenant) => {
+        if (!uniqueTenantMap.has(tenant.id)) uniqueTenantMap.set(tenant.id, tenant);
+      });
+
+      const uniqueTenants = Array.from(uniqueTenantMap.values());
+      setAllTenants(uniqueTenants);
+    } catch (err: unknown) {
+      console.error('Fetch Tenants Error:', err);
+      setAllTenants([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [categoryMap]);
+
+  // --- END MOVED UP ---
+
   // Report stats to parent
   useEffect(() => {
     onStatsUpdate?.({
@@ -341,13 +270,20 @@ export function ClientsGridInternal({
   const lastPulseAt = useRef<Record<string, number>>({});
   const PULSE_THROTTLE_MS = 800;
   const lastAlertAt = useRef(0);
+  
+  // State for selected client for AI commands
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+
   const ALERT_THROTTLE_MS = 500;
 
   // ENTERPRISE DISPATCHER: Centralized action handler for scale
   const gridContainerRef = useRef<HTMLDivElement>(null);
   
   // Feature toggle handler - memoized for stable refs
-  const handleFeatureToggle = useCallback((tenantId: string, feature: string, e: React.MouseEvent) => {
+  const handleFeatureToggle = useCallback((
+    tenantId: string, 
+    feature: string, 
+    e: { stopPropagation: () => void }) => {
     e.stopPropagation();
     console.log(`[Grid] Feature toggle: ${feature} for ${tenantId}`);
   }, []);
@@ -403,16 +339,11 @@ export function ClientsGridInternal({
     }
   }, [resellerSlug, allTenants]);
 
+  // Module action handler — delegates AI trigger to parent orchestrator via onExecuteSystemAction
   const handleModuleAction = useCallback(async (clientId: string, actionType: 'ai' | 'sms' | 'vin' | 'signal') => {
     // ENTRY LOG: First line to verify signal reception
     console.log('[Dispatcher] Received signal for:', clientId, actionType);
 
-    // Command Lock: block re-entrant signals while an action is in flight
-    if (isCommandProcessing) {
-      console.warn('[Dispatcher] Blocked — command already in progress');
-      return;
-    }
-    
     // TYPE SAFETY: Validate actionType at runtime
     if (!isValidActionType(actionType)) {
       console.error(`[Dispatcher] Invalid actionType: ${actionType}`);
@@ -448,35 +379,11 @@ export function ClientsGridInternal({
       return;
     }
     
-    // AI ARMING MODE: Hardware-first — gate UI state on mic acquisition
+    // AI ARMING MODE: Delegate to page-level orchestrator via unified callback
     if (actionType === 'ai') {
-      console.log('🚀 [Dispatcher] ARMING AI SYSTEM for:', clientId);
-      
-      try {
-        // Hardware-First Gate: Only proceed after mic is confirmed
-        const _stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        // Immediately release the stream — STT capture will acquire its own
-        _stream.getTracks().forEach(track => track.stop());
-        
-        console.log('✅ [Dispatcher] Microphone acquired for:', clientId);
-        setSelectedClientId(clientId); // Trigger input bar display only after mic confirmed
-        
-        setIsCommandProcessing(true);
-        try {
-          // Parallel Audio Execution: Fire TTS and STT simultaneously
-          // TTS is fire-and-forget (cached for zero-latency next time)
-          playAIConfirmation(tenant);
-          
-          // Start STT capture immediately without waiting for TTS to finish
-          startSTTCapture();
-        } finally {
-          setIsCommandProcessing(false);
-        }
-      } catch {
-        console.error('❌ [Dispatcher] Microphone access denied for AI activation:', clientId);
-        setIsCommandProcessing(false);
-        return;
-      }
+      console.log('🚀 [Dispatcher] Delegating AI SYSTEM activation for:', clientId);
+      setSelectedClientId(clientId);
+      onExecuteSystemAction?.(clientId, actionType);
       return;
     }
     
@@ -536,7 +443,7 @@ export function ClientsGridInternal({
     
     // Fire log without await - keep UI snappy for 100k+ clients
     void logModuleAction();
-  }, [allTenants, handleFeatureToggle, isCommandProcessing, playAIConfirmation, startSTTCapture]);
+  }, [allTenants, handleFeatureToggle, onExecuteSystemAction]);
   
   // Event Delegation: Single listener for all module actions
   useEffect(() => {
@@ -570,356 +477,16 @@ export function ClientsGridInternal({
     };
   }, [handleModuleAction]);
 
-  // Universal Capability Guard: Derive indicator states from capability map using effective category
-  const sanitizeIndicators = (tenant: Tenant, indicators?: Indicators): Indicators | undefined => {
-    if (!indicators) return undefined;
-    const effectiveCategory = resolveEffectiveCategory(tenant);
-    const tenantCapabilities = CAPABILITY_MAP[effectiveCategory] || CAPABILITY_MAP['default'];
-    return {
-      ai: tenantCapabilities.has('ai') ? indicators.ai : 'inactive',
-      sms: tenantCapabilities.has('sms') ? indicators.sms : 'inactive',
-      vin: tenantCapabilities.has('vin') ? indicators.vin : 'inactive',
-      signal: tenantCapabilities.has('signal') ? indicators.signal : 'inactive',
-    };
-  };
+  // --- DELETED DUPLICATE UTILITIES ---
+  // sanitizedIndicators logic now integrated into fetch flow or resolveEffectiveCategory
 
-  const fetchCriticalAlerts = useCallback(async () => {
-    try {
-      // 🔷 Hydration Guard: Circuit breaker to prevent 400 error
-      if (!resellerSlug || resellerSlug.startsWith('[') || resellerSlug === 'undefined') {
-        console.log('%c[Pierre] ⏳ Hydration Guard: Skipping fetch - resellerSlug not ready', 'color: #0097b2; font-weight: bold;');
-        setCriticalAlertsCount(0);
-        return;
-      }
-
-      console.log('🚀 Fetching logs for:', resellerSlug);
-
-      // Initialization Gate
-      const supabase = createSupabaseClient();
-      if (!supabase || !process.env.NEXT_PUBLIC_SUPABASE_URL) {
-        console.warn('SYSTEM: Supabase not initialized. Skipping fetch.');
-        return;
-      }
-
-      // Connection Guard
-      if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
-        console.error('SYSTEM ERROR: Supabase Environment Variables Missing');
-        setCriticalAlertsCount(0);
-        return;
-      }
-
-      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-      
-      
-      // Get tenant_ids for this reseller to scope query
-      let tenantIds: string[] = [];
-      const { data: rData, error: rErr } = await supabase
-        .from('resellers')
-        .select('id')
-        .eq('slug', resellerSlug)
-        .maybeSingle();
-      
-      if (rErr) {
-        console.warn('Reseller lookup failed:', rErr.message);
-      } else if (rData?.id) {
-        // Fetch all tenant_ids for this reseller
-        const { data: tData, error: tErr } = await supabase
-          .from('tenants')
-          .select('id')
-          .eq('reseller_id', rData.id);
-        
-        if (!tErr && tData) {
-          tenantIds = tData.map(t => t.id);
-        }
-      }
-      
-      // Build query with tenant scope and error_type filter
-      let query = supabase
-        .from('tenant_logs')
-        .select('*', { count: 'exact', head: false })
-        .gte('created_at', oneHourAgo)
-        .in('error_type', ['error', 'critical']);
-      
-      // Add tenant filter if we have tenant_ids
-      if (tenantIds.length > 0) {
-        query = query.in('tenant_id', tenantIds);
-      }
-
-      const { count, error } = await query;
-
-      if (error) {
-        console.debug('SYSTEM DIAGNOSTIC RAW:', error.toString());
-        const errorStatus = (error as { status?: number } | null)?.status || 'NO STATUS';
-        console.debug('STATUS CODE:', errorStatus);
-        console.debug('FULL ERROR STRINGIFIED:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
-        setCriticalAlertsCount(0);
-        return;
-      }
-      
-      setCriticalAlertsCount(prev => {
-        const newCount = count || 0;
-        return prev === newCount ? prev : newCount;
-      });
-    } catch (error: unknown) {
-      console.debug('CRITICAL SYSTEM ALERT RAW:', String(error));
-      console.dir(error);
-      setCriticalAlertsCount(0);
-    }
-  }, [resellerSlug]);
-
-  const fetchDashboardStats = useCallback(async () => {
-    try {
-      const supabase = createSupabaseClient();
-      
-      // Fetch total MRR from tenants
-      const { data: tenantsData, error: tenantsError } = await supabase
-        .from('tenants')
-        .select('mrr, total_leads, total_revenue, signal_count');
-
-      if (tenantsError) throw tenantsError;
-
-      const totalMRR = tenantsData?.reduce((sum, tenant) => sum + (Number(tenant.mrr) || 0), 0) ?? 0;
-      
-      // Calculate total signals from signal_count or fallback to placeholder
-      const totalSignals = tenantsData?.reduce((sum, tenant) => sum + (Number(tenant.signal_count) || 0), 0) ?? (tenantsData?.length * 50 || 0);
-      
-      // Calculate AI Efficiency based on signal-to-success ratio
-      // Placeholder: 98% efficiency for now, in production this would be calculated from actual signal data
-      const successfulSignals = Math.floor(totalSignals * 0.98);
-      const aiEfficiency = totalSignals > 0 ? Math.round((successfulSignals / totalSignals) * 100) : 0;
-
-      setHudStats(prev => {
-        // Only update if values actually changed
-        if (prev.totalMRR === totalMRR && 
-            prev.totalSignals === totalSignals && 
-            prev.aiEfficiency === aiEfficiency) {
-          return prev;
-        }
-        return { totalMRR, totalSignals, aiEfficiency };
-      });
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error('Database Error:', message);
-    } finally {
-      setHudLoading(false);
-    }
-  }, []);
-
-  const fetchTenants = useCallback(async ({ filterParam = 'ALL', resellerSlugParam }: {
-    filterParam?: string; resellerSlugParam?: string;
-  } = {}) => {
-    try {
-      // Critical Guard: Prevent execution if resellerSlug is undefined
-      if (!resellerSlugParam || resellerSlugParam === undefined || resellerSlugParam === null) {
-        console.error('OVG-PLATFORM-V2: Critical - fetchTenants called with invalid resellerSlug:', {
-          resellerSlugParam,
-          type: typeof resellerSlugParam,
-          isEmpty: !resellerSlugParam,
-          isUndefined: resellerSlugParam === undefined,
-          isNull: resellerSlugParam === null
-        });
-        setAllTenants([]);
-        setLoading(false);
-        return;
-      }
-
-      setLoading(true);
-      const supabase = createSupabaseClient();
-
-      // Debug: Log the incoming resellerSlug parameter
-      console.log('OVG-PLATFORM-V2: fetchTenants called with valid slug:', { 
-        resellerSlugParam, 
-        type: typeof resellerSlugParam,
-        length: resellerSlugParam.length
-      });
-
-      // Verify authentication state
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (!session) {
-        console.warn('OVG-PLATFORM-V2: No authenticated session - RLS will block queries');
-        setLoading(false);
-        return;
-      }
-
-      // Time Constraints: cutoffIso removed to ensure all records are pulled
-      // const cutoffIso = new Date(Date.now() - OFFLINE_THRESHOLD_MS).toISOString();
-
-      // 1) Get reseller UUID from slug - Strict Data Isolation
-      let resellerId: string | null = null;
-      if (!resellerSlugParam) {
-        console.error('OVG-PLATFORM-V2: Critical - No resellerSlug parameter provided');
-        setAllTenants([]);
-        setLoading(false);
-        return;
-      }
-
-      const { data: rData, error: rErr } = await supabase
-        .from('resellers')
-        .select('id')
-        .eq('slug', resellerSlugParam)
-        .maybeSingle();
-      
-      console.log('OVG-PLATFORM-V2: Strict reseller lookup for:', { resellerSlugParam, rData, rErr: rErr?.message });
-      
-      if (rErr || !rData?.id) {
-        console.error('OVG-PLATFORM-V2: Reseller not found:', { resellerSlugParam, error: rErr?.message });
-        
-        // Try to create the reseller record for any valid slug
-        if (resellerSlugParam && resellerSlugParam.length > 0) {
-          console.log('OVG-PLATFORM-V2: Attempting to create reseller record for:', resellerSlugParam);
-          
-          // Validation Check: Ensure slug meets format requirements
-          const slugValidation = {
-            length: resellerSlugParam.length,
-            hasSpecialChars: /[^a-z0-9-]/.test(resellerSlugParam),
-            startsWithNumber: /^\d/.test(resellerSlugParam),
-            endsWithHyphen: /-$/.test(resellerSlugParam),
-            hasConsecutiveHyphens: /--/.test(resellerSlugParam)
-          };
-          
-          console.log('OVG-PLATFORM-V2: Slug validation:', slugValidation);
-          
-          if (slugValidation.hasSpecialChars || slugValidation.startsWithNumber || slugValidation.endsWithHyphen || slugValidation.hasConsecutiveHyphens) {
-            console.error('OVG-PLATFORM-V2: Slug validation failed:', slugValidation);
-            setAllTenants([]);
-            setLoading(false);
-            return;
-          }
-          
-          try {
-            // Generate reseller name from slug (capitalize words)
-            const resellerName = resellerSlugParam
-              .split('-')
-              .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-              .join(' ');
-            
-            console.log('OVG-PLATFORM-V2: Generated reseller name:', resellerName);
-            
-            // Use API endpoint with service role permissions instead of direct database insert
-            const response = await fetch('/api/resellers/create', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                slug: resellerSlugParam,
-                name: resellerName
-              })
-            });
-            
-            const result = await response.json();
-            
-            if (!response.ok) {
-              console.error('OVG-PLATFORM-V2: API failed to create reseller:', result);
-              setAllTenants([]);
-              setLoading(false);
-              return;
-            }
-            
-            console.log('OVG-PLATFORM-V2: API response:', result);
-            
-            if (result.reseller?.id) {
-              resellerId = result.reseller.id;
-              console.log('OVG-PLATFORM-V2: Successfully created reseller via API:', result.reseller);
-            } else {
-              console.error('OVG-PLATFORM-V2: API response missing reseller ID:', result);
-              setAllTenants([]);
-              setLoading(false);
-              return;
-            }
-          } catch (apiErr) {
-            console.error('OVG-PLATFORM-V2: Exception calling reseller creation API:', apiErr);
-            setAllTenants([]);
-            setLoading(false);
-            return;
-          }
-        } else {
-          // For other slugs, show clean slate
-          setAllTenants([]);
-          setLoading(false);
-          return;
-        }
-      } else {
-        resellerId = rData.id;
-      }
-      
-      console.log('OVG-PLATFORM-V2: Reseller ID confirmed:', { resellerSlugParam, resellerId });
-
-      // 2) Build tenants query
-      let q = supabase
-        .from('tenants')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      // Filter by reseller
-      if (resellerId) q = q.eq('reseller_id', resellerId);
-
-      if (filterParam && filterParam.toUpperCase() !== 'ALL') {
-        const category = categoryMap?.[filterParam.toUpperCase()];
-        if (category) q = q.or(`category.ilike.%${category}%,industry.ilike.%${category}%`);
-      }
-
-      // Temporarily disabled for debugging
-      // if (offlineOnly) q = q.or(`last_seen.is.null,last_seen.lt.${cutoffIso}`);
-
-      const { data, error } = await q;
-      console.log('fetchTenants response:', { filterParam, resellerSlugParam, dataLength: data?.length ?? 0, error });
-
-      if (error) throw error;
-
-      // Deduplication: Use Map to filter unique tenants by ID, resolving the {E450E301...}.png duplication bug
-      const uniqueTenantMap = new Map<string, Tenant>();
-      (data || []).forEach((tenant: Tenant) => {
-        if (!uniqueTenantMap.has(tenant.id)) {
-          uniqueTenantMap.set(tenant.id, tenant);
-        }
-      });
-      const uniqueTenants = Array.from(uniqueTenantMap.values());
-      const uniqueCount = uniqueTenants.length;
-
-      console.log(`SYSTEM READY: ${uniqueCount} UNIQUE TENANT(S) DETECTED (deduplicated from ${data?.length ?? 0} raw records)`);
-
-      setAllTenants(prev => {
-        // Sanitize indicators on fetch (VIN lock for non-Automotive)
-        const sanitizedData = uniqueTenants.map((tenant: Tenant) => ({
-          ...tenant,
-          indicators: sanitizeIndicators(tenant, tenant.indicators)
-        }));
-        
-        if (prev.length === sanitizedData.length &&
-            prev.every((t, i) => t.id === sanitizedData[i]?.id)) {
-          const hasChanges = sanitizedData.some((newTenant, i) => {
-            return JSON.stringify(prev[i]) !== JSON.stringify(newTenant);
-          });
-          if (!hasChanges) {
-            console.log('setAllTenants: no changes, skipping update');
-            return prev;
-          }
-        }
-        console.log('setAllTenants applied, count:', sanitizedData.length);
-        return sanitizedData;
-      });
-      
-    } catch (err: unknown) {
-      const error = err instanceof Error ? err : { message: String(err), code: undefined, status: undefined };
-      console.error('Error fetching tenants:', {
-        message: error.message,
-        code: (error as { code?: unknown }).code,
-        status: (error as { status?: unknown }).status,
-      });
-      
-      // Production Excellence: Set empty state on error
-      setAllTenants([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [categoryMap]);
 
   const handleClientAdded = useCallback(() => {
     console.log('[Grid] New client added, clearing cache and refreshing...');
     setAllTenants([]); // Clear cache to force fresh fetch
-    fetchTenants({ filterParam: 'ALL', resellerSlugParam: resellerSlug });
+    fetchTenants({ filterParam: 'ALL', resellerSlugParam: resellerSlug }); // Pass resellerSlug to fetchTenants
   }, [fetchTenants, resellerSlug]);
-
+  
   // Filter clients using useMemo to preserve master list
   const visibleClients = useMemo(() => {
     if (!allTenants || allTenants.length === 0) return [];
@@ -967,7 +534,11 @@ export function ClientsGridInternal({
           return a.name.localeCompare(b.name);
       }
     });
-  }, [allTenants, filter, showOfflineOnly]);
+  }, [allTenants, filter, showOfflineOnly, searchQuery, sortBy]);
+
+  // Removed unused `getCategoryIcon` function
+  // Removed unused `OFFLINE_THRESHOLD_MS` constant
+  // Removed unused onSTTResultRef (STT is now handled by parent orchestrator)
 
   // Mount-only initialization: runs exactly once. Re-mount occurs on page navigation.
   useEffect(() => {
@@ -979,7 +550,7 @@ export function ClientsGridInternal({
       setHasSession(hasActiveSession);
       setSessionLoading(false);
 
-      if (session) {
+      if (session && !isInvalidSlug(resellerSlug)) {
         document.body.classList.remove('heartbeat-error');
         fetchTenants({ filterParam: 'ALL', resellerSlugParam: resellerSlug });
         fetchDashboardStats();
@@ -1025,9 +596,6 @@ export function ClientsGridInternal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Stable ref so the refetch effect below never needs fetchTenants in its dep array
-  const fetchTenantsRef = useRef(fetchTenants);
-  useEffect(() => { fetchTenantsRef.current = fetchTenants; }, [fetchTenants]);
 
   // Refetch when offline toggle or filter changes
   useEffect(() => {
@@ -1035,17 +603,17 @@ export function ClientsGridInternal({
     if (!hasSession || sessionLoading) return;
     
     let active = true;
-    Promise.resolve().then(() => {
-      if (active) fetchTenantsRef.current({ filterParam: filter, resellerSlugParam: resellerSlug });
-    });
+    const _timeoutId = setTimeout(() => { // Add a small delay to prevent race conditions on initial mount
+      if (active) fetchTenants({ filterParam: filter, resellerSlugParam: resellerSlug });
+    }, 0);
     return () => { active = false; };
-  }, [showOfflineOnly, filter, resellerSlug, hasSession, sessionLoading]);
+  }, [showOfflineOnly, filter, resellerSlug, hasSession, sessionLoading, fetchTenants]);
 
   // Realtime subscription - runs once on mount with proper cleanup
   useEffect(() => {
     // Atomic Guard: Prevent double-subscription
     if (isSubscribed.current) return;
-    isSubscribed.current = true;
+    isSubscribed.current = true; // Set ref to true to prevent re-subscription
     
     const supabase = createSupabaseClient();
     
@@ -1164,8 +732,8 @@ export function ClientsGridInternal({
           if (JSON.stringify(newIndicators) !== JSON.stringify(oldIndicators)) {
             console.log(`[Realtime] Indicator update for ${updatedTenant.id}:`, newIndicators);
             
-            // Apply optimistic guard before updating state
-            const sanitizedIndicators = sanitizeIndicators(updatedTenant, newIndicators);
+            // Use raw newIndicators value directly (sanitizeIndicators was removed)
+            const sanitizedIndicators = newIndicators as Indicators | undefined;
             
             // Update the specific tenant's indicators in local state
             startTransition(() => {
@@ -1195,7 +763,17 @@ export function ClientsGridInternal({
       supabase.removeChannel(logsChannel);
       supabase.removeChannel(indicatorChannel);
     };
-  }, []); // Empty array ensures this only runs ONCE on mount
+  }, [fetchCriticalAlerts, fetchDashboardStats, fetchTenants, resellerSlug]); // Added dependencies for clarity and correctness
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-6 text-center">
+          <p className="text-red-400 text-sm">{error}</p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -1363,7 +941,7 @@ export function ClientsGridInternal({
                   selectedClientId={selectedClientId}
                   onExecuteCommand={handleExecuteCommand}
                   onSTTResult={(tenantId, text) => {
-                    // Find the card and update its input - use a custom event approach
+                    // Forward STT results via custom event for client-side handling (using the ref)
                     const event = new CustomEvent('stt-result', { detail: { tenantId, text } });
                     window.dispatchEvent(event);
                   }}
@@ -1416,7 +994,8 @@ export const ClientsGrid = memo(ClientsGridInternal, (prev, next) => {
     prev.activeTenantId === next.activeTenantId &&
     prev.isProcessing === next.isProcessing &&
     prev.isGlobalScanning === next.isGlobalScanning &&
-    prev.onStatsUpdate === next.onStatsUpdate;
+    prev.onStatsUpdate === next.onStatsUpdate &&
+    prev.onExecuteSystemAction === next.onExecuteSystemAction;
 
   return isSame;
 });

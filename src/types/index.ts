@@ -20,9 +20,37 @@ export const TenantSchema = z.object({
   is_active: z.boolean().default(true),
   created_at: z.string().optional(),
   updated_at: z.string().optional(),
+  // Extended fields for ClientsGrid compatibility
+  email: z.string().nullable().optional(),
+  category: z.string().optional(),
+  industry: z.string().optional(),
+  category_config: z.record(z.unknown()).optional(),
+  signal_count: z.number().optional(),
+  signal_trend: z.array(z.number()).optional(),
+  ai_insight: z.string().nullable().optional(),
+  last_seen: z.string().nullable().optional(),
+  total_revenue: z.number().nullable().optional(),
+  total_leads: z.number().nullable().optional(),
+  mrr: z.number().nullable().optional(),
+  permission_level: z.enum(['standard', 'readonly']).optional(),
+  indicators: z.object({
+    ai: z.enum(['active', 'inactive', 'error']),
+    sms: z.enum(['active', 'inactive', 'error']),
+    vin: z.enum(['active', 'inactive', 'error']),
+    signal: z.enum(['active', 'inactive', 'error']),
+  }).optional(),
 });
 
 export type Tenant = z.infer<typeof TenantSchema>;
+
+export type IndicatorStatus = 'active' | 'inactive' | 'error';
+
+export interface Indicators {
+  ai: IndicatorStatus;
+  sms: IndicatorStatus;
+  vin: IndicatorStatus;
+  signal: IndicatorStatus;
+}
 
 export interface TenantConfig {
   id: string;
@@ -36,6 +64,22 @@ export interface TenantConfig {
   };
 }
 
+export interface BrandingBag {
+  primaryColor: string;
+  accentColor: string;
+  logoUrl: string | null;
+  favicon: string | null;
+  metaTitle: string | null;
+  metaDescription: string | null;
+  websiteUrl?: string | null;
+  typography?: {
+    headingFont: string;
+    bodyFont: string;
+  };
+  borderRadius?: number;
+  mode?: 'light' | 'dark';
+}
+
 export interface BrandingData {
   name: string;
   logoUrl: string;
@@ -44,6 +88,20 @@ export interface BrandingData {
   favicon?: string;
   metaTitle?: string;
   metaDescription?: string;
+  typography?: {
+    headingFont: string;
+    bodyFont: string;
+  };
+  borderRadius?: number;
+  mode?: 'light' | 'dark';
+}
+
+/** Response shape from the GET /api/reseller/[slug]/branding endpoint */
+export interface BrandingFetchResponse {
+  name: string;
+  tenant_id: string;
+  brandingBag: BrandingBag;
+  version: number;
 }
 
 export interface Client {

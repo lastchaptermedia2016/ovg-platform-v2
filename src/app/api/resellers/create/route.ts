@@ -1,9 +1,18 @@
 // Create reseller record with service role permissions
-import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { createClient } from "@/lib/supabase/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { NextResponse } from "next/server";
 
 export async function POST(request: Request) {
   try {
+    // Auth guard: verify session
+    const supabase = await createClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+
+    if (authError || !user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const { slug, name } = await request.json();
     
     if (!slug || !name) {
@@ -32,16 +41,13 @@ export async function POST(request: Request) {
     }
 
     // Create admin client with service role for bypassing RLS
-    const supabaseAdmin = createAdminClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    // supabaseAdmin is imported from @/lib/supabase/admin
 
     // Check if reseller already exists
     const { data: existingReseller, error: checkError } = await supabaseAdmin
       .from('resellers')
-      .select('id, slug')
-      .eq('slug', slug)
+      .select('id, tenant_id')
+      .eq('tenant_id', slug)
       .single();
     
     if (checkError && checkError.code !== 'PGRST116') {
@@ -62,7 +68,7 @@ export async function POST(request: Request) {
 
     // Create the reseller record with service role - include potential required fields
     const payload = {
-      slug: slug,
+      tenant_id: slug,
       name: name,
       created_at: new Date().toISOString(),
       // Add potential required fields that might be missing
@@ -79,7 +85,7 @@ export async function POST(request: Request) {
     const { data: newReseller, error: createError } = await supabaseAdmin
       .from('resellers')
       .insert(payload)
-      .select('id, slug, name, created_at')
+      .select('id, tenant_id, name, created_at')
       .single();
 
     if (createError) {

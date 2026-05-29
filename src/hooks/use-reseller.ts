@@ -12,55 +12,13 @@ interface UseResellerReturn {
   refreshReseller: () => Promise<void>;
 }
 
-/**
- * Fetch reseller by ID
- */
-async function fetchResellerById(id: string): Promise<Reseller | null> {
-  const supabase = createBrowserClient();
-  const { data, error } = await supabase
-    .from("resellers")
-    .select("*")
-    .eq("id", id)
-    .eq("is_active", true)
-    .single();
-
-  if (error || !data) {
-    console.error("fetchResellerById error:", error);
-    return null;
-  }
-  return data as Reseller;
-}
-
-/**
- * Fetch reseller by slug (tenant_id)
- */
-async function fetchResellerBySlug(slug: string): Promise<Reseller | null> {
-  const supabase = createBrowserClient();
-  const { data, error } = await supabase
-    .from("resellers")
-    .select("*")
-    .eq("tenant_id", slug)
-    .eq("is_active", true)
-    .single();
-
-  if (error || !data) {
-    console.error("fetchResellerBySlug error:", error);
-    return null;
-  }
-  return data as Reseller;
-}
-
 export function useReseller(): UseResellerReturn {
   const [reseller, setReseller] = useState<Reseller | null>(null);
   const [branding, setBranding] = useState<BrandingData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // 1. Stabilize fetchReseller with useCallback
   const fetchReseller = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-
     try {
       const supabase = createBrowserClient();
       const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -70,37 +28,40 @@ export function useReseller(): UseResellerReturn {
         return; // Finally block handles setIsLoading(false)
       }
 
-      const resellerId = user.user_metadata?.reseller_id;
-      const resellerSlug = user.user_metadata?.reseller_slug;
+      // Authoritative Resolution: Fetch link from user_resellers (P0 Security)
+      // Metadata is forgeable; the junction table is the source of truth.
+      const { data: link, error: linkError } = await supabase
+        .from("user_resellers")
+        .select("reseller_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
 
-      if (!resellerId && !resellerSlug) {
-        const fallbackReseller = await fetchResellerBySlug("acme-corp");
-        if (fallbackReseller) {
-          setReseller(fallbackReseller);
-          setBranding(fallbackReseller.branding || null);
-        }
+      if (linkError || !link) {
+        console.error("[useReseller] No reseller link found for user:", user.id);
+        setError("Your account is not linked to a reseller.");
         return;
       }
 
-      let resellerData: Reseller | null = null;
-      if (resellerId) {
-        resellerData = await fetchResellerById(resellerId);
-      } else if (resellerSlug) {
-        resellerData = await fetchResellerBySlug(resellerSlug);
+      // Fetch detailed Reseller information
+      const { data: resellerData, error: resellerError } = await supabase
+        .from("resellers")
+        .select("*")
+        .eq("id", link.reseller_id)
+        .eq("is_active", true)
+        .maybeSingle();
+
+      if (resellerError || !resellerData) {
+        console.error("[useReseller] Reseller lookup failed:", resellerError);
+        setError("Reseller not found");
+        return;
       }
 
-      if (resellerData) {
-        setReseller(resellerData);
-        setBranding(resellerData.branding || null);
-      } else {
-        setError("Reseller not found");
-      }
+      setReseller(resellerData as Reseller);
+      setBranding((resellerData as Reseller).branding || null);
     } catch (err) {
-      // 2. Logic fix: Using the error correctly instead of a suppressed _err
       const message = err instanceof Error ? err.message : "Failed to load reseller";
       setError(message);
     } finally {
-      // 3. Ensuring state is updated outside the immediate effect execution
       setIsLoading(false);
     }
   }, []);
@@ -108,8 +69,11 @@ export function useReseller(): UseResellerReturn {
   useEffect(() => {
     let isActive = true;
 
+    // Microtask deferral prevents synchronous setState warnings in strict mode
     Promise.resolve().then(() => {
       if (isActive) {
+        setError(null);
+        setIsLoading(true);
         void fetchReseller();
       }
     });

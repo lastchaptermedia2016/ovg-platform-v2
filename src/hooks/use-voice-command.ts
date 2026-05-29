@@ -22,6 +22,7 @@ interface TenantContext {
 
 interface ProcessResponse {
   response: string;
+  summary?: string;
 }
 
 interface SttResponse {
@@ -47,7 +48,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     silenceDuration = 3000,
     forcedContinuousMode = false,
     resellerId,
-    tenantContext = {},
+    tenantContext: _tenantContext,
     currentConfig: _currentConfig,
     skipAIPipeline = false,
     onTranscript,
@@ -81,6 +82,9 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   const stopListeningRef = useRef<() => void>(() => {});
   // Ref indirection for monitorVolume to avoid self-referencing in requestAnimationFrame
   const monitorVolumeRef = useRef<() => void>(() => {});
+  // Refs for dynamic hook options to avoid stale closures without recreating callbacks
+  const tenantContextRef = useRef(options.tenantContext);
+  const resellerIdRef = useRef(options.resellerId);
 
   const getAudioContextConstructor = useCallback((): typeof AudioContext => {
     if (typeof AudioContext !== 'undefined') return AudioContext;
@@ -179,6 +183,10 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     monitorVolumeRef.current = monitorVolume;
   }, [monitorVolume]);
 
+  // Keep dynamic option refs synced to prevent stale closures
+  useEffect(() => { tenantContextRef.current = options.tenantContext; }, [options.tenantContext]);
+  useEffect(() => { resellerIdRef.current = options.resellerId; }, [options.resellerId]);
+
   // Stop listening and process
   const stopListening = useCallback(() => {
     if (mediaRecorderRef.current?.state === 'recording') {
@@ -230,6 +238,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
         return;
       }
 
+      const currentContext = tenantContextRef.current || {};
       const processResponse = await fetch('/api/ai/process-command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -238,8 +247,8 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
           userCommand: text,
           currentConfig: _currentConfig || {},
           tenantContext: {
-            tenantId: tenantContext.tenantId,
-            category: tenantContext.category || 'GENERAL',
+            tenantId: currentContext.tenantId,
+            category: currentContext.category || 'GENERAL',
           },
         }),
         signal,
@@ -249,15 +258,31 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
         throw new Error(`Process failed: ${processResponse.status}`);
       }
 
-      const { response: aiText } = await processResponse.json() as ProcessResponse;
+      const parsedResponse = await processResponse.json() as ProcessResponse;
+      const aiText = parsedResponse?.response || parsedResponse?.summary;
+      if (!aiText || !aiText.trim()) {
+        console.warn('[VoiceHook] Aborting internal TTS: No text or fallback summary available.');
+        return;
+      }
       setAiResponse(aiText);
       onAIResponse?.(aiText);
 
-      // Step 3: Text-to-Speech (Orpheus)
+      // Step 3: Text-to-Speech (Orpheus) — read fresh context from refs
+      const currentTtsContext = tenantContextRef.current || {};
+      const currentResellerId = resellerIdRef.current || '';
       const ttsResponse = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: aiText, voice: 'hannah', model: 'orpheus-v1' }),
+        body: JSON.stringify({
+          text: aiText.trim(),
+          voice: 'hannah',
+          model: 'orpheus-v1',
+          metadata: {
+            resellerSlug: currentResellerId.trim(),
+            tenantId: currentTtsContext.tenantId,
+            category: currentTtsContext.category,
+          },
+        }),
         signal,
       });
 
@@ -318,7 +343,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       isProcessingRef.current = false;
       setIsProcessing(false);
     }
-  }, [onTranscript, onAIResponse, onError, skipAIPipeline, resellerId, _currentConfig, tenantContext.tenantId, tenantContext.category, getAudioContextConstructor]);
+  }, [onTranscript, onAIResponse, onError, skipAIPipeline, resellerId, _currentConfig, getAudioContextConstructor]);
 
   // Start listening
   const startListening = useCallback(async () => {

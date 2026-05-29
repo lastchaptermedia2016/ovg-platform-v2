@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
+import { isInvalidSlug } from '@/lib/utils/guard';
 import { ClientsGrid } from '@/components/reseller/ClientsGrid';
 import { DeploymentModal } from '@/components/ai-intelligence/DeploymentModal';
 import { MasterpieceHeader } from '@/components/reseller/MasterpieceHeader';
@@ -21,8 +22,8 @@ interface BulkConfirmation {
 
 interface AICommandResponse {
   actionType: string;
-  targetIds: string[];
-  payload: Record<string, unknown>;
+  targetIds?: string[];
+  payload?: Record<string, unknown>;
   summary: string;
   success?: boolean;
 }
@@ -63,10 +64,13 @@ export default function ClientsPage() {
     return () => { document.head.removeChild(style); };
   }, []);
 
-  const resellerSlug = params.resellerSlug as string;
+  // CRITICAL: Use String() runtime coercion, not TypeScript's compile-time `as string`.
+  // useParams() can return a Proxy object during SSR/hydration that hasn't resolved
+  // to a primitive string yet. String() ensures a primitve is always passed downstream.
+  const resellerSlug = String(params.resellerSlug ?? '');
   
   // 🔷 Production Excellence: Detect Next.js hydration issues with route params
-  if (!resellerSlug || resellerSlug.includes('[') || resellerSlug.includes(']')) {
+  if (isInvalidSlug(resellerSlug)) {
     console.error('%c[Pierre] ❌ Route parameter failed to resolve:', 'color: #0097b2; font-weight: bold;', { resellerSlug, params });
   }
   const categoryParam = (searchParams.get('category') || 'ALL').toUpperCase();
@@ -87,6 +91,8 @@ export default function ClientsPage() {
   // Stable refs for voice hook callbacks to avoid circular declaration dependency
   const stopListeningRef = useRef<() => void>(() => {});
   const startListeningRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  // Stable ref for handleFilterChange to avoid temporal dead zone in transcript callback
+  const handleFilterChangeRef = useRef<(newFilter: string) => void>(() => {});
 
   // Portfolio Stats State (lifted from ClientsGrid)
   const [portfolioStats, setPortfolioStats] = useState({
@@ -113,7 +119,9 @@ export default function ClientsPage() {
   // Resilient 4-phase Voice Integration — must be above handleTranscript
   const { isPlaying: isVoicePlaying, isSilentMode, captions, playVoice: speakVoice } = useResilientVoice();
   const speakVoiceRef = useRef(speakVoice);
+  const isVoicePlayingRef = useRef(false);
   useEffect(() => { speakVoiceRef.current = speakVoice; }, [speakVoice]);
+  useEffect(() => { isVoicePlayingRef.current = isVoicePlaying; }, [isVoicePlaying]);
 
   // 🔷 Production Excellence: Track TTS communication state for HUD
   const isCommunicating = isVoicePlaying;
@@ -206,25 +214,88 @@ export default function ClientsPage() {
         selectedTenantId ? { tenantId: selectedTenantId, category: activeFilter } : { category: activeFilter },
         activeSlug,
         (response: AICommandResponse | undefined) => {
-          if (response?.actionType === 'BULK' && response?.targetIds?.length > 1) {
+          // 🔷 NO_MATCH: Neutral command — speak correction, re-enable mic after cooldown
+          if (response?.actionType === 'NO_MATCH') {
+            stopListeningRef.current();
+            const correctionMsg = response.summary || "I didn't catch a valid command. Please try again.";
+            speakVoiceRef.current(correctionMsg);
+            // After TTS completes, re-enable mic for the next attempt
+            const pollForTtsEnd = setInterval(() => {
+              if (!isVoicePlayingRef.current) {
+                clearInterval(pollForTtsEnd);
+                const recoveryTimer = setTimeout(() => {
+                  if (isVoicePlayingRef.current) return; // new utterance started during cooldown
+                  startListeningRef.current();
+                }, 500);
+                confirmationTimeoutRef.current = recoveryTimer as unknown as NodeJS.Timeout;
+              }
+            }, 250);
+            return;
+          }
+
+          // 🔷 SYSTEM_BULK_CONFIRM: User confirmed bulk action — execute deployment
+          if (response?.actionType === 'SYSTEM_BULK_CONFIRM') {
+            stopListeningRef.current();
+            speakVoiceRef.current(response.summary || 'Confirmed. Applying bulk updates now.');
+            handleBulkConfirm();
+            return;
+          }
+
+          // 🔷 SYSTEM_BULK_CANCEL: User cancelled bulk action — safe reset
+          if (response?.actionType === 'SYSTEM_BULK_CANCEL') {
+            stopListeningRef.current();
+            speakVoiceRef.current(response.summary || 'Cancelled. No changes were made.');
+            handleBulkCancel();
+            return;
+          }
+
+          // 🔷 SYSTEM_FILTER_GRID: User wants to filter the client grid by category
+          if (response?.actionType === 'SYSTEM_FILTER_GRID' && response?.payload?.category_filter) {
+            stopListeningRef.current();
+            const category = response.payload.category_filter as string;
+            console.log('%c[Pierre] 🎯 SYSTEM_FILTER_GRID: Applying category filter:', 'color: #0097b2; font-weight: bold;', category);
+            handleFilterChangeRef.current(category);
+            speakVoiceRef.current(response.summary || `Filtering grid to ${category} clients.`);
+            return;
+          }
+
+          // 🔷 BULK: Requires voice confirmation before execution
+          if (response?.actionType === 'BULK' && response?.targetIds && response.targetIds.length > 1) {
             setBulkConfirmation({
               show: true,
               count: response.targetIds.length,
               targetIds: response.targetIds,
-              payload: response.payload,
+              payload: response.payload || {},
             });
             if (response.summary) {
+              // ── Fix 1: Mute mic before TTS to prevent audio loop ──
+              stopListeningRef.current();
               speakVoiceRef.current(`I've identified ${response.targetIds.length} clients. Should I proceed with the update?`);
-              setTimeout(() => {
-                setIsAwaitingVoiceConfirm(true);
-                startListeningRef.current();
-                confirmationTimeoutRef.current = setTimeout(() => {
-                  setIsAwaitingVoiceConfirm(false);
-                  stopListeningRef.current();
-                }, 3000);
-              }, 2000);
+              // ── Fix 3 (hardened): Guard re-listen with 500ms acoustic cooldown & double-check ──
+              const pollForTtsComplete = setInterval(() => {
+                if (!isVoicePlayingRef.current) {
+                  clearInterval(pollForTtsComplete);
+                  // Cooldown: wait 500ms for audio tail to decay before reopening mic
+                  const cooldownTimer = setTimeout(() => {
+                    // Double-check: ensure TTS didn't queue a new utterance during cooldown
+                    if (isVoicePlayingRef.current) {
+                      // A new TTS utterance started — bail out; the flow will re-enter on next transcript
+                      return;
+                    }
+                    setIsAwaitingVoiceConfirm(true);
+                    startListeningRef.current();
+                    confirmationTimeoutRef.current = setTimeout(() => {
+                      setIsAwaitingVoiceConfirm(false);
+                      stopListeningRef.current();
+                    }, 3000);
+                  }, 500);
+                  confirmationTimeoutRef.current = cooldownTimer as unknown as NodeJS.Timeout;
+                }
+              }, 250);
             }
           } else if (response?.success) {
+            // ── Fix 1: Mute mic before TTS to prevent audio loop ──
+            stopListeningRef.current();
             setSuccessRipple(true);
             setTimeout(() => setSuccessRipple(false), 1000);
             speakVoiceRef.current('Update applied successfully.');
@@ -255,8 +326,6 @@ export default function ClientsPage() {
   useEffect(() => { stopListeningRef.current = stopListening; }, [stopListening]);
   useEffect(() => { startListeningRef.current = startListening; }, [startListening]);
 
-
-
   // Cleanup confirmation timeout on unmount
   useEffect(() => {
     return () => {
@@ -265,6 +334,68 @@ export default function ClientsPage() {
       }
     };
   }, []);
+
+  // Unified system action handler — receives delegated triggers from ClientsGrid card actions
+  // This replaces the grid-level STT/TTS pipeline with centralized page orchestration.
+  const handleExecuteSystemAction = useCallback(async (clientId: string, actionType: 'ai' | 'sms' | 'vin' | 'signal') => {
+    if (actionType !== 'ai') return; // Only AI triggers need voice orchestration
+
+    console.log('%c[Pierre] 🎙️ Unified system action received:', 'color: #0097b2; font-weight: bold;', { clientId, actionType });
+
+    // 1. Halt any running ambient recording session
+    stopListeningRef.current();
+
+    // 2. Set selected tenant for UI
+    setSelectedTenantId(clientId);
+
+    // 3. Speak the canonical TTS announcement via resilient voice (Groq -> Browser -> Silent)
+    const announcement = `AI control active. Use voice commands to manage this client.`;
+    speakVoiceRef.current(announcement);
+
+    // 4. After TTS completes, re-enable listening with state guard
+    const pollForTtsEnd = setInterval(() => {
+      if (!isVoicePlayingRef.current) {
+        clearInterval(pollForTtsEnd);
+        // 5. Wait for audio tail decay, then re-enable mic
+        const cooldownTimer = setTimeout(() => {
+          if (isVoicePlayingRef.current) return; // new utterance started during cooldown
+          startListeningRef.current();
+        }, 500);
+        confirmationTimeoutRef.current = cooldownTimer as unknown as NodeJS.Timeout;
+      }
+    }, 250);
+
+    // 6. Trigger input flash for visual feedback
+    setInputFlash(true);
+    setTimeout(() => setInputFlash(false), 600);
+    // Autofocus command input
+    setTimeout(() => {
+      commandInputRef.current?.focus();
+    }, 100);
+  }, []);
+
+  // 🔷 Error Recovery (Fix 5): Auto-restart mic after 2s cooldown when API crashes
+  const errorRecoveryTimerRef = useRef<NodeJS.Timeout | null>(null);
+  useEffect(() => {
+    if (error && !isListening && !isAnalyzing) {
+      // Clear any existing recovery timer
+      if (errorRecoveryTimerRef.current) {
+        clearTimeout(errorRecoveryTimerRef.current);
+      }
+      // Wait 2 seconds for user to see the error, then auto-recover
+      errorRecoveryTimerRef.current = setTimeout(() => {
+        if (!isListening && !isAnalyzing) {
+          console.log('%c[Pierre] 🔄 Error recovery: Auto-restarting microphone...', 'color: #0097b2; font-weight: bold;');
+          startListeningRef.current();
+        }
+      }, 2000);
+    }
+    return () => {
+      if (errorRecoveryTimerRef.current) {
+        clearTimeout(errorRecoveryTimerRef.current);
+      }
+    };
+  }, [error, isListening, isAnalyzing]);
 
   // Ref to debounce the offline toggle
   const offlineToggleTimeout = useRef<NodeJS.Timeout | null>(null);
@@ -297,6 +428,9 @@ export default function ClientsPage() {
       setShowOfflineOnly(prev => !prev);
     }, 50); // Small debounce to prevent double clicks
   }, []);
+
+  // Keep filter change ref in sync for SYSTEM_FILTER_GRID access from transcript callback
+  useEffect(() => { handleFilterChangeRef.current = handleFilterChange; }, [handleFilterChange]);
 
   // Stable callback for tenant selection
   const handleSelectTenant = useCallback((tenantId: string, clientName?: string) => {
@@ -679,6 +813,7 @@ export default function ClientsPage() {
             isProcessing={isProcessing || isAnalyzing}
             isGlobalScanning={isProcessing && !selectedTenantId}
             onStatsUpdate={setPortfolioStats}
+            onExecuteSystemAction={handleExecuteSystemAction}
           />
           </div>
         </section>

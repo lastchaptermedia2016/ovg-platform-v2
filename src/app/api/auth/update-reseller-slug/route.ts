@@ -1,6 +1,6 @@
 // Update user reseller_slug metadata for authorized reseller change
 import { createClient } from "@/lib/supabase/server";
-import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { NextResponse } from "next/server";
 
 export async function POST(request: Request) {
@@ -29,8 +29,8 @@ export async function POST(request: Request) {
     // Verify the new slug exists in resellers table
     const { data: resellerData, error: resellerError } = await supabase
       .from('resellers')
-      .select('id, slug')
-      .eq('slug', newSlug)
+      .select('id, tenant_id')
+      .eq('tenant_id', newSlug)
       .single();
     
     if (resellerError || !resellerData) {
@@ -41,10 +41,7 @@ export async function POST(request: Request) {
     }
 
     // Create admin client with service role for metadata update
-    const supabaseAdmin = createAdminClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    // supabaseAdmin is imported from @/lib/supabase/admin
 
     // Update user metadata with new reseller slug
     const { error: metaError } = await supabaseAdmin.auth.admin.updateUserById(

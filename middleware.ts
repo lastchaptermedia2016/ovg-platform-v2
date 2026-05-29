@@ -17,20 +17,20 @@ export async function middleware(request: NextRequest) {
   // 1. Centralized Identity Gate: Protect /reseller/* routes
   if (pathname.startsWith("/reseller/")) {
     try {
-      // Check for authenticated session
+      // Validate JWT against Supabase Auth server (not local cache)
       const supabase = await createClient();
-      const { data: { session }, error } = await supabase.auth.getSession();
+      const { data: { user }, error } = await supabase.auth.getUser();
 
-      // If no session, redirect to unified auth page
-      if (!session || error) {
+      // If no valid user, redirect to unified auth page
+      if (!user || error) {
         const authUrl = new URL('/auth', request.url);
         authUrl.searchParams.set('redirectTo', pathname);
         return NextResponse.redirect(authUrl);
       }
 
-      // Session exists, continue with tenant ID injection
+      // Valid user, inject user ID into headers
       const response = NextResponse.next();
-      response.headers.set("x-user-id", session.user.id);
+      response.headers.set("x-user-id", user.id);
       return response;
     } catch {
       // If session check fails, redirect to unified auth page

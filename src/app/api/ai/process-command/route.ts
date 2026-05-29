@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Groq from 'groq-sdk';
 import { z } from 'zod';
 import { createClient as createSupabaseClient } from '@/lib/supabase/server';
+import { DEPLOYMENT_OFFICER } from '@/core/ai/system-prompts';
 
 // Force dynamic to prevent build-time initialization
 export const dynamic = 'force-dynamic';
@@ -20,41 +21,19 @@ const ProcessCommandSchema = z.object({
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 type ProcessCommandRequest = z.infer<typeof ProcessCommandSchema>;
 
-// Response schema for AI output - supports both SINGLE and BULK actions
+// Response schema for AI output - supports SINGLE, BULK, NO_MATCH, and SYSTEM_ macro commands
+// SYSTEM_BULK_CONFIRM / SYSTEM_BULK_CANCEL / SYSTEM_FILTER_GRID are structural payloads
+// that bypass database writes (see short-circuit guard in POST handler).
 const AIResponseSchema = z.object({
-  actionType: z.enum(['SINGLE', 'BULK']),
-  targetIds: z.array(z.string().uuid()).min(1),
-  payload: z.record(z.any()),
-  summary: z.string().min(10).max(500), // For TTS confirmation
+  actionType: z.enum(['SINGLE', 'BULK', 'NO_MATCH', 'SYSTEM_BULK_CONFIRM', 'SYSTEM_BULK_CANCEL', 'SYSTEM_FILTER_GRID', 'SYSTEM_UPDATE_BRANDING']),
+  targetIds: z.array(z.string().uuid()).optional(),
+  payload: z.record(z.any()).optional().default({}),
+  summary: z.string().min(3).max(500), // For TTS confirmation
 });
 
-const SYSTEM_PROMPT = `You are a Technical Deployment Officer for OVG Platform's AI Intelligence module.
-
-Your role is to analyze user commands and generate precise configuration updates for widget deployments.
-You can handle BOTH single-tenant updates AND bulk/global updates across multiple tenants.
-
-RULES:
-1. Analyze the user's natural language command against the provided tenant context
-2. Determine if the command targets a SINGLE tenant or MULTIPLE tenants (BULK)
-3. For BULK commands: select appropriate targetIds based on the command intent (category filters, all tenants, etc.)
-4. Generate a summary string for voice confirmation (keep under 150 chars)
-5. Output a JSON object with actionType, targetIds array, payload, and summary
-6. NEVER output markdown, explanations, or code blocks - ONLY valid JSON
-7. Respect the existing theme colors (Electric Blue #0097b2 and Gold #D4AF37) unless explicitly changed
-
-OUTPUT FORMAT (STRICT JSON):
-{
-  "actionType": "SINGLE" | "BULK",
-  "targetIds": ["tenant-uuid-1", "tenant-uuid-2"],
-  "payload": {
-    "theme": { "primary": "#color", "secondary": "#color" },
-    "behavior": { "prompt": "system prompt text", "tone": "professional" },
-    "ui": { "badgeStyle": "glass", "animation": "pulse" }
-  },
-  "summary": "Brief description of changes for voice confirmation"
-}
-
-The payload should only include fields that need to change. Preserve all existing values not explicitly changed.`;
+// SYSTEM_PROMPT is now imported from @/core/ai/system-prompts as DEPLOYMENT_OFFICER
+// which includes the MACRO COMMAND DICTIONARY block.
+const SYSTEM_PROMPT = DEPLOYMENT_OFFICER;
 
 export async function POST(request: NextRequest) {
   // Initialize Groq client inside handler for production excellence
@@ -109,7 +88,7 @@ export async function POST(request: NextRequest) {
       const { data: reseller, error: resellerError } = await supabase
         .from('resellers')
         .select('id')
-        .eq('slug', resellerId)
+        .eq('tenant_id', resellerId)
         .single();
       
       if (resellerError || !reseller) {
@@ -199,44 +178,131 @@ Output ONLY valid JSON.`;
 
     const { actionType, targetIds, payload, summary } = aiValidation.data;
 
-    // Execute the updates
+    // 🔷 NO_MATCH short-circuit: skip Supabase writes entirely
+    if (actionType === 'NO_MATCH') {
+      console.log('%c[ProcessCommand] 🔶 Command classified as NO_MATCH — returning neutral response', 'color: #f59e0b; font-weight: bold;', { summary });
+      return NextResponse.json({
+        success: true,
+        actionType: 'NO_MATCH',
+        summary,
+        metadata: {
+          processedAt: new Date().toISOString(),
+          resellerId,
+          model: 'llama-3.3-70b-versatile',
+        },
+      });
+    }
+
+    // 🔷 SYSTEM_ MACRO COMMAND short-circuit: return structural payload without touching database
+    // These are emitted by the MACRO COMMAND DICTIONARY in DEPLOYMENT_OFFICER when the user
+    // speaks confirmation ("yes", "confirm"), cancellation ("no", "cancel"), or grid filter intents.
+    // They carry empty targetIds and must NOT reach the DB update layer.
+    if (actionType === 'SYSTEM_BULK_CONFIRM' || actionType === 'SYSTEM_BULK_CANCEL' || actionType === 'SYSTEM_FILTER_GRID') {
+      console.log('%c[ProcessCommand] 🔷 SYSTEM_ macro command recognized:', 'color: #3b82f6; font-weight: bold;', { actionType, payload });
+      return NextResponse.json({
+        success: true,
+        actionType,
+        targetIds: [],
+        payload,
+        summary,
+        metadata: {
+          processedAt: new Date().toISOString(),
+          resellerId,
+          model: 'llama-3.3-70b-versatile',
+        },
+      });
+    }
+
+    // Guard: targetIds must be present for SINGLE/BULK (enforced by schema but TS needs narrowing)
+    if (!targetIds || targetIds.length === 0) {
+      return NextResponse.json(
+        { error: 'AI response missing targetIds for deployment action' },
+        { status: 500 }
+      );
+    }
+
+    // Deep merge helper — merges source into target while preserving existing keys
+    function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
+      const output = { ...target };
+      for (const key of Object.keys(source)) {
+        if (
+          source[key] !== null &&
+          typeof source[key] === 'object' &&
+          !Array.isArray(source[key]) &&
+          typeof target[key] === 'object' &&
+          target[key] !== null &&
+          !Array.isArray(target[key])
+        ) {
+          output[key] = deepMerge(target[key] as Record<string, unknown>, source[key] as Record<string, unknown>);
+        } else {
+          output[key] = source[key];
+        }
+      }
+      return output;
+    }
+
+    // Execute the updates with safe deep-merge into existing widget_config
     let updateResult;
     try {
-      if (actionType === 'BULK' && targetIds.length > 1) {
-        // Bulk update using .in() query
-        const { data, error: updateError } = await supabase
-          .from('tenants')
-          .update({ widget_config: payload })
-          .in('id', targetIds)
-          .select('id, name');
+      // Fetch existing widget_config for ALL target tenants first
+      const { data: existingTenants, error: fetchError } = await supabase
+        .from('tenants')
+        .select('id, name, widget_config')
+        .in('id', targetIds);
 
-        if (updateError) {
-          throw new Error(`Bulk update failed: ${updateError.message}`);
+      if (fetchError) {
+        throw new Error(`Failed to fetch existing configs: ${fetchError.message}`);
+      }
+
+      // Build per-tenant merged payloads
+      const tenantMap = new Map(
+        (existingTenants || []).map((t: { id: string; name: string; widget_config?: Record<string, unknown> }) => [t.id, t])
+      );
+
+      for (const targetId of targetIds) {
+        const existing = tenantMap.get(targetId);
+        const currentWidgetConfig = (existing?.widget_config as Record<string, unknown> | undefined) || {};
+        const mergedPayload = deepMerge(currentWidgetConfig, payload);
+
+        if (actionType === 'BULK' && targetIds.length > 1) {
+          const { error: updateError } = await supabase
+            .from('tenants')
+            .update({ widget_config: mergedPayload })
+            .eq('id', targetId);
+
+          if (updateError) {
+            throw new Error(`Bulk update for ${targetId} failed: ${updateError.message}`);
+          }
+        } else {
+          // Single update for the first target (already guarded by targetIds.length > 0)
+          const { data, error: updateError } = await supabase
+            .from('tenants')
+            .update({ widget_config: mergedPayload })
+            .eq('id', targetId)
+            .select('id, name')
+            .single();
+
+          if (updateError) {
+            throw new Error(`Single update for ${targetId} failed: ${updateError.message}`);
+          }
+
+          updateResult = {
+            type: 'SINGLE',
+            updatedCount: 1,
+            tenants: data ? [{ id: data.id, name: data.name }] : [],
+          };
+          break; // Single mode: only process the first target
         }
+      }
 
+      // If we processed bulk updates without breaking, build the result
+      if (!updateResult && actionType === 'BULK') {
         updateResult = {
           type: 'BULK',
-          updatedCount: data?.length || 0,
-          tenants: data?.map((t: { id: string; name: string }) => ({ id: t.id, name: t.name })) || [],
-        };
-      } else {
-        // Single tenant update
-        const targetId = targetIds[0];
-        const { data, error: updateError } = await supabase
-          .from('tenants')
-          .update({ widget_config: payload })
-          .eq('id', targetId)
-          .select('id, name')
-          .single();
-
-        if (updateError) {
-          throw new Error(`Single update failed: ${updateError.message}`);
-        }
-
-        updateResult = {
-          type: 'SINGLE',
-          updatedCount: 1,
-          tenants: data ? [{ id: data.id, name: data.name }] : [],
+          updatedCount: targetIds.length,
+          tenants: (existingTenants || [])
+            .filter((t: { id: string }) => targetIds.includes(t.id))
+            .map((t: { id: string; name: string }) => ({ id: t.id, name: t.name })),
         };
       }
     } catch (updateError) {
