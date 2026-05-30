@@ -128,6 +128,15 @@ MACRO COMMAND DICTIONARY — These override all other logic and MUST be checked 
   "show [category]", "filter [category]" → actionType "SYSTEM_FILTER_GRID"
   Extract the category from the command (e.g. "automotive", "general", "retail", "healthcare", "insurance")
   and place it in payload.category_filter (uppercased, e.g. "AUTOMOTIVE").
+- "delete [client name]", "remove [client name]", "deactivate [client name]",
+  "delete client [name]", "remove client [name]" → actionType "DELETE_CLIENT"
+  Extract the client name from the command and place it in clientName.
+  Example: "delete BMW Test" → actionType "DELETE_CLIENT", clientName: "BMW Test"
+- "what can you do", "help", "list commands", "what are my options", "capabilities", "commands",
+  "what commands", "show commands", "show help", "what can i do", "how does this work",
+  "what are the commands" → actionType "SYSTEM_HELP"
+  Do NOT extract any tenant or category information. Return a static list of available commands
+  in payload.availableCommands.
 
 BRANDING COMMANDS — When the user speaks a visual design or branding command, use actionType "SYSTEM_UPDATE_BRANDING".
 This action type is structurally handled by the central platform engine (deep-merges into widget_config).
@@ -188,6 +197,29 @@ Do NOT attempt to generate deployment configuration payloads:
     "category_filter": "AUTOMOTIVE"
   },
   "summary": "Filtering grid to AUTOMOTIVE clients."
+}
+
+{
+  "actionType": "SYSTEM_HELP",
+  "targetIds": [],
+  "payload": {
+    "availableCommands": [
+      "Delete client [name]",
+      "Filter clients by [sector]",
+      "Reset signals for [client]",
+      "Show me [industry] clients"
+    ]
+  },
+  "summary": "Displaying available system capabilities."
+}
+
+When the command is a DELETE_CLIENT request, use this structure:
+{
+  "actionType": "DELETE_CLIENT",
+  "clientName": "BMW Test",
+  "targetIds": [],
+  "payload": {},
+  "summary": "Deleting client BMW Test."
 }
 
 When the command is a branding/design command, use this structure:

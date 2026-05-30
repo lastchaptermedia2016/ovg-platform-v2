@@ -3,6 +3,7 @@
 import { Mic } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { SignOutButton } from './SignOutButton';
+import { SystemHelpTooltip } from './SystemHelpTooltip';
 
 interface MasterpieceHeaderProps {
   isListening?: boolean;
@@ -73,67 +74,69 @@ export function MasterpieceHeader({
         </div>
 
         {/* Center: Voice Status Indicator - Clickable Mic - Glass Box with Gemstone Effect */}
-        <div 
-          onClick={onMicClick}
-          className={`relative flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-full pointer-events-auto cursor-pointer active:scale-95 transition-all duration-300 ease-out overflow-hidden ${
-            isAwaitingVoiceConfirm ? 'bg-emerald-500/10 border border-emerald-500/30' : ''
-          } ${
-            isListening ? 'bg-[#0097b2]/20 border border-[#0097b2]/40' : ''
-          } ${
-            isCommunicating ? 'animate-breathing-glow border border-[#0097b2]/60' : 'border-t border-white/20 border-b border-[#0097b2]/40'
-          }`}
-        >
-          {/* Shimmer effect for active states */}
-          {(isListening || isCommunicating) && (
-            <div className="absolute inset-0 overflow-hidden pointer-events-none">
-              <div className="absolute inset-0 animate-shimmer">
-                <div className="w-full h-full bg-gradient-to-r from-transparent via-white/10 to-transparent transform -skew-x-12" />
+        <SystemHelpTooltip>
+          <div 
+            onClick={onMicClick}
+            className={`relative flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-full pointer-events-auto cursor-pointer active:scale-95 transition-all duration-300 ease-out overflow-hidden ${
+              isAwaitingVoiceConfirm ? 'bg-emerald-500/10 border border-emerald-500/30' : ''
+            } ${
+              isListening ? 'bg-[#0097b2]/20 border border-[#0097b2]/40' : ''
+            } ${
+              isCommunicating ? 'animate-breathing-glow border border-[#0097b2]/60' : 'border-t border-white/20 border-b border-[#0097b2]/40'
+            }`}
+          >
+            {/* Shimmer effect for active states */}
+            {(isListening || isCommunicating) && (
+              <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                <div className="absolute inset-0 animate-shimmer">
+                  <div className="w-full h-full bg-gradient-to-r from-transparent via-white/10 to-transparent transform -skew-x-12" />
+                </div>
               </div>
+            )}
+            <div className="relative flex items-center justify-center">
+              {/* The Mic Icon */}
+              <Mic 
+                className={`w-4 h-4 transition-colors duration-300 ${
+                  isCommunicating
+                    ? "text-[#0097b2]"
+                    : isListening 
+                      ? "text-[#0097b2]" 
+                      : isAwaitingVoiceConfirm 
+                        ? "text-emerald-400" 
+                        : "text-gray-400"
+                }`} 
+              />
+              
+              {/* The Pulsing Ping Effect (Visible when listening or communicating) */}
+              {(isListening || isCommunicating) && (
+                <span className="absolute inline-flex h-full w-full rounded-full bg-[#0097b2] opacity-100 animate-pulse"></span>
+              )}
             </div>
-          )}
-        <div className="relative flex items-center justify-center">
-          {/* The Mic Icon */}
-          <Mic 
-            className={`w-4 h-4 transition-colors duration-300 ${
-              isCommunicating
-                ? "text-[#0097b2]"
+
+            <span className={`text-[9px] md:text-[10px] font-bold tracking-widest animate-pulse ${
+              isCommunicating 
+                ? "!text-[#00e5ff] drop-shadow-[0_0_8px_rgba(0,229,255,0.6)]" 
                 : isListening 
                   ? "text-[#0097b2]" 
-                  : isAwaitingVoiceConfirm 
-                    ? "text-emerald-400" 
-                    : "text-gray-400"
-            }`} 
-          />
-          
-          {/* The Pulsing Ping Effect (Visible when listening or communicating) */}
-          {(isListening || isCommunicating) && (
-            <span className="absolute inline-flex h-full w-full rounded-full bg-[#0097b2] opacity-100 animate-pulse"></span>
-          )}
-        </div>
-
-        <span className={`text-[9px] md:text-[10px] font-bold tracking-widest animate-pulse ${
-          isCommunicating 
-            ? "!text-[#00e5ff] drop-shadow-[0_0_8px_rgba(0,229,255,0.6)]" 
-            : isListening 
-              ? "text-[#0097b2]" 
-              : "text-[#0097b2]/70"
-        }`}>
-          {isCommunicating 
-            ? 'PIERRE: SPEAKING...' 
-            : isListening 
-              ? 'LISTENING...' 
-              : 'SYSTEM'}
-        </span>
-        
-        {/* Pierre HUD: STT Command Feedback */}
-        {transcribedText && (
-          <div className="ml-3 px-2 py-0.5 bg-[#226683]/50 border-l-2 border-[#0097b2] backdrop-blur-sm">
-            <span className="text-[#0097b2] text-[9px] font-mono uppercase tracking-tighter italic">
-              Detected: {'\u201C'}{transcribedText}{'\u201D'}
+                  : "text-[#0097b2]/70"
+            }`}>
+              {isCommunicating 
+                ? 'PIERRE: SPEAKING...' 
+                : isListening 
+                  ? 'LISTENING...' 
+                  : 'SYSTEM'}
             </span>
+            
+            {/* Pierre HUD: STT Command Feedback */}
+            {transcribedText && (
+              <div className="ml-3 px-2 py-0.5 bg-[#226683]/50 border-l-2 border-[#0097b2] backdrop-blur-sm">
+                <span className="text-[#0097b2] text-[9px] font-mono uppercase tracking-tighter italic">
+                  Detected: {'\u201C'}{transcribedText}{'\u201D'}
+                </span>
+              </div>
+            )}
           </div>
-        )}
-        </div>
+        </SystemHelpTooltip>
 
         {/* Right Side */}
         <div className="flex items-center gap-3 pointer-events-auto">

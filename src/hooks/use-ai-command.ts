@@ -9,8 +9,9 @@ interface TenantContext {
 
 interface AICommandResponse {
   success: boolean;
-  actionType: 'SINGLE' | 'BULK' | 'NO_MATCH';
+  actionType: 'SINGLE' | 'BULK' | 'NO_MATCH' | 'DELETE_CLIENT';
   targetIds?: string[];
+  clientName?: string;
   payload?: Record<string, unknown>;
   summary: string;
   metadata: {
@@ -24,6 +25,8 @@ interface UseAICommandReturn {
   isAnalyzing: boolean;
   isModalOpen: boolean;
   isDeploying: boolean;
+  isDeleting: boolean;
+  deleteResult: { success: boolean; clientName?: string; clientId?: string } | null;
   technicalSummary: string;
   configPatch: Record<string, unknown> | null;
   targetTenantId: string | null;
@@ -59,6 +62,8 @@ export function useAICommand(): UseAICommandReturn {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDeploying, setIsDeploying] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteResult, setDeleteResult] = useState<{ success: boolean; clientName?: string; clientId?: string } | null>(null);
   const [technicalSummary, setTechnicalSummary] = useState('');
   const [configPatch, setConfigPatch] = useState<Record<string, unknown> | null>(null);
   const [targetTenantId, setTargetTenantId] = useState<string | null>(null);
@@ -68,6 +73,8 @@ export function useAICommand(): UseAICommandReturn {
     setIsAnalyzing(false);
     setIsModalOpen(false);
     setIsDeploying(false);
+    setIsDeleting(false);
+    setDeleteResult(null);
     setTechnicalSummary('');
     setConfigPatch(null);
     setTargetTenantId(null);
@@ -176,7 +183,52 @@ export function useAICommand(): UseAICommandReturn {
       // Call the callback with transformed response
       onResponse?.(transformedResponse);
 
-      // Only open modal for SINGLE actions
+      // 🔷 DELETE_CLIENT: Execute deletion immediately using the resolved UUID
+      if (transformedResponse.actionType === 'DELETE_CLIENT') {
+        const targetId = transformedResponse.targetIds?.[0];
+        if (!targetId) {
+          setError('Delete command missing target client ID');
+          return transformedResponse;
+        }
+
+        setIsDeleting(true);
+        setError(null);
+
+        try {
+          const deleteResponse = await fetch('/api/ai/delete-client-by-id', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              tenantId: targetId,
+              resellerSlug: resellerId.trim(),
+            }),
+          });
+
+          const deleteData = await deleteResponse.json();
+
+          if (!deleteResponse.ok) {
+            throw new Error(deleteData?.error || `Failed to delete client (HTTP ${deleteResponse.status})`);
+          }
+
+          setDeleteResult({
+            success: true,
+            clientName: deleteData.clientName,
+            clientId: deleteData.clientId,
+          });
+
+          setTechnicalSummary(`${deleteData.clientName} has been removed.`);
+        } catch (deleteErr: unknown) {
+          const deleteErrorMessage = deleteErr instanceof Error ? deleteErr.message : 'Deletion failed';
+          setError(deleteErrorMessage);
+          console.error('[useAICommand] ❌ Delete execution failed:', deleteErr);
+        } finally {
+          setIsDeleting(false);
+        }
+
+        return transformedResponse;
+      }
+
+      // Only open modal for SINGLE actions (DELETE_CLIENT handled above, no modal needed)
       if (transformedResponse.actionType === 'SINGLE') {
         setIsModalOpen(true);
       }
@@ -249,6 +301,8 @@ export function useAICommand(): UseAICommandReturn {
     isAnalyzing,
     isModalOpen,
     isDeploying,
+    isDeleting,
+    deleteResult,
     technicalSummary,
     configPatch,
     targetTenantId,

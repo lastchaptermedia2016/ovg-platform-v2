@@ -93,6 +93,8 @@ export default function ClientsPage() {
   const startListeningRef = useRef<() => Promise<void>>(() => Promise.resolve());
   // Stable ref for handleFilterChange to avoid temporal dead zone in transcript callback
   const handleFilterChangeRef = useRef<(newFilter: string) => void>(() => {});
+  // SYSTEM_HELP popover state — when non-null, renders the command discovery overlay
+  const [helpCommands, setHelpCommands] = useState<string[] | null>(null);
 
   // Portfolio Stats State (lifted from ClientsGrid)
   const [portfolioStats, setPortfolioStats] = useState({
@@ -109,6 +111,8 @@ export default function ClientsPage() {
     isAnalyzing,
     isModalOpen,
     isDeploying,
+    isDeleting,
+    deleteResult,
     technicalSummary,
     handleCommandSubmit,
     handleConfirmDeployment,
@@ -125,6 +129,11 @@ export default function ClientsPage() {
 
   // 🔷 Production Excellence: Track TTS communication state for HUD
   const isCommunicating = isVoicePlaying;
+
+  // Dismiss the SYSTEM_HELP popover
+  const dismissHelpPopover = useCallback(() => {
+    setHelpCommands(null);
+  }, []);
 
   // Handle bulk confirmation — must be above handleTranscript
   const handleBulkConfirm = useCallback(async () => {
@@ -259,6 +268,17 @@ export default function ClientsPage() {
             return;
           }
 
+          // 🔷 SYSTEM_HELP: User is asking for available commands — show popover, do NOT refresh grid
+          if (response?.actionType === 'SYSTEM_HELP') {
+            stopListeningRef.current();
+            const commands = response?.payload?.availableCommands as string[] | undefined;
+            if (commands && commands.length > 0) {
+              setHelpCommands(commands);
+            }
+            speakVoiceRef.current('I am your system orchestrator. I can help you manage clients, filter the dashboard, or perform bulk updates. What would you like to do?');
+            return;
+          }
+
           // 🔷 BULK: Requires voice confirmation before execution
           if (response?.actionType === 'BULK' && response?.targetIds && response.targetIds.length > 1) {
             setBulkConfirmation({
@@ -325,6 +345,42 @@ export default function ClientsPage() {
   // being listed as a dep (which would recreate the callback on every render)
   useEffect(() => { stopListeningRef.current = stopListening; }, [stopListening]);
   useEffect(() => { startListeningRef.current = startListening; }, [startListening]);
+
+  // 🔷 DELETE_CLIENT: Watch for successful deletion and trigger UI feedback
+  useEffect(() => {
+    if (!deleteResult?.success) return;
+
+    // Defer state updates to avoid violating set-state-in-effect rule
+    const successTimeout = setTimeout(() => {
+      setSuccessRipple(true);
+    }, 0);
+
+    const rippleClearTimeout = setTimeout(() => {
+      setSuccessRipple(false);
+    }, 1000);
+
+    speakVoiceRef.current(`${deleteResult.clientName || 'Client'} has been removed successfully.`);
+
+    // Re-enable mic after cooldown for the next command
+    const pollForTtsEnd = setInterval(() => {
+      if (!isVoicePlayingRef.current) {
+        clearInterval(pollForTtsEnd);
+        const recoveryTimer = setTimeout(() => {
+          if (isVoicePlayingRef.current) return;
+          startListeningRef.current();
+        }, 500);
+        confirmationTimeoutRef.current = recoveryTimer as unknown as NodeJS.Timeout;
+      }
+    }, 250);
+
+    return () => {
+      clearTimeout(successTimeout);
+      clearTimeout(rippleClearTimeout);
+      if (confirmationTimeoutRef.current) {
+        clearTimeout(confirmationTimeoutRef.current);
+      }
+    };
+  }, [deleteResult]);
 
   // Cleanup confirmation timeout on unmount
   useEffect(() => {
@@ -667,7 +723,16 @@ export default function ClientsPage() {
 
                 {/* Status Line - High-Tech Military Badge - Gemstone Glass Box */}
                 <div className="mt-3 flex items-center gap-3">
-                  {selectedTenantId ? (
+                  {isDeleting ? (
+                    <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/10 backdrop-blur-md border-t border-white/20 border-b border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.3)] transition-all duration-300">
+                      <span className="text-[10px] font-black text-red-400 tracking-tighter animate-pulse">
+                        AI
+                      </span>
+                      <span className="text-[10px] font-bold text-red-300 tracking-[0.2em] uppercase">
+                        EXECUTING DELETION...
+                      </span>
+                    </span>
+                  ) : selectedTenantId ? (
                     <>
                       <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 backdrop-blur-md border-t border-white/20 border-b border-green-500/50 shadow-[0_0_15px_rgba(34,197,94,0.3)] transition-all duration-300 hover:-translate-y-0.5">
                         <span className="text-[10px] font-black text-green-500 tracking-tighter animate-pulse">
@@ -832,6 +897,71 @@ export default function ClientsPage() {
       {error && (
         <div className="fixed bottom-20 left-6 z-40 px-4 py-2 rounded-lg bg-red-500/20 border border-red-500/30 text-red-300 text-xs">
           {error}
+        </div>
+      )}
+
+      {/* SYSTEM_HELP Popover — Glassmorphic command discovery overlay */}
+      {helpCommands && helpCommands.length > 0 && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center"
+          onClick={dismissHelpPopover}
+        >
+          {/* Backdrop */}
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+
+          {/* Popover Card — Glassmorphic */}
+          <div
+            className="relative max-w-md w-full mx-4 rounded-xl bg-slate-900/80 backdrop-blur-xl border border-white/10 shadow-2xl shadow-black/50 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-white/5 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-[#00e5ff] animate-pulse shadow-[0_0_8px_rgba(0,229,255,0.6)]" />
+                <span className="text-[10px] font-bold tracking-[0.2em] uppercase text-[#00e5ff] drop-shadow-[0_0_6px_rgba(0,229,255,0.3)]">
+                  Available Commands
+                </span>
+              </div>
+              <button
+                onClick={dismissHelpPopover}
+                className="text-white/40 hover:text-white/80 transition-colors text-sm leading-none"
+                aria-label="Close help popover"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Command List */}
+            <div className="px-4 py-4 space-y-2">
+              {helpCommands.map((cmd, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-white/[0.03] border border-white/5 hover:bg-white/[0.06] hover:border-white/10 transition-all duration-200 group"
+                >
+                  {/* Command bullet */}
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#0097b2]/60 group-hover:bg-[#00e5ff] transition-colors duration-200 flex-shrink-0" />
+                  {/* Command text */}
+                  <span className="text-[11px] font-medium text-white/80 group-hover:text-white tracking-wide">
+                    {cmd}
+                  </span>
+                  {/* Microphone hint */}
+                  <span className="ml-auto text-[7px] text-white/20 tracking-wider uppercase flex-shrink-0">
+                    Voice
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            {/* Footer — hint to dismiss */}
+            <div className="px-5 py-3 border-t border-white/5 flex items-center justify-between">
+              <span className="text-[8px] text-white/30 tracking-wider">
+                Click outside or press Esc to dismiss
+              </span>
+              <span className="text-[8px] text-[#0097b2]/60 tracking-wider font-medium">
+                {helpCommands.length} command{helpCommands.length !== 1 ? 's' : ''} available
+              </span>
+            </div>
+          </div>
         </div>
       )}
 

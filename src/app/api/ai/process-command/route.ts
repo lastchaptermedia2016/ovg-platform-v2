@@ -2,14 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import Groq from 'groq-sdk';
 import { z } from 'zod';
 import { createClient as createSupabaseClient } from '@/lib/supabase/server';
+import { resolveResellerId } from '@/lib/supabase/resolve-reseller-id';
 import { DEPLOYMENT_OFFICER } from '@/core/ai/system-prompts';
 
 // Force dynamic to prevent build-time initialization
 export const dynamic = 'force-dynamic';
 
-// Request validation schema - tenantId is now optional for global commands
+// Request validation schema - resellerId is the slug string, not a UUID
+// UUID resolution is handled by resolveResellerId
 const ProcessCommandSchema = z.object({
-  resellerId: z.string().min(1), // Reseller slug, not UUID
+  resellerId: z.string().min(1), // Reseller slug (e.g. "lastchaptermedia2016")
   userCommand: z.string().min(1).max(2000),
   currentConfig: z.record(z.any()).default({}),
   tenantContext: z.object({
@@ -21,13 +23,42 @@ const ProcessCommandSchema = z.object({
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 type ProcessCommandRequest = z.infer<typeof ProcessCommandSchema>;
 
+// Structured payload contract — replaces opaque z.record(z.any())
+// Ensures the orchestrator returns predictable shapes the frontend can consume
+const StructuredPayloadSchema = z.object({
+  theme: z.object({
+    primary: z.string().optional(),
+    secondary: z.string().optional(),
+    backgroundType: z.enum(['solid', 'gradient']).optional(),
+    primaryGradientStart: z.string().optional(),
+    primaryGradientEnd: z.string().optional(),
+    secondaryGradientStart: z.string().optional(),
+    secondaryGradientEnd: z.string().optional(),
+    opacity: z.number().min(0).max(1).optional(),
+    logoUrl: z.string().optional(),
+  }).optional(),
+  ui: z.object({
+    aiInsightBadge: z.boolean().optional(),
+    aiDesignMirror: z.boolean().optional(),
+    customCss: z.boolean().optional(),
+    badgeStyle: z.string().optional(),
+    animation: z.string().optional(),
+  }).optional(),
+  behavior: z.object({
+    prompt: z.string().optional(),
+    tone: z.string().optional(),
+  }).optional(),
+  category_filter: z.string().optional(),
+}).passthrough(); // Allow additional unknown keys for forward-compatibility
+
 // Response schema for AI output - supports SINGLE, BULK, NO_MATCH, and SYSTEM_ macro commands
 // SYSTEM_BULK_CONFIRM / SYSTEM_BULK_CANCEL / SYSTEM_FILTER_GRID are structural payloads
 // that bypass database writes (see short-circuit guard in POST handler).
 const AIResponseSchema = z.object({
-  actionType: z.enum(['SINGLE', 'BULK', 'NO_MATCH', 'SYSTEM_BULK_CONFIRM', 'SYSTEM_BULK_CANCEL', 'SYSTEM_FILTER_GRID', 'SYSTEM_UPDATE_BRANDING']),
+  actionType: z.enum(['SINGLE', 'BULK', 'NO_MATCH', 'DELETE_CLIENT', 'SYSTEM_BULK_CONFIRM', 'SYSTEM_BULK_CANCEL', 'SYSTEM_FILTER_GRID', 'SYSTEM_UPDATE_BRANDING', 'SYSTEM_HELP']),
   targetIds: z.array(z.string().uuid()).optional(),
-  payload: z.record(z.any()).optional().default({}),
+  clientName: z.string().optional(),
+  payload: StructuredPayloadSchema.optional().default({}),
   summary: z.string().min(3).max(500), // For TTS confirmation
 });
 
@@ -35,17 +66,31 @@ const AIResponseSchema = z.object({
 // which includes the MACRO COMMAND DICTIONARY block.
 const SYSTEM_PROMPT = DEPLOYMENT_OFFICER;
 
+/**
+ * Fuzzy, case-insensitive tenant name matcher.
+ * Searches for a tenant whose name contains the searchTerm (normalized).
+ * Returns the first matching tenant, or null if none found.
+ */
+function fuzzyMatchTenant(
+  tenants: { id: string; name: string }[],
+  searchTerm: string
+): { id: string; name: string } | null {
+  const normalized = searchTerm.toLowerCase().trim();
+  if (!normalized) return null;
+  return tenants.find(t => t.name.toLowerCase().includes(normalized)) ?? null;
+}
+
 export async function POST(request: NextRequest) {
   // Initialize Groq client inside handler for production excellence
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
-    console.error('❌ GROQ_API_KEY not configured on server');
+    console.error('%c[ProcessCommand] ❌ GROQ_API_KEY not configured on server', 'color: #dc2626; font-weight: bold;');
     return NextResponse.json(
       { error: 'AI service not configured' },
       { status: 500 }
     );
   }
-  
+
   const groq = new Groq({ apiKey });
   try {
     // Parse and validate request body
@@ -53,8 +98,8 @@ export async function POST(request: NextRequest) {
     const validationResult = ProcessCommandSchema.safeParse(body);
 
     if (!validationResult.success) {
-      console.error('Zod Validation Error:', validationResult.error.flatten());
-      console.error('Request Body:', body);
+      console.error('%c[ProcessCommand] ❌ Zod validation error:', 'color: #dc2626; font-weight: bold;', validationResult.error.flatten());
+      console.error('%c[ProcessCommand] 🔷 Request body:', 'color: #0097b2; font-weight: bold;', body);
       return NextResponse.json(
         { error: 'Invalid request parameters', details: validationResult.error.flatten() },
         { status: 400 }
@@ -77,37 +122,24 @@ export async function POST(request: NextRequest) {
 
     console.log('%c[ProcessCommand] 🔷 Fetching tenants for reseller:', 'color: #0097b2; font-weight: bold;', resellerId);
 
-    // 🔷 Production Excellence: Resolve reseller_slug to reseller_id first
-    let actualResellerId = resellerId;
-    
-    // Check if resellerId looks like a slug (not a UUID)
-    const isSlug = !resellerId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
-    
-    if (isSlug) {
-      console.log('%c[ProcessCommand] 🔷 Detected slug, resolving to UUID...', 'color: #0097b2;');
-      const { data: reseller, error: resellerError } = await supabase
-        .from('resellers')
-        .select('id')
-        .eq('tenant_id', resellerId)
-        .single();
-      
-      if (resellerError || !reseller) {
-        console.error('%c[ProcessCommand] ❌ Failed to resolve reseller slug:', 'color: #dc2626; font-weight: bold;', { 
-          slug: resellerId, 
-          error: resellerError?.message 
-        });
-        return NextResponse.json(
-          { error: 'Reseller not found', details: `No reseller with slug: ${resellerId}` },
-          { status: 404 }
-        );
-      }
-      
-      actualResellerId = reseller.id;
-      console.log('%c[ProcessCommand] ✅ Resolved slug to UUID:', 'color: #0097b2; font-weight: bold;', { 
-        slug: resellerId, 
-        uuid: actualResellerId 
+    // 🔷 Production Excellence: Resolve reseller_slug to UUID via shared utility
+    // resolveResellerId queries slug first (text column), then falls back to tenant_id (UUID column)
+    const actualResellerId = await resolveResellerId(supabase, resellerId);
+
+    if (!actualResellerId) {
+      console.error('%c[ProcessCommand] ❌ Failed to resolve reseller slug:', 'color: #dc2626; font-weight: bold;', {
+        slug: resellerId,
       });
+      return NextResponse.json(
+        { error: 'Reseller not found', details: `No reseller with slug: ${resellerId}` },
+        { status: 404 }
+      );
     }
+
+    console.log('%c[ProcessCommand] ✅ Resolved slug to UUID:', 'color: #0097b2; font-weight: bold;', {
+      slug: resellerId,
+      uuid: actualResellerId,
+    });
 
     // If tenantId is null, fetch all tenants for this reseller
     if (!tenantContext.tenantId) {
@@ -126,7 +158,7 @@ export async function POST(request: NextRequest) {
 
       allTenants = (tenants as { id: string; name: string; category: string }[]) || [];
       console.log(`%c[ProcessCommand] ✅ Found ${allTenants.length} tenants for reseller: ${actualResellerId}`, 'color: #0097b2; font-weight: bold;');
-      
+
       if (allTenants.length === 0) {
         console.warn('%c[ProcessCommand] ⚠️ No tenants found for reseller:', 'color: #f59e0b; font-weight: bold;', actualResellerId);
       }
@@ -176,7 +208,59 @@ Output ONLY valid JSON.`;
       throw new Error('AI response does not match required schema');
     }
 
-    const { actionType, targetIds, payload, summary } = aiValidation.data;
+    const { actionType, targetIds, clientName, payload, summary } = aiValidation.data;
+
+    // 🔷 DELETE_CLIENT: fuzzy match the client name against fetched tenants
+    if (actionType === 'DELETE_CLIENT') {
+      if (!clientName) {
+        console.error('%c[ProcessCommand] ❌ DELETE_CLIENT intent missing clientName', 'color: #dc2626; font-weight: bold;');
+        return NextResponse.json(
+          { error: 'Delete command requires a client name' },
+          { status: 400 }
+        );
+      }
+
+      if (allTenants.length === 0) {
+        // Tenants weren't pre-fetched (tenantId was provided) — fetch them now for matching
+        const { data: tenants, error: tenantsError } = await supabase
+          .from('tenants')
+          .select('id, name')
+          .eq('reseller_id', actualResellerId);
+
+        if (tenantsError) {
+          console.error('%c[ProcessCommand] ❌ Error fetching tenants for DELETE_CLIENT:', 'color: #dc2626; font-weight: bold;', tenantsError);
+          return NextResponse.json(
+            { error: 'Failed to fetch tenants for deletion' },
+            { status: 500 }
+          );
+        }
+
+        allTenants = (tenants || []).map(t => ({ ...t, category: '' }));
+      }
+
+      const matched = fuzzyMatchTenant(allTenants, clientName);
+      if (!matched) {
+        console.warn(`%c[ProcessCommand] ⚠️ Could not find a client matching '${clientName}'`, 'color: #f59e0b; font-weight: bold;');
+        return NextResponse.json(
+          { error: `Client "${clientName}" not found. Please check the name and try again.`, summary },
+          { status: 404 }
+        );
+      }
+
+      console.log(`%c[ProcessCommand] ✅ Matched client '${clientName}' → tenant ${matched.id}`, 'color: #0097b2; font-weight: bold;');
+      return NextResponse.json({
+        success: true,
+        actionType: 'DELETE_CLIENT',
+        targetIds: [matched.id],
+        clientName: matched.name,
+        summary,
+        metadata: {
+          processedAt: new Date().toISOString(),
+          resellerId,
+          model: 'llama-3.3-70b-versatile',
+        },
+      });
+    }
 
     // 🔷 NO_MATCH short-circuit: skip Supabase writes entirely
     if (actionType === 'NO_MATCH') {
@@ -197,7 +281,7 @@ Output ONLY valid JSON.`;
     // These are emitted by the MACRO COMMAND DICTIONARY in DEPLOYMENT_OFFICER when the user
     // speaks confirmation ("yes", "confirm"), cancellation ("no", "cancel"), or grid filter intents.
     // They carry empty targetIds and must NOT reach the DB update layer.
-    if (actionType === 'SYSTEM_BULK_CONFIRM' || actionType === 'SYSTEM_BULK_CANCEL' || actionType === 'SYSTEM_FILTER_GRID') {
+    if (actionType === 'SYSTEM_BULK_CONFIRM' || actionType === 'SYSTEM_BULK_CANCEL' || actionType === 'SYSTEM_FILTER_GRID' || actionType === 'SYSTEM_HELP') {
       console.log('%c[ProcessCommand] 🔷 SYSTEM_ macro command recognized:', 'color: #3b82f6; font-weight: bold;', { actionType, payload });
       return NextResponse.json({
         success: true,
@@ -262,7 +346,7 @@ Output ONLY valid JSON.`;
       for (const targetId of targetIds) {
         const existing = tenantMap.get(targetId);
         const currentWidgetConfig = (existing?.widget_config as Record<string, unknown> | undefined) || {};
-        const mergedPayload = deepMerge(currentWidgetConfig, payload);
+        const mergedPayload = deepMerge(currentWidgetConfig, payload as unknown as Record<string, unknown>);
 
         if (actionType === 'BULK' && targetIds.length > 1) {
           const { error: updateError } = await supabase
@@ -307,7 +391,7 @@ Output ONLY valid JSON.`;
       }
     } catch (updateError) {
       const errorMessage = updateError instanceof Error ? updateError.message : String(updateError);
-      console.error('Update execution failed:', updateError);
+      console.error('%c[ProcessCommand] ❌ Update execution failed:', 'color: #dc2626; font-weight: bold;', updateError);
       return NextResponse.json(
         { error: `Update failed: ${errorMessage}` },
         { status: 500 }
@@ -330,7 +414,7 @@ Output ONLY valid JSON.`;
     });
 
   } catch (error) {
-    console.error('AI Process Command Error:', error);
+    console.error('%c[ProcessCommand] ❌ AI Process Command Error:', 'color: #dc2626; font-weight: bold;', error);
 
     // Return clean error message as specified
     return NextResponse.json(
