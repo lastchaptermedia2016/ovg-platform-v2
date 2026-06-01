@@ -147,18 +147,36 @@ export function useAICommand(): UseAICommandReturn {
         body: JSON.stringify(requestBody),
       });
 
-      const data = await response.json() as ApiSuccessResponse & ApiErrorResponse;
+      // ── Diagnostic instrumentation: capture raw body before parsing ──────
+      // response.text() never throws on empty bodies; response.json() does.
+      // This lets us distinguish infrastructure-level failures (empty body,
+      // HTML error page) from route-level JSON error responses.
+      const rawBody = await response.text();
 
       if (!response.ok) {
-        // Capture full error details for debugging
-        console.error('%c[useAICommand] ❌ API Error Response:', 'color: #dc2626; font-weight: bold;', {
+        console.error('%c[useAICommand] ❌ Transport failure:', 'color: #dc2626; font-weight: bold;', {
           status: response.status,
           statusText: response.statusText,
-          error: data?.error || 'Unknown error',
-          details: data?.details || null,
+          rawBody: rawBody.trim() || 'EMPTY',
+          // First 200 chars to catch HTML error pages without flooding the console
+          bodyPreview: rawBody.slice(0, 200) || 'EMPTY',
         });
-        throw new Error(data?.error || data?.details || `Failed to process command (HTTP ${response.status})`);
+        // Attempt to extract a structured error message if the body is JSON
+        let errorMessage = `HTTP ${response.status} ${response.statusText}`;
+        try {
+          const errJson = JSON.parse(rawBody) as ApiErrorResponse;
+          errorMessage = errJson.error || errJson.details || errJson.message || errorMessage;
+        } catch {
+          // Body is not JSON (HTML error page, empty string, plain text) — use raw snippet
+          if (rawBody.trim()) {
+            errorMessage = `${errorMessage} — ${rawBody.slice(0, 120)}`;
+          }
+        }
+        throw new Error(errorMessage);
       }
+
+      // Body is confirmed OK — safe to parse
+      const data = JSON.parse(rawBody) as ApiSuccessResponse & ApiErrorResponse;
 
       // Transform new API response format
       const transformedResponse: AICommandResponse = {

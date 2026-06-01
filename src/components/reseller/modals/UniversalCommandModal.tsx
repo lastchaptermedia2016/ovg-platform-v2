@@ -147,6 +147,8 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
+  // PTT: debounce timer so stopListening always fires even on rapid release
+  const pttStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ─── Industry Enum & Normalization ───────────────────────────────
   const normalizeIndustry = useCallback((industry: string): string => {
@@ -328,6 +330,9 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
   // ─── Media Stream Cleanup ────────────────────────────────────────
   useEffect(() => {
     return () => {
+      if (pttStopTimerRef.current) {
+        clearTimeout(pttStopTimerRef.current);
+      }
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
@@ -441,6 +446,27 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
       startListening();
     }
   }, [isListening, startListening, stopListening]);
+
+  // ─── Push-to-Talk handlers ───────────────────────────────────────
+  // Hold to speak, release to capture. The 200ms delay on stop gives the
+  // browser time to flush the final ondataavailable chunk before onstop fires.
+  const handlePTTMouseDown = useCallback(() => {
+    if (pttStopTimerRef.current) {
+      clearTimeout(pttStopTimerRef.current);
+      pttStopTimerRef.current = null;
+    }
+    startListening();
+  }, [startListening]);
+
+  const handlePTTStop = useCallback(() => {
+    if (pttStopTimerRef.current) {
+      clearTimeout(pttStopTimerRef.current);
+    }
+    pttStopTimerRef.current = setTimeout(() => {
+      stopListening();
+      pttStopTimerRef.current = null;
+    }, 200);
+  }, [stopListening]);
 
   // ─── Transcription ───────────────────────────────────────────────
   const transcribeAudio = useCallback(async (audioBlob: Blob) => {
@@ -1158,7 +1184,10 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                   <div className="flex items-start gap-4">
                     <button
                       onClick={toggleListening}
-                      className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 flex-shrink-0 ${
+                      onMouseDown={handlePTTMouseDown}
+                      onMouseUp={handlePTTStop}
+                      onMouseLeave={handlePTTStop}
+                      className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 flex-shrink-0 select-none ${
                         isListening
                           ? 'bg-[#0097b2] text-white shadow-[0_0_15px_#0097b2] animate-pulse'
                           : 'bg-white/5 text-white/60 hover:bg-white/10'
@@ -1170,7 +1199,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                     </button>
                     <div className="flex-1">
                       <div className="text-xs text-white/40 mb-2">
-                        {isListening ? 'Listening... click mic to stop' : isProcessing ? 'Transcribing...' : 'Click microphone to start'}
+                        {isListening ? 'Listening… release to capture' : isProcessing ? 'Transcribing...' : 'Hold to speak, release to capture'}
                       </div>
                       <div className="text-sm text-white min-h-[60px]">
                         {transcript || 'Your voice command will appear here...'}

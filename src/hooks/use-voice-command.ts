@@ -248,6 +248,9 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   // cleanup() is intentionally deferred to the onstop handler below.
   const stopListening = useCallback(() => {
     if (mediaRecorderRef.current?.state === 'recording') {
+      // Force a final ondataavailable flush before stop() so the last
+      // cluster is written into audioChunksRef before onstop assembles the Blob.
+      mediaRecorderRef.current.requestData();
       mediaRecorderRef.current.stop();
     }
     setIsListening(false);
@@ -280,6 +283,16 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       const mimeType = mediaMimeTypeRef.current;
       const extension = mimeTypeToExtension(mimeType);
       const audioFile = new File([audioBlob], `command${extension}`, { type: mimeType });
+
+      // ── Diagnostic: confirm what we're sending ────────────────────────
+      console.log('[VoiceCommand] STT dispatch:', {
+        blobSize: audioBlob.size,
+        mimeType,
+        fileName: audioFile.name,
+        fileSize: audioFile.size,
+        fileType: audioFile.type,
+      });
+
       sttFormData.append('file', audioFile);
 
       const sttResponse = await fetch('/api/ai/stt', {
