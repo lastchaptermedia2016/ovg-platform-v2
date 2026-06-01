@@ -125,6 +125,9 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   const onAutoDeactivateRef = useRef(onAutoDeactivate);
   useEffect(() => { onAutoDeactivateRef.current = onAutoDeactivate; }, [onAutoDeactivate]);
 
+  const onMaxDurationRef = useRef(onMaxDuration);
+  useEffect(() => { onMaxDurationRef.current = onMaxDuration; }, [onMaxDuration]);
+
   const getAudioContextConstructor = useCallback((): typeof AudioContext => {
     if (typeof AudioContext !== 'undefined') return AudioContext;
     if (typeof window !== 'undefined' && 'webkitAudioContext' in window) {
@@ -520,7 +523,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
           mediaRecorderRef.current.stop();
           setIsListening(false);
           // Notify caller so the UI can surface feedback (e.g. TTS or toast)
-          onMaxDuration?.();
+          onMaxDurationRef.current?.();
         }
         maxDurationTimerRef.current = null;
       }, MAX_RECORDING_DURATION_MS);
