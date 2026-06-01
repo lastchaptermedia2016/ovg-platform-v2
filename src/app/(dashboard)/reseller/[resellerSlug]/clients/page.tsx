@@ -11,6 +11,7 @@ import { useVoiceCommand } from '@/hooks/use-voice-command';
 import { useResilientVoice } from '@/hooks/use-resilient-voice';
 import { CaptionsHUD } from '@/components/voice/CaptionsHUD';
 import { formatCurrency } from '@/utils/formatters';
+import { SYSTEM_CAPABILITIES } from '@/core/ai/system-capabilities';
 
 // Type definitions
 interface BulkConfirmation {
@@ -91,6 +92,10 @@ export default function ClientsPage() {
   // Stable refs for voice hook callbacks to avoid circular declaration dependency
   const stopListeningRef = useRef<() => void>(() => {});
   const startListeningRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  // NEW: Refs for explicit activation (Push-to-Talk) methods
+  const activateVoiceRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const deactivateVoiceRef = useRef<() => void>(() => {});
+  const voiceActiveRef = useRef(false);
   // Stable ref for handleFilterChange to avoid temporal dead zone in transcript callback
   const handleFilterChangeRef = useRef<(newFilter: string) => void>(() => {});
   // SYSTEM_HELP popover state — when non-null, renders the command discovery overlay
@@ -279,6 +284,86 @@ export default function ClientsPage() {
             return;
           }
 
+          // 🔷 SYSTEM_EXPLAIN: User asked about a specific feature or capability
+          // Read-only macro — does not touch selectedTenantId, bulk state, or DB
+          if (response?.actionType === 'SYSTEM_EXPLAIN') {
+            stopListeningRef.current();
+            const explanation = response.summary || 'Let me help you understand what I can do.';
+            speakVoiceRef.current(explanation);
+            // Extract contextKey from response (may be on the API response but not in AICommandResponse type)
+            const contextKey = (response as unknown as Record<string, unknown>)?.contextKey as string | undefined;
+            if (contextKey && SYSTEM_CAPABILITIES[contextKey]) {
+              const capability = SYSTEM_CAPABILITIES[contextKey];
+              // If help modal is already open, keep it visible; otherwise open it
+              if (!helpCommands) {
+                setHelpCommands([
+                  capability.name,
+                  ...capability.examples.map((ex: string) => `› ${ex}`),
+                ]);
+              }
+            } else {
+              // Fallback: no matching contextKey — open command modal with general capabilities
+              if (!helpCommands) {
+                setHelpCommands(Object.keys(SYSTEM_CAPABILITIES));
+              }
+            }
+            // After TTS completes, re-enable mic for follow-up questions
+            const pollForTtsEnd = setInterval(() => {
+              if (!isVoicePlayingRef.current) {
+                clearInterval(pollForTtsEnd);
+                const recoveryTimer = setTimeout(() => {
+                  if (isVoicePlayingRef.current) return;
+                  startListeningRef.current();
+                }, 500);
+                confirmationTimeoutRef.current = recoveryTimer as unknown as NodeJS.Timeout;
+              }
+            }, 250);
+            return;
+          }
+
+          // 🔷 SYSTEM_NOTE: Conversational/ambiguous input — speak the note, stay in STANDBY
+          // No state changes, no grid refresh, no arming. The system remains in STANDBY.
+          if (response?.actionType === 'SYSTEM_NOTE') {
+            stopListeningRef.current();
+            speakVoiceRef.current(response.summary || 'I heard you. How can I help?');
+            // After TTS completes, re-enable mic for the next command
+            const pollForTtsEnd = setInterval(() => {
+              if (!isVoicePlayingRef.current) {
+                clearInterval(pollForTtsEnd);
+                const recoveryTimer = setTimeout(() => {
+                  if (isVoicePlayingRef.current) return;
+                  startListeningRef.current();
+                }, 500);
+                confirmationTimeoutRef.current = recoveryTimer as unknown as NodeJS.Timeout;
+              }
+            }, 250);
+            return;
+          }
+
+          // 🔷 SYSTEM_DISARM: User explicitly wants to reset — clear staged state, return to STANDBY
+          if (response?.actionType === 'SYSTEM_DISARM') {
+            stopListeningRef.current();
+            setSelectedTenantId(null);
+            setSelectedClientName('');
+            setHelpCommands(null);
+            setCommandInput('');
+            setBulkConfirmation(null);
+            setIsAwaitingVoiceConfirm(false);
+            speakVoiceRef.current(response.summary || 'System disarmed. Returning to standby.');
+            // After TTS completes, re-enable mic for the next command
+            const pollForTtsEnd = setInterval(() => {
+              if (!isVoicePlayingRef.current) {
+                clearInterval(pollForTtsEnd);
+                const recoveryTimer = setTimeout(() => {
+                  if (isVoicePlayingRef.current) return;
+                  startListeningRef.current();
+                }, 500);
+                confirmationTimeoutRef.current = recoveryTimer as unknown as NodeJS.Timeout;
+              }
+            }, 250);
+            return;
+          }
+
           // 🔷 BULK: Requires voice confirmation before execution
           if (response?.actionType === 'BULK' && response?.targetIds && response.targetIds.length > 1) {
             setBulkConfirmation({
@@ -325,11 +410,14 @@ export default function ClientsPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAwaitingVoiceConfirm, bulkConfirmation, resellerSlug, selectedTenantId, activeFilter, handleCommandSubmit]);
 
-  // Voice Command Integration
+  // Voice Command Integration — explicit activation (Push-to-Talk) mode
   const {
     isListening,
     isProcessing,
     transcript: voiceTranscript,
+    voiceActive,
+    activateVoice,
+    deactivateVoice,
     startListening,
     stopListening,
   } = useVoiceCommand({
@@ -337,14 +425,56 @@ export default function ClientsPage() {
     tenantContext: selectedTenantId ? { tenantId: selectedTenantId, category: activeFilter } : { category: activeFilter },
     currentConfig: { theme: { primary: '#0097b2' }, behavior: { prompt: 'Default' } },
     skipAIPipeline: true,
+    explicitActivation: true,
     onTranscript: handleTranscript,
     onError: (err) => console.error('Voice command error:', err),
+    onAutoDeactivate: () => {
+      setIsAwaitingVoiceConfirm(false);
+      speakVoiceRef.current('Microphone auto-deactivated due to inactivity.');
+    },
   });
 
   // Keep voice action refs in sync so handleTranscript can call them without
   // being listed as a dep (which would recreate the callback on every render)
   useEffect(() => { stopListeningRef.current = stopListening; }, [stopListening]);
   useEffect(() => { startListeningRef.current = startListening; }, [startListening]);
+
+  // Sync explicit activation refs for global access (click-to-dismiss, etc.)
+  useEffect(() => { activateVoiceRef.current = activateVoice; }, [activateVoice]);
+  useEffect(() => { deactivateVoiceRef.current = deactivateVoice; }, [deactivateVoice]);
+  useEffect(() => { voiceActiveRef.current = voiceActive; }, [voiceActive]);
+
+  // ─── NEW: Global click-to-dismiss ──────────────────────────────────────────
+  // When voiceActive is true and the user clicks outside the mic area,
+  // deactivate the mic and reset staged state back to STANDBY.
+  useEffect(() => {
+    if (!voiceActive) return;
+    const handleGlobalClick = (e: MouseEvent) => {
+      // Find the mic container (the nav wrapper inside MasterpieceHeader)
+      const micContainer = document.querySelector('nav[class*="rounded-2xl"]');
+      if (!micContainer) return;
+      // Check if the click target is inside the mic clickable area
+      const micButton = micContainer.querySelector('[class*="rounded-full"]');
+      if (micButton && micButton.contains(e.target as Node)) {
+        return; // Click is on the mic toggle — let the toggle handler manage it
+      }
+      // Click is outside the mic — deactivate
+      deactivateVoiceRef.current();
+      setSelectedTenantId(null);
+      setSelectedClientName('');
+      setIsAwaitingVoiceConfirm(false);
+      setHelpCommands(null);
+      speakVoiceRef.current('Microphone deactivated.');
+    };
+    // Delay adding listener slightly to avoid capturing the activation click itself
+    const timeoutId = setTimeout(() => {
+      document.addEventListener('mousedown', handleGlobalClick, { capture: true });
+    }, 100);
+    return () => {
+      clearTimeout(timeoutId);
+      document.removeEventListener('mousedown', handleGlobalClick, { capture: true });
+    };
+  }, [voiceActive]);
 
   // 🔷 DELETE_CLIENT: Watch for successful deletion and trigger UI feedback
   useEffect(() => {
@@ -532,8 +662,10 @@ export default function ClientsPage() {
       {/* Production Excellence: Synchronized Global Header - Naked Wrapper */}
       <header className="sticky top-0 left-0 right-0 z-[50]">
         <MasterpieceHeader 
+          voiceActive={voiceActive}
+          onToggleVoice={voiceActive ? deactivateVoice : activateVoice}
           isListening={isListening}
-          onMicClick={isListening ? stopListening : startListening}
+          onMicClick={voiceActive ? deactivateVoice : activateVoice}
           isProcessing={isProcessing}
           isAwaitingVoiceConfirm={isAwaitingVoiceConfirm}
           transcribedText={voiceTranscript}
@@ -732,7 +864,7 @@ export default function ClientsPage() {
                         EXECUTING DELETION...
                       </span>
                     </span>
-                  ) : selectedTenantId ? (
+                  ) : selectedTenantId && voiceActive ? (
                     <>
                       <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 backdrop-blur-md border-t border-white/20 border-b border-green-500/50 shadow-[0_0_15px_rgba(34,197,94,0.3)] transition-all duration-300 hover:-translate-y-0.5">
                         <span className="text-[10px] font-black text-green-500 tracking-tighter animate-pulse">
@@ -746,6 +878,15 @@ export default function ClientsPage() {
                         TARGET: {selectedTenantId.slice(0, 8).toUpperCase()}...
                       </span>
                     </>
+                  ) : selectedTenantId ? (
+                    <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-cyan-500/10 backdrop-blur-md border-t border-white/20 border-b border-cyan-500/50 shadow-[0_0_15px_rgba(0,229,255,0.2)] transition-all duration-300 hover:-translate-y-0.5">
+                      <span className="text-[10px] font-black text-cyan-400 tracking-tighter animate-pulse">
+                        AI
+                      </span>
+                      <span className="text-[10px] font-bold text-cyan-300/80 tracking-[0.2em] uppercase">
+                        PUSH TO TALK
+                      </span>
+                    </span>
                   ) : (
                     <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 backdrop-blur-md border-t border-white/20 border-b border-white/30 transition-all duration-300 hover:-translate-y-0.5">
                       <span className="text-[10px] font-black text-white/40 tracking-tighter">

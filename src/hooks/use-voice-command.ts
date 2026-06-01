@@ -13,6 +13,12 @@ interface UseVoiceCommandReturn {
   startListening: () => Promise<void>;
   stopListening: () => void;
   abort: () => void;
+  /** NEW: Whether the mic is explicitly activated (higher-level than isListening) */
+  voiceActive: boolean;
+  /** NEW: Explicitly activate the mic (Push-to-Talk entry point) */
+  activateVoice: () => Promise<void>;
+  /** NEW: Explicitly deactivate the mic (Push-to-Talk exit point) */
+  deactivateVoice: () => void;
 }
 
 interface TenantContext {
@@ -40,7 +46,14 @@ interface VoiceCommandOptions {
   onTranscript?: (text: string) => void;
   onAIResponse?: (text: string) => void;
   onError?: (error: string) => void;
+  /** NEW: Enable explicit activation (Push-to-Talk) mode. Disables auto-stop on silence. */
+  explicitActivation?: boolean;
+  /** NEW: Fires when the 10s idle timeout elapses and mic auto-deactivates */
+  onAutoDeactivate?: () => void;
 }
+
+/** Default idle timeout in milliseconds before the mic auto-deactivates */
+const IDLE_TIMEOUT_MS = 10_000;
 
 export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceCommandReturn {
   const {
@@ -54,9 +67,11 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     onTranscript,
     onAIResponse,
     onError,
+    explicitActivation = false,
+    onAutoDeactivate,
   } = options;
 
-  // State
+  // ─── State ────────────────────────────────────────────────────────────────
   const [isListening, setIsListening] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -65,8 +80,14 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   const [aiResponse, setAiResponse] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  // Refs for audio handling
+  /** NEW: Higher-level activation state for Push-to-Talk */
+  const [voiceActive, setVoiceActive] = useState(false);
+
+  // ─── Refs for audio handling ──────────────────────────────────────────────
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  /** Captures the actual mimeType selected by MediaRecorder to avoid
+   *  Blob/File type mismatch when the browser falls back to audio/mp4. */
+  const mediaMimeTypeRef = useRef<string>('audio/webm');
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -86,12 +107,39 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   const tenantContextRef = useRef(options.tenantContext);
   const resellerIdRef = useRef(options.resellerId);
 
+  // ─── NEW: 10s idle timeout refs ───────────────────────────────────────────
+  const voiceActiveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const deactivateVoiceRef = useRef<() => void>(() => {});
+  const onAutoDeactivateRef = useRef(onAutoDeactivate);
+  useEffect(() => { onAutoDeactivateRef.current = onAutoDeactivate; }, [onAutoDeactivate]);
+
   const getAudioContextConstructor = useCallback((): typeof AudioContext => {
     if (typeof AudioContext !== 'undefined') return AudioContext;
     if (typeof window !== 'undefined' && 'webkitAudioContext' in window) {
       return (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     }
     return AudioContext;
+  }, []);
+
+  // ─── NEW: Start/reset the 10s idle timeout ──────────────────────────────
+  const resetVoiceActiveTimeout = useCallback(() => {
+    if (!explicitActivation) return;
+    if (voiceActiveTimeoutRef.current) {
+      clearTimeout(voiceActiveTimeoutRef.current);
+    }
+    voiceActiveTimeoutRef.current = setTimeout(() => {
+      console.log('[VoiceCommand] ⏰ 10s idle timeout reached — auto-deactivating mic');
+      onAutoDeactivateRef.current?.();
+      deactivateVoiceRef.current();
+    }, IDLE_TIMEOUT_MS);
+  }, [explicitActivation]);
+
+  // Cleanup the idle timeout
+  const clearVoiceActiveTimeout = useCallback(() => {
+    if (voiceActiveTimeoutRef.current) {
+      clearTimeout(voiceActiveTimeoutRef.current);
+      voiceActiveTimeoutRef.current = null;
+    }
   }, []);
 
   // Cleanup function
@@ -148,7 +196,12 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     setIsProcessing(false);
     setIsSpeaking(false);
     abortControllerRef.current?.abort();
-  }, [cleanup]);
+    // Also reset activation state
+    if (explicitActivation) {
+      setVoiceActive(false);
+      clearVoiceActiveTimeout();
+    }
+  }, [cleanup, explicitActivation, clearVoiceActiveTimeout]);
 
   // Monitor volume levels - uses ref for stopListening to avoid circular deps
   const monitorVolume = useCallback(() => {
@@ -161,23 +214,27 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     const normalizedVolume = average / 255;
     setVolumeLevel(normalizedVolume);
 
-    if (!forcedContinuousMode && normalizedVolume < silenceThreshold) {
-      if (!silenceTimerRef.current && !isProcessingRef.current) {
-        silenceTimerRef.current = setTimeout(() => {
-          stopListeningRef.current();
-        }, silenceDuration);
-      }
-    } else {
-      if (silenceTimerRef.current) {
-        clearTimeout(silenceTimerRef.current);
-        silenceTimerRef.current = null;
+    // In explicit activation mode, silence timer does NOT auto-stop
+    // It only runs in legacy mode for backward compatibility
+    if (!explicitActivation) {
+      if (!forcedContinuousMode && normalizedVolume < silenceThreshold) {
+        if (!silenceTimerRef.current && !isProcessingRef.current) {
+          silenceTimerRef.current = setTimeout(() => {
+            stopListeningRef.current();
+          }, silenceDuration);
+        }
+      } else {
+        if (silenceTimerRef.current) {
+          clearTimeout(silenceTimerRef.current);
+          silenceTimerRef.current = null;
+        }
       }
     }
 
     animationFrameRef.current = requestAnimationFrame(() => {
       monitorVolumeRef.current();
     });
-  }, [silenceThreshold, silenceDuration, forcedContinuousMode]);
+  }, [silenceThreshold, silenceDuration, forcedContinuousMode, explicitActivation]);
 
   useEffect(() => {
     monitorVolumeRef.current = monitorVolume;
@@ -187,19 +244,28 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   useEffect(() => { tenantContextRef.current = options.tenantContext; }, [options.tenantContext]);
   useEffect(() => { resellerIdRef.current = options.resellerId; }, [options.resellerId]);
 
-  // Stop listening and process
+  // Stop listening — triggers recorder finalization only.
+  // cleanup() is intentionally deferred to the onstop handler below.
   const stopListening = useCallback(() => {
     if (mediaRecorderRef.current?.state === 'recording') {
       mediaRecorderRef.current.stop();
     }
     setIsListening(false);
-    cleanup();
-  }, [cleanup]);
+  }, []);
 
   // Keep stopListeningRef synced outside render via useEffect
   useEffect(() => {
     stopListeningRef.current = stopListening;
   }, [stopListening]);
+
+  /**
+   * Derives a file extension from a MIME type string.
+   * Returns '.webm' for audio/webm, '.mp4' for everything else (audio/mp4, etc.).
+   */
+  const mimeTypeToExtension = useCallback((mimeType: string): string => {
+    if (mimeType.includes('webm')) return '.webm';
+    return '.mp4';
+  }, []);
 
   // Process audio through pipeline
   const processAudioPipeline = useCallback(async (audioBlob: Blob) => {
@@ -211,7 +277,9 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     try {
       // Step 1: Speech-to-Text (Whisper)
       const sttFormData = new FormData();
-      const audioFile = new File([audioBlob], 'command.webm', { type: 'audio/webm' });
+      const mimeType = mediaMimeTypeRef.current;
+      const extension = mimeTypeToExtension(mimeType);
+      const audioFile = new File([audioBlob], `command${extension}`, { type: mimeType });
       sttFormData.append('file', audioFile);
 
       const sttResponse = await fetch('/api/ai/stt', {
@@ -343,7 +411,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       isProcessingRef.current = false;
       setIsProcessing(false);
     }
-  }, [onTranscript, onAIResponse, onError, skipAIPipeline, resellerId, _currentConfig, getAudioContextConstructor]);
+  }, [onTranscript, onAIResponse, onError, skipAIPipeline, resellerId, _currentConfig, getAudioContextConstructor, mimeTypeToExtension]);
 
   // Start listening
   const startListening = useCallback(async () => {
@@ -367,9 +435,10 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       source.connect(analyser);
       analyserRef.current = analyser;
 
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4',
-      });
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      // Capture the actual mimeType the recorder settled on (matches the constructor arg)
+      mediaMimeTypeRef.current = mediaRecorder.mimeType;
 
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
@@ -378,16 +447,37 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        if (audioBlob.size > 0) {
-          await processAudioPipeline(audioBlob);
+        // 1. Release mic hardware immediately — before any async work
+        mediaRecorder.stream.getTracks().forEach(track => track.stop());
+
+        // 2. Assemble the finalized container — browser has completed the write by now
+        const audioBlob = new Blob(audioChunksRef.current, { type: mediaMimeTypeRef.current });
+
+        // 3. Clear chunks regardless of outcome to prevent stale data on next session
+        audioChunksRef.current = [];
+
+        // 4. Size guard — sub-1024-byte blobs are not valid media containers
+        if (audioBlob.size < 1024) {
+          console.warn('[VoiceCommand] Blob too small to be a valid media file (%d bytes), skipping pipeline', audioBlob.size);
+          cleanup();
+          return;
         }
+
+        // 5. Pipeline — exactly once per session, only after container is finalized
+        await processAudioPipeline(audioBlob);
+        cleanup();
       };
 
       mediaRecorderRef.current = mediaRecorder;
       mediaRecorder.start(100);
 
       setIsListening(true);
+
+      // In explicit activation mode, start the idle timeout
+      if (explicitActivation) {
+        resetVoiceActiveTimeout();
+      }
+
       monitorVolumeRef.current();
 
     } catch (err: unknown) {
@@ -396,24 +486,64 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       onError?.(errorMsg);
       cleanup();
     }
-  }, [processAudioPipeline, cleanup, onError, getAudioContextConstructor]);
+  }, [processAudioPipeline, cleanup, onError, getAudioContextConstructor, explicitActivation, resetVoiceActiveTimeout]);
 
-  // Handle Escape key
+  // ─── NEW: activateVoice — explicit activation entry point ─────────────────
+  const activateVoice = useCallback(async () => {
+    if (voiceActive) return; // Already active — no-op
+    try {
+      await startListening();
+      setVoiceActive(true);
+    } catch {
+      // startListening already sets error state and calls onError
+      setVoiceActive(false);
+    }
+  }, [voiceActive, startListening]);
+
+  // ─── NEW: deactivateVoice — explicit activation exit point ────────────────
+  const deactivateVoice = useCallback(() => {
+    if (!voiceActive) return; // Already inactive — no-op
+    clearVoiceActiveTimeout();
+    stopListening();
+    setVoiceActive(false);
+  }, [voiceActive, clearVoiceActiveTimeout, stopListening]);
+
+  // Keep deactivateVoiceRef synced so the timeout can call it without deps
+  useEffect(() => {
+    deactivateVoiceRef.current = deactivateVoice;
+  }, [deactivateVoice]);
+
+  // ─── NEW: Reset idle timeout whenever a new transcript arrives ────────────
+  // This keeps the mic hot as long as the user is speaking
+  useEffect(() => {
+    if (explicitActivation && voiceActive && transcript) {
+      resetVoiceActiveTimeout();
+    }
+  }, [transcript, explicitActivation, voiceActive, resetVoiceActiveTimeout]);
+
+  // Handle Escape key — also deactivates voice in explicit mode
   useEffect(() => {
     const handleKeyDown = (_e: KeyboardEvent) => {
       if (_e.key === 'Escape' && (isListening || isProcessing || isSpeaking)) {
-        abort();
+        if (explicitActivation) {
+          deactivateVoiceRef.current();
+        } else {
+          abort();
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isListening, isProcessing, isSpeaking, abort]);
+  }, [isListening, isProcessing, isSpeaking, abort, explicitActivation]);
 
   // Cleanup on unmount
   useEffect(() => {
-    return () => cleanup();
-  }, [cleanup]);
+    return () => {
+      clearVoiceActiveTimeout();
+      cleanup();
+    };
+  }, [clearVoiceActiveTimeout, cleanup]);
 
   return {
     isListening,
@@ -426,5 +556,9 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     startListening,
     stopListening,
     abort,
+    // NEW explicit activation API
+    voiceActive,
+    activateVoice,
+    deactivateVoice,
   };
 }

@@ -1,625 +1,281 @@
-# Design Document
-
-## OVG Platform v2 — Full Refactor
-
----
+# Voice Command Race Condition Bugfix Design
 
 ## Overview
 
-This refactor addresses four priority tiers across the OVG Platform v2 Next.js application. The changes are purely corrective — no new features are introduced. The application must remain functionally equivalent after every change.
+`useVoiceCommand` in `src/hooks/use-voice-command.ts` has a race condition between `MediaRecorder.stop()` and the browser's asynchronous `onstop` event. When `stopListening` is called, the current code calls `mediaRecorder.stop()` and then immediately calls `cleanup()`. Because `onstop` fires asynchronously — after the browser has finished writing the container metadata — `cleanup()` can destroy the `MediaRecorder` reference and stop stream tracks before the final audio chunk is written. The `onstop` handler then assembles a `Blob` from partially-written or empty chunks and passes it to `processAudioPipeline`, which forwards it to the Whisper STT API. Whisper rejects the malformed container with a 400 "could not process file" error.
 
-**Priority tiers:**
-
-- **P0 — Security**: Unguarded admin endpoints, insecure identity resolution (`getSession` vs `getUser`), diagnostic endpoint exposure, and `user_metadata`-based access control.
-- **P1 — Architecture**: Supabase client proliferation (singleton pattern, inline `createClient` calls), auto-reseller side-effects in `ClientsGrid`, and duplicate `Tenant` type definitions.
-- **P2/P3 — Code Quality**: React hook warnings, unused variables, `any` types, raw `<img>` tags, and garbage root files.
+The fix introduces a **Promise-Based Synchronization Gate**: `processAudioPipeline` is invoked exclusively from within the `onstop` handler, after the browser has fully finalized the media container. `cleanup()` is removed from `stopListening` and deferred to after `onstop` completes. A minimum-size guard (`blob.size < 1024`) is added inside `onstop` to abort the pipeline for recordings too short to be a valid media file. The public API surface (`UseVoiceCommandReturn`) is unchanged — zero call-site modifications required.
 
 ---
 
-## Architecture
+## Glossary
 
-### Supabase Client Topology (Post-Refactor)
-
-The platform will have exactly three canonical Supabase client modules. All other client instantiation is eliminated.
-
-```
-src/lib/supabase/
-  server.ts   — createClient()       Server Components, API Routes (user session, cookie-based)
-  client.ts   — createClient()       Browser Components (anon key, browser-side)
-  admin.ts    — supabaseAdmin        API Routes requiring service-role (bypasses RLS)
-```
-
-`singleton.ts` is deleted. `index.ts` is rewritten to re-export only from the three canonical modules, with no reference to `singleton`.
-
-**Import rules enforced across the codebase:**
-
-| Context | Import |
-|---|---|
-| Server Component / API Route (user session) | `import { createClient } from '@/lib/supabase/server'` |
-| Client Component | `import { createClient } from '@/lib/supabase/client'` |
-| API Route (service-role / admin) | `import { supabaseAdmin } from '@/lib/supabase/admin'` |
-
-### Auth Identity Resolution (Post-Refactor)
-
-All session checks are migrated from `getSession()` to `getUser()`. The Supabase documentation explicitly states that `getSession()` reads from local storage and does not re-validate the JWT against the server, making it unsuitable for server-side authorization decisions.
-
-```
-Before:  supabase.auth.getSession()  →  trusts local cache
-After:   supabase.auth.getUser()     →  validates JWT against Supabase Auth server
-```
-
-### Reseller Access Control (Post-Refactor)
-
-The `user_resellers` junction table becomes the single source of truth for reseller access. `user_metadata.reseller_slug` is no longer used for authorization decisions.
-
-```
-Before:  user.user_metadata.reseller_slug === resellerSlug  (forgeable)
-After:   SELECT reseller_slug FROM user_resellers WHERE user_id = auth.uid()  (authoritative)
-```
-
-This affects three locations: `middleware.ts`, `layout.tsx`, and `auth/page.tsx`.
+- **Bug_Condition (C)**: The condition that triggers the race — `stopListening` is called while `MediaRecorder` is in the `'recording'` state, causing `cleanup()` to run before `onstop` fires.
+- **Property (P)**: The desired behavior when the bug condition holds — `processAudioPipeline` is called exactly once, only after `onstop` fires, with a finalized `Blob` of size ≥ 1024 bytes.
+- **Preservation**: All behaviors that must remain unchanged by the fix — the STT → AI → TTS pipeline for valid audio, `skipAIPipeline`, `abort()` via Escape key, `startListening` initialization, the 10s idle timeout, and the `activateVoice`/`deactivateVoice` Push-to-Talk lifecycle.
+- **`stopListening`**: The public function in `useVoiceCommand` that signals the end of a recording session. Its signature (`() => void`) is unchanged.
+- **`onstop`**: The browser-fired `MediaRecorder` event that signals the recorder has fully finalized the audio container, including header metadata. This is the only safe point to assemble the `Blob`.
+- **`cleanup()`**: The internal function that tears down `MediaRecorder`, `AudioContext`, stream tracks, and timers. After the fix, it is called only from within `onstop` (after pipeline) and from `abort()`.
+- **`processAudioPipeline`**: The async function that sends the `Blob` to Whisper STT, then optionally to the AI process-command and TTS endpoints. Its signature (`(audioBlob: Blob) => Promise<void>`) is unchanged.
+- **Synchronization Gate**: The architectural pattern where `onstop` owns the full sequencing: stop tracks → assemble Blob → size guard → pipeline → cleanup.
+- **Size Guard**: The `blob.size < 1024` check inside `onstop` that aborts the pipeline for recordings too short to be a valid media container.
 
 ---
 
-## Components and Interfaces
+## Bug Details
 
-### 1. Middleware (`middleware.ts`)
+### Bug Condition
 
-**Current state:** Calls `supabase.auth.getSession()`. Injects `x-user-id` from `session.user.id`.
+The race condition manifests when `stopListening` is called while the `MediaRecorder` is in the `'recording'` state. The function calls `mediaRecorder.stop()` to signal the recorder to finalize, but then immediately calls `cleanup()` — which nulls out `mediaRecorderRef.current`, stops stream tracks, and tears down the `AudioContext` — before the browser's asynchronous `onstop` event has fired. When `onstop` eventually fires, it assembles a `Blob` from `audioChunksRef.current`, which may contain only partial data or no final chunk (since the recorder was interrupted mid-finalization). This malformed `Blob` is passed to `processAudioPipeline` and forwarded to Whisper, which rejects it with HTTP 400.
 
-**Target state:**
+**Formal Specification:**
 
-```typescript
-// Replace getSession with getUser
-const { data: { user }, error } = await supabase.auth.getUser();
+```
+FUNCTION isBugCondition(session)
+  INPUT: session — a recording session object
+  OUTPUT: boolean
 
-if (!user || error) {
-  const authUrl = new URL('/auth', request.url);
-  authUrl.searchParams.set('redirectTo', pathname);
-  return NextResponse.redirect(authUrl);
-}
-
-const response = NextResponse.next();
-response.headers.set('x-user-id', user.id);
-return response;
+  RETURN session.mediaRecorder.state = 'recording'
+         AND stopListening() was called
+         AND cleanup() was called BEFORE onstop fired
+         AND processAudioPipeline was called with the resulting Blob
+END FUNCTION
 ```
 
-No other changes to middleware logic.
+### Examples
+
+- **Normal stop (buggy)**: User speaks a command, `stopListening` is called. `cleanup()` runs at t=0ms. `onstop` fires at t=12ms. The assembled `Blob` is missing the WebM/MP4 container footer. Whisper returns 400.
+- **Short recording (buggy)**: User activates mic and immediately stops. `audioChunksRef.current` contains one 80-byte chunk. Even if `onstop` fires correctly, the 80-byte `Blob` is not a valid media file. Whisper returns 400.
+- **Abort path (not buggy)**: User presses Escape. `abort()` is called, which calls `cleanup()` directly and sets `isListening(false)`. `processAudioPipeline` is never called. This path is correct and must remain unchanged.
+- **Valid recording after fix**: User speaks a 3-second command. `stopListening` calls `mediaRecorder.stop()` and `setIsListening(false)` only. `onstop` fires, stops tracks, assembles a 48 KB `Blob`, passes the size guard, calls `processAudioPipeline` exactly once. Whisper succeeds.
 
 ---
 
-### 2. Reseller Layout (`src/app/(dashboard)/reseller/[resellerSlug]/layout.tsx`)
+## Expected Behavior
 
-**Current state:** `verifyResellerAccess` reads `user.user_metadata.reseller_slug` and compares it to the URL slug. This is bypassable by a user who edits their own metadata.
+### Preservation Requirements
 
-**Target state:** Query `user_resellers` table to confirm the association.
+**Unchanged Behaviors:**
 
-```typescript
-async function verifyResellerAccess(resellerSlug: string) {
-  const supabase = await createClient();
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
+- Mouse/pointer interactions with the UI that trigger `startListening` or `stopListening` must continue to work exactly as before.
+- The full STT → AI process-command → TTS pipeline must continue to execute for valid audio blobs (size ≥ 1024 bytes).
+- `skipAIPipeline = true` must continue to stop processing after the STT step without calling the AI or TTS endpoints.
+- The `abort()` function (Escape key path) must continue to call `cleanup()` directly and bypass the pipeline entirely — this is intentional.
+- `startListening` must continue to request microphone access, initialize `AudioContext` and `AnalyserNode`, and begin volume monitoring.
+- The 10-second idle timeout in explicit activation mode must continue to auto-deactivate the mic and fire `onAutoDeactivate`.
+- `activateVoice` and `deactivateVoice` must continue to manage `voiceActive` state and the Push-to-Talk lifecycle.
+- The `stopListening` public signature (`() => void` on `UseVoiceCommandReturn`) must remain unchanged — zero call-site modifications.
 
-  if (authError || !user) {
-    return { authorized: false, redirectTo: '/auth' };
-  }
+**Scope:**
 
-  // Authoritative check: query the junction table
-  const { data: userReseller, error: linkError } = await supabase
-    .from('user_resellers')
-    .select('reseller_slug')
-    .eq('user_id', user.id)
-    .eq('reseller_slug', resellerSlug)
-    .maybeSingle();
+All inputs that do NOT involve the race condition path (i.e., all paths other than `stopListening` being called while `MediaRecorder` is in `'recording'` state) must be completely unaffected by this fix. This includes:
 
-  if (linkError || !userReseller) {
-    return { authorized: false, redirectTo: '/auth' };
-  }
-
-  return { authorized: true, redirectTo: null };
-}
-```
-
-The `defaultSlug` variable (currently unused, causing a lint warning) is removed.
+- The `abort()` path via Escape key
+- The `skipAIPipeline` early-exit path
+- The idle timeout auto-deactivation path
+- The `deactivateVoice` → `stopListening` path (which now benefits from the same gate)
+- All `startListening` initialization logic
 
 ---
 
-### 3. Auth Page (`src/app/(auth)/auth/page.tsx`)
+## Hypothesized Root Cause
 
-**Current state:**
-- Calls `supabase.auth.getSession()` on mount.
-- Contains hardcoded slug strings `lastchaptermedia2016` and `acme-corp`.
-- Contains a "Run Authentication Diagnostics" button that calls `/api/auth/diagnostics`.
-- Calls `/api/auth/update-reseller-slug` to patch metadata.
+Based on the bug description and code analysis, the root cause is:
 
-**Target state:**
+1. **Premature `cleanup()` in `stopListening`**: The current `stopListening` implementation calls `cleanup()` synchronously after `mediaRecorder.stop()`. `cleanup()` nulls `mediaRecorderRef.current` and calls `streamRef.current?.getTracks().forEach(track => track.stop())`. The browser's `onstop` event fires asynchronously (typically 10–50ms later), by which point the stream tracks may already be stopped and the recorder reference nulled. The `onstop` handler in `startListening` still fires and assembles a `Blob`, but the data may be incomplete because the recorder was interrupted before it could write the container footer.
 
-**Session check on mount** — replace `getSession` with `getUser`, then query `user_resellers` for the redirect slug:
+2. **No size guard before pipeline invocation**: The current `onstop` handler checks `audioBlob.size > 0` but does not enforce a meaningful minimum. A 1-byte or 80-byte blob passes this check and is forwarded to Whisper, which correctly rejects it as an invalid media file.
 
-```typescript
-useEffect(() => {
-  const checkUser = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+3. **Track release timing**: `cleanup()` stops stream tracks before `onstop` fires. While this does not directly cause the malformed Blob (the recorder has already been told to stop), it means the hardware is released at an unpredictable point relative to the finalization event.
 
-    const { data: userReseller } = await supabase
-      .from('user_resellers')
-      .select('reseller_slug')
-      .eq('user_id', user.id)
-      .maybeSingle();
-
-    if (userReseller?.reseller_slug) {
-      router.push(`/reseller/${userReseller.reseller_slug}/clients`);
-    } else {
-      setError('Your account is not linked to a reseller. Please contact support.');
-    }
-  };
-  checkUser();
-}, [router, supabase]);
-```
-
-**Post-login redirect** — same pattern: query `user_resellers` after successful `signInWithPassword`, redirect to the slug found there. If no row exists, display an error.
-
-**Removals:**
-- Delete the `updateUserResellerSlug` function and all calls to it.
-- Delete the diagnostics button and its `onClick` handler.
-- Remove all references to `lastchaptermedia2016` and `acme-corp`.
-- Remove the call to `/api/auth/fix-metadata`.
-
----
-
-### 4. Cleanup Tenants Endpoint (`src/app/api/admin/cleanup-tenants/route.ts`)
-
-**Current state:** No auth check. Instantiates a raw `createClient` from `@supabase/supabase-js` for the admin operations.
-
-**Target state:** Add auth guard at the top of the handler. Use `supabaseAdmin` from `@/lib/supabase/admin` for the deletion logic.
-
-```typescript
-import { createClient } from '@/lib/supabase/server';
-import { supabaseAdmin } from '@/lib/supabase/admin';
-
-export async function POST(request: Request) {
-  // Auth guard
-  const supabase = await createClient();
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-
-  if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  // Role check — read role from user_metadata or app_metadata
-  const role = user.app_metadata?.role ?? user.user_metadata?.role;
-  if (role !== 'admin') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
-
-  // Existing deletion logic continues, using supabaseAdmin instead of inline createAdminClient
-  const { resellerSlug, cleanupTestEntries } = await request.json();
-  // ... rest of handler unchanged, replacing supabaseAdmin variable references
-}
-```
-
----
-
-### 5. Reseller Create Endpoint (`src/app/api/resellers/create/route.ts`)
-
-**Current state:** No auth check. Instantiates a raw `createClient` from `@supabase/supabase-js`.
-
-**Target state:** Add auth guard. Replace inline client with `supabaseAdmin`.
-
-```typescript
-import { createClient } from '@/lib/supabase/server';
-import { supabaseAdmin } from '@/lib/supabase/admin';
-
-export async function POST(request: Request) {
-  // Auth guard
-  const supabase = await createClient();
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-
-  if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  // Existing creation logic continues, using supabaseAdmin
-}
-```
-
----
-
-### 6. Delete Client Endpoint (`src/app/api/ai/delete-client/route.ts`)
-
-**Current state:** Reads `resellerSlug` from the request body and uses it directly to scope the deletion. This allows a caller to supply any slug and delete tenants belonging to a different reseller.
-
-**Target state:** Derive the reseller slug from the authenticated user's `user_resellers` row. Remove `resellerSlug` from the accepted request body.
-
-```typescript
-export async function POST(request: NextRequest) {
-  const supabase = await createSupabaseClient();
-
-  // 1. Verify session
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-  if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  // 2. Resolve reseller from user_resellers (not request body)
-  const { data: userReseller, error: linkError } = await supabase
-    .from('user_resellers')
-    .select('reseller_id, reseller_slug')
-    .eq('user_id', user.id)
-    .maybeSingle();
-
-  if (linkError || !userReseller) {
-    return NextResponse.json({ error: 'Forbidden: no reseller association' }, { status: 403 });
-  }
-
-  // 3. Accept only voiceCommand from body
-  const { voiceCommand } = await request.json();
-  if (!voiceCommand) {
-    return NextResponse.json({ error: 'voiceCommand required' }, { status: 400 });
-  }
-
-  // 4. Scope all tenant queries to userReseller.reseller_id
-  // ... rest of handler unchanged
-}
-```
-
-The ownership check before deletion:
-
-```typescript
-// Verify tenant belongs to caller's reseller before deleting
-const { data: tenants } = await supabase
-  .from('tenants')
-  .select('id, name')
-  .eq('reseller_id', userReseller.reseller_id)  // enforced from session
-  .ilike('name', `%${clientName}%`);
-
-if (!tenants || tenants.length === 0) {
-  return NextResponse.json({ error: `Client not found` }, { status: 404 });
-}
-```
-
----
-
-### 7. Diagnostic Endpoints (Deleted)
-
-The following files are deleted entirely:
-
-- `src/app/api/auth/diagnostics/route.ts`
-- `src/app/api/test-auth/route.ts`
-
-The diagnostics button in `auth/page.tsx` is removed as part of the Auth Page cleanup (§3 above).
-
----
-
-### 8. ClientsGrid (`src/components/reseller/ClientsGrid.tsx`)
-
-**Current state:** When `fetchTenants` cannot find the reseller slug in the `resellers` table, it calls `POST /api/resellers/create` to silently create a new reseller record. This is a dangerous side-effect of a read operation.
-
-**Target state:** Replace the auto-creation branch with an error state.
-
-```typescript
-if (rErr || !rData?.id) {
-  console.error('OVG-PLATFORM-V2: Reseller not found:', resellerSlugParam);
-  setError(`Reseller "${resellerSlugParam}" not found. Please contact support.`);
-  setLoading(false);
-  return;
-}
-```
-
-Add an `error` state variable to the component:
-
-```typescript
-const [error, setError] = useState<string | null>(null);
-```
-
-Render the error state in the component's return:
-
-```typescript
-if (error) {
-  return (
-    <div className="flex items-center justify-center p-8">
-      <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-6 text-center">
-        <p className="text-red-400 text-sm">{error}</p>
-      </div>
-    </div>
-  );
-}
-```
-
-The local `interface Tenant` in `ClientsGrid.tsx` is removed. The component imports `Tenant` from `@/types`.
-
----
-
-### 9. Type System (`src/types/index.ts`)
-
-**Current state:** The canonical `Tenant` type (Zod-derived) is missing fields that `ClientsGrid` uses: `signal_count`, `signal_trend`, `ai_insight`, `last_seen`, `total_revenue`, `total_leads`, `mrr`, `is_active`, `permission_level`, `indicators`, `email`, `category`, `industry`, `category_config`.
-
-**Target state:** Extend the Zod schema to include all fields used by `ClientsGrid`. The `Indicators` interface is also moved to `src/types/index.ts`.
-
-```typescript
-// Added to TenantSchema
-  email: z.string().nullable().optional(),
-  category: z.string().optional(),
-  industry: z.string().optional(),
-  category_config: z.record(z.unknown()).optional(),
-  signal_count: z.number().optional(),
-  signal_trend: z.array(z.number()).optional(),
-  ai_insight: z.string().nullable().optional(),
-  last_seen: z.string().nullable().optional(),
-  total_revenue: z.number().nullable().optional(),
-  total_leads: z.number().nullable().optional(),
-  mrr: z.number().nullable().optional(),
-  is_active: z.boolean().default(true),
-  permission_level: z.enum(['standard', 'readonly']).optional(),
-  indicators: z.object({
-    ai: z.enum(['active', 'inactive', 'error']),
-    sms: z.enum(['active', 'inactive', 'error']),
-    vin: z.enum(['active', 'inactive', 'error']),
-    signal: z.enum(['active', 'inactive', 'error']),
-  }).optional(),
-```
-
-The `Client` interface remains separate and unchanged — it represents the reseller-facing client record shape, not the database tenant shape.
-
----
-
-### 10. API Route Client Consolidation
-
-Three API routes currently instantiate a raw `createClient` from `@supabase/supabase-js` with the service role key inline. They are migrated to `supabaseAdmin`:
-
-| File | Change |
-|---|---|
-| `src/app/api/tenants/update-config-with-greeting/route.ts` | Replace `createServiceClient(url, key)` with `supabaseAdmin` from `@/lib/supabase/admin` |
-| `src/app/api/reseller/[resellerSlug]/clients/route.ts` | Replace `createServiceClient(url, key)` with `supabaseAdmin` |
-| `src/app/api/ai/create-client/route.ts` | Replace `createServiceClient(url, key)` with `supabaseAdmin` |
-| `src/app/api/admin/cleanup-tenants/route.ts` | Replace inline `createAdminClient(url, key)` with `supabaseAdmin` |
-| `src/app/api/resellers/create/route.ts` | Replace inline `createAdminClient(url, key)` with `supabaseAdmin` |
-| `src/app/api/auth/diagnostics/route.ts` | Deleted entirely |
-
----
-
-### 11. `src/lib/supabase/index.ts` (Rewritten)
-
-After `singleton.ts` is deleted, `index.ts` is rewritten to export only from the three canonical modules:
-
-```typescript
-// Canonical re-exports — no singleton references
-export { createClient } from './server';
-export { createClient as createBrowserClient } from './client';
-export { supabaseAdmin } from './admin';
-```
-
----
-
-### 12. Code Quality Fixes
-
-#### React Hooks (`exhaustive-deps`)
-
-Each warning is resolved by one of three strategies:
-
-1. **Add the missing dependency** — when the dependency is stable (e.g., a `useCallback` or `useRef`).
-2. **Move the value into a ref** — when the value changes frequently but the callback should not be recreated (e.g., `resellerSlug` in `ClientsGrid`'s `fetchDashboardStats`).
-3. **Add a justified `eslint-disable-next-line` comment** — only when the exclusion is intentional and documented (e.g., mount-only effects).
-
-Key fixes:
-
-| Location | Warning | Fix |
-|---|---|---|
-| `clients/page.tsx:328` | `handleCommandSubmit` missing from `useCallback` | Add `handleCommandSubmit` to deps array |
-| `page.tsx:160` | `blackBoxMessages` missing from `useEffect` | Add to deps or move to ref |
-| `ClientsGrid.tsx:437` | `isListening` unnecessary dep | Remove from array |
-| `ClientsGrid.tsx:533` | `resellerSlug` unnecessary dep | Remove from array |
-| `ClientsGrid.tsx:686` | `handleFeatureToggle`, `playAIConfirmation` missing | Add to deps array |
-| `ClientsGrid.tsx:863` | `fetchCriticalAlerts`, `fetchDashboardStats`, `fetchTenants` missing | Add to deps array |
-| `ClientBrandingStudio.tsx:373` | `speak` unnecessary | Remove from array |
-| `ClientBrandingStudio.tsx:728,829` | Missing deps | Add to deps array |
-| `DiagnosticPanel.tsx:126` | `logs` missing | Add to deps array |
-| `use-voice-command.ts:315` | `currentConfig`, `tenantContext.*` missing | Add to deps array |
-| `reseller-provider.tsx:90` | `setIsLoading` missing | Add to deps array |
-
-#### Unused Variables (`no-unused-vars`)
-
-Strategy: delete if the feature was removed; prefix with `_` if the destructuring pattern must be preserved.
-
-Key fixes across files:
-
-- `clients/page.tsx`: Remove `volumeLevel`, `stopVoice`, `clearCaptions` declarations.
-- `layout.tsx`: Remove `defaultSlug`.
-- `ClientsGrid.tsx`: Remove `_isGlobalScanning`, `setRevenuePopup`, `setSortBy`, `totalLeads`, `totalRevenue`, `_error` (multiple), `_offlineOnly`, `_apiErr`, `_event`.
-- `ClientBrandingStudio.tsx`: Remove `resellerSlug`, `isGeneratingGreeting`, rename `e` params to `_e`.
-- `ClientCard.tsx`: Remove `getIndustryFeatureLabel`, `onFeatureToggle`, `onSTTResult`, `categoryProfile`.
-- `UniversalCommandModal.tsx`: Remove `setIsSubmitting`, `conversationStep`, `missingFields`, `normalizeWebsite`, `processCommandWithTranscript`, rename `sessionError` to `_sessionError`.
-- `BrandKit.tsx`: Remove `initialHeaderUrl`, `initialFooterUrl`.
-- `LivePreview.tsx`: Remove `headerUrl`, `footerUrl`, `secondaryColor`, `getGreeting`.
-- `ResellerHUDClient.tsx`: Remove `reseller`, `clients`, `clientCount`, `branding`.
-- `UploadZone.tsx`: Remove unused `Image` import.
-- `client.ts`: Remove `HeadersConstructor`.
-- All other files per lint output.
-
-#### `any` Types (`no-explicit-any`)
-
-Replace `Record<string, any>` with `Record<string, unknown>` for genuinely dynamic shapes. Replace `as any` casts with proper type assertions or narrowing. Key locations:
-
-- `update-config-with-greeting/route.ts`: `z.record(z.any())` → `z.record(z.unknown())`
-- `create-client/route.ts`: `z.record(z.any())` → `z.record(z.unknown())`
-- Any remaining `as any` casts resolved by narrowing the type at the call site.
-
-#### Raw `<img>` Tags (`no-img-element`)
-
-Two locations:
-
-1. **`src/components/reseller/BrandKit.tsx`** — The inline `UploadZone` component uses a raw `<img>` with a `// eslint-disable-next-line` comment. Replace with `<Image>` from `next/image` using `fill` or explicit `width`/`height` props. Since the URL is user-supplied and external, use `unoptimized` prop.
-
-2. **`src/components/reseller/UploadZone.tsx`** — Already uses `<Image>` correctly. The lint warning in `current_lint.txt` for this file is for the unused `Image` import (the component was refactored but the import remained). Remove the unused import.
-
-For `BrandKit.tsx`:
-
-```tsx
-import Image from 'next/image';
-
-// Replace:
-<img src={currentUrl} alt={`${type} preview`} className="w-full h-32 object-cover rounded" />
-
-// With:
-<Image
-  src={currentUrl}
-  alt={`${type} preview`}
-  width={640}
-  height={128}
-  unoptimized
-  className="w-full h-32 object-cover rounded"
-/>
-```
-
-#### Garbage Root Files
-
-The following files/directories at the project root are deleted:
-
-```
-(
-...)
-...)`
-cd
-Click
-eslint
-npm
-OFFLINE_THRESHOLD_MS
-setShowOfflineOnly(!showOfflineOnly)}
-{
--p/   (directory)
-```
-
-Legitimate root files are preserved: `package.json`, `tsconfig.json`, `next.config.ts`, `middleware.ts`, `eslint.config.mjs`, `.env.local`, `.env.example`, `.gitignore`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `tailwind.config.ts`, `postcss.config.mjs`, SQL migration files, and all other valid config/source files.
-
----
-
-## Data Models
-
-### `user_resellers` Table (Existing — Read Only)
-
-This table is the authoritative source for user-to-reseller associations. The refactor reads from it; it does not modify the schema.
-
-```sql
-user_resellers (
-  id            uuid PRIMARY KEY,
-  user_id       uuid REFERENCES auth.users(id),
-  reseller_id   uuid REFERENCES resellers(id),
-  reseller_slug text,  -- denormalized for fast lookup
-  created_at    timestamptz
-)
-```
-
-### `Tenant` Type (Extended)
-
-The Zod schema in `src/types/index.ts` is extended as described in §9. The inferred TypeScript type `Tenant = z.infer<typeof TenantSchema>` automatically reflects all additions.
-
----
-
-## Error Handling
-
-### Auth Guard Pattern
-
-All protected endpoints follow this pattern:
-
-```typescript
-const supabase = await createClient();
-const { data: { user }, error } = await supabase.auth.getUser();
-if (error || !user) {
-  return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-}
-```
-
-### `user_resellers` Lookup Failure
-
-When `user_resellers` returns no row:
-- In API routes: return `{ error: 'Forbidden' }` with HTTP 403.
-- In Layout: `redirect('/auth')`.
-- In Auth Page: `setError('Your account is not linked to a reseller. Please contact support.')`.
-
-### ClientsGrid Error State
-
-When the reseller slug is not found in the database, `ClientsGrid` sets `error` state and renders a visible error message. The component does not throw; it degrades gracefully.
+4. **`onstop` handler not owning the full sequence**: The current architecture splits responsibility — `stopListening` handles cleanup, `onstop` handles pipeline invocation. This split is the structural cause of the race. The fix consolidates all post-stop sequencing into `onstop`.
 
 ---
 
 ## Correctness Properties
 
-*A property is a characteristic or behavior that should hold true across all valid executions of a system — essentially, a formal statement about what the system should do. Properties serve as the bridge between human-readable specifications and machine-verifiable correctness guarantees.*
+Property 1: Bug Condition — Pipeline Invoked Only After `onstop` Fires
 
-### Property 1: Delete Client Endpoint Derives Reseller from Session
+_For any_ recording session where `stopListening` is called while `MediaRecorder` is in the `'recording'` state, the fixed `useVoiceCommand` hook SHALL invoke `processAudioPipeline` exactly once, and only from within the `mediaRecorder.onstop` event handler, after the browser has fully finalized the media container.
 
-*For any* authenticated user making a DELETE request, the reseller used to scope the tenant deletion SHALL be the reseller linked to that user in the `user_resellers` table — never a value supplied in the request body.
-
-**Validates: Requirements 3.1, 3.3**
+**Validates: Requirements 2.1, 2.4**
 
 ---
 
-### Property 2: Middleware Uses Server-Validated Identity
+Property 2: Size Guard — Sub-1024-Byte Blobs Abort Pipeline
 
-*For any* request to a `/reseller/*` path, the middleware SHALL call `supabase.auth.getUser()` (which validates the JWT against the Supabase Auth server) and SHALL inject the `x-user-id` header only when `getUser()` returns a non-null user without error.
+_For any_ recording session where the assembled `Blob` has `size < 1024` bytes, the fixed `onstop` handler SHALL emit a `console.warn` and SHALL NOT invoke `processAudioPipeline` — regardless of whether the blob is non-empty.
 
-**Validates: Requirements 5.1, 5.3**
-
----
-
-### Property 3: Layout Access Verified Against Database
-
-*For any* combination of authenticated user and `resellerSlug` URL parameter, the layout SHALL grant access if and only if a row exists in `user_resellers` linking that user's ID to that slug — regardless of what the user's `user_metadata` contains.
-
-**Validates: Requirements 6.1**
+**Validates: Requirements 2.3**
 
 ---
 
-### Property 4: Auth Page Redirect Derived from Database
+Property 3: Preservation — Valid Audio Pipeline Behavior Unchanged
 
-*For any* successfully authenticated user who has a row in `user_resellers`, the auth page SHALL redirect to `/reseller/{slug}/clients` where `{slug}` is the `reseller_slug` value from that user's `user_resellers` row.
+_For any_ recording session where the bug condition does NOT hold (i.e., the assembled `Blob` has `size ≥ 1024` bytes and `processAudioPipeline` is called), the fixed hook SHALL produce the same STT → AI → TTS pipeline behavior as the original hook, preserving all transcript delivery, AI response, and TTS playback behavior.
 
-**Validates: Requirements 7.3**
-
----
-
-### Property 5: ClientsGrid Never Creates Resellers on Missing Slug
-
-*For any* reseller slug that does not exist in the `resellers` table, `ClientsGrid.fetchTenants` SHALL set an error state and SHALL NOT make a network request to `/api/resellers/create`.
-
-**Validates: Requirements 9.1**
+**Validates: Requirements 3.1, 3.2**
 
 ---
 
-### Property 6: Zero Lint Warnings After Refactor
+Property 4: Preservation — Abort Path Unchanged
 
-*For any* execution of `npm run lint` against the refactored codebase, the output SHALL contain zero warnings or errors for the rule categories: `react-hooks/exhaustive-deps`, `@typescript-eslint/no-unused-vars`, `@typescript-eslint/no-explicit-any`, and `@next/next/no-img-element`.
+_For any_ invocation of `abort()` (e.g., via Escape key), the fixed hook SHALL call `cleanup()` directly and SHALL NOT invoke `processAudioPipeline`, preserving the existing abort behavior exactly.
 
-**Validates: Requirements 12.1, 13.1, 14.1, 15.1**
+**Validates: Requirements 3.3**
 
+---
+
+## Fix Implementation
+
+### Changes Required
+
+**File**: `src/hooks/use-voice-command.ts`
+
+**Affected Functions**: `stopListening`, `startListening` (`onstop` handler)
+
+**Specific Changes**:
+
+1. **Refactor `stopListening` — remove `cleanup()` call**:
+   - Call `mediaRecorder.stop()` if state is `'recording'` (unchanged).
+   - Call `setIsListening(false)` (unchanged).
+   - **Remove** the `cleanup()` call. Cleanup is now deferred to after `onstop` completes.
+   - Remove `cleanup` from the `useCallback` dependency array for `stopListening`.
+
+   ```typescript
+   const stopListening = useCallback(() => {
+     if (mediaRecorderRef.current?.state === 'recording') {
+       mediaRecorderRef.current.stop();
+     }
+     setIsListening(false);
+     // cleanup() intentionally removed — deferred to onstop handler
+   }, []);
+   ```
+
+2. **Refactor `onstop` handler inside `startListening` — own the full sequence**:
+   - Stop stream tracks immediately (release hardware).
+   - Assemble `Blob` from `audioChunksRef.current`.
+   - Apply size guard: if `blob.size < 1024`, warn and return.
+   - `await processAudioPipeline(blob)` — exactly once.
+   - Call `cleanup()` after pipeline completes.
+
+   ```typescript
+   mediaRecorder.onstop = async () => {
+     // 1. Release hardware immediately
+     mediaRecorder.stream.getTracks().forEach(track => track.stop());
+
+     // 2. Assemble finalized Blob
+     const audioBlob = new Blob(audioChunksRef.current, { type: mediaMimeTypeRef.current });
+
+     // 3. Size guard — abort if too small to be a valid media file
+     if (audioBlob.size < 1024) {
+       console.warn('[VoiceCommand] Blob too small to be a valid media file, skipping pipeline');
+       cleanup();
+       return;
+     }
+
+     // 4. Invoke pipeline exactly once per session
+     await processAudioPipeline(audioBlob);
+
+     // 5. Cleanup after pipeline completes
+     cleanup();
+   };
+   ```
+
+3. **Preserve `abort()` path unchanged**: `abort()` continues to call `cleanup()` directly. This is intentional — the abort path bypasses the pipeline entirely and must not wait for `onstop`.
+
+4. **No changes to `processAudioPipeline`**: The function signature and implementation are unchanged. The size guard lives in `onstop`, not inside `processAudioPipeline`.
+
+5. **No changes to public API**: `UseVoiceCommandReturn` interface is unchanged. `stopListening` remains `() => void`. Zero call-site modifications required.
 
 ---
 
 ## Testing Strategy
 
-### Dual Testing Approach
+### Validation Approach
 
-Both unit/example-based tests and property-based tests are used. They are complementary.
+The testing strategy follows a two-phase approach: first, surface counterexamples that demonstrate the bug on unfixed code (exploratory), then verify the fix works correctly and preserves existing behavior (fix checking + preservation checking).
 
-**Unit / example-based tests** cover:
-- Auth guard responses (401, 403) for specific request scenarios.
-- Post-login redirect behavior for specific user states.
-- ClientsGrid error state rendering when reseller is not found.
-- Diagnostic endpoint absence (file system check).
+### Exploratory Bug Condition Checking
 
-**Property-based tests** cover:
-- Universal invariants that must hold across all inputs (Properties 1–6 above).
+**Goal**: Surface counterexamples that demonstrate the race condition BEFORE implementing the fix. Confirm or refute the root cause analysis.
 
-### Property Test Configuration
+**Test Plan**: Mock `MediaRecorder` with a delayed `onstop` event (simulating the browser's async finalization). Call `stopListening` and assert that `processAudioPipeline` receives a valid, finalized `Blob`. On unfixed code, this will fail because `cleanup()` runs before `onstop` fires.
 
-- Minimum 100 iterations per property test.
-- Each property test references its design document property number.
-- Tag format: `Feature: ovg-platform-refactor, Property {N}: {property_text}`
+**Test Cases**:
 
-### Lint as a Test
+1. **Delayed `onstop` Test**: Mock `MediaRecorder` so `onstop` fires 20ms after `stop()` is called. Call `stopListening`. Assert `processAudioPipeline` is called with a `Blob` of size ≥ 1024 bytes. (Will fail on unfixed code — `cleanup()` runs at t=0, `onstop` fires at t=20ms with a potentially incomplete blob.)
 
-Properties 6 (lint cleanliness) is verified by running `npm run lint` and asserting zero warnings in the targeted rule categories. This is a deterministic, repeatable check that serves as the acceptance gate for all P2/P3 code quality requirements.
+2. **Sub-1024 Blob Test**: Mock `MediaRecorder` so `audioChunksRef` contains only an 80-byte chunk. Call `stopListening`. Assert `processAudioPipeline` is NOT called. (Will fail on unfixed code — the size guard does not exist.)
 
-### Scope
+3. **Concurrent Stop + Cleanup Test**: Call `stopListening` and immediately verify that `mediaRecorderRef.current` is not nulled before `onstop` fires. (Will fail on unfixed code — `cleanup()` nulls the ref synchronously.)
 
-The refactor does not introduce new external dependencies or new database tables. All tests operate against the existing Supabase schema. Integration tests that require a live Supabase connection use 1–3 representative examples rather than property-based iteration, since the behavior of the external service does not vary meaningfully with input.
+**Expected Counterexamples**:
+
+- `processAudioPipeline` is called with a `Blob` of size 0 or a few bytes.
+- `processAudioPipeline` is called before `onstop` has fired.
+- Possible causes: `cleanup()` running synchronously before `onstop`, no size guard.
+
+### Fix Checking
+
+**Goal**: Verify that for all inputs where the bug condition holds, the fixed hook produces the expected behavior.
+
+**Pseudocode:**
+
+```
+FOR ALL session WHERE isBugCondition(session) DO
+  result := useVoiceCommand_fixed.stopListening(session)
+  ASSERT processAudioPipeline called exactly once
+  ASSERT processAudioPipeline called only from within onstop handler
+  ASSERT blob passed to processAudioPipeline has size >= 1024
+END FOR
+```
+
+### Preservation Checking
+
+**Goal**: Verify that for all inputs where the bug condition does NOT hold, the fixed hook produces the same result as the original hook.
+
+**Pseudocode:**
+
+```
+FOR ALL session WHERE NOT isBugCondition(session) DO
+  ASSERT useVoiceCommand_original(session) = useVoiceCommand_fixed(session)
+END FOR
+```
+
+**Testing Approach**: Property-based testing is recommended for preservation checking because:
+
+- It generates many test cases automatically across the input domain (varying blob sizes, pipeline configurations, activation modes).
+- It catches edge cases that manual unit tests might miss (e.g., `skipAIPipeline` combined with explicit activation mode).
+- It provides strong guarantees that behavior is unchanged for all non-buggy inputs.
+
+**Test Plan**: Observe behavior on UNFIXED code first for valid audio sessions, `skipAIPipeline` sessions, and abort sessions, then write property-based tests capturing that behavior.
+
+**Test Cases**:
+
+1. **Valid Pipeline Preservation**: Observe that a valid audio blob (≥ 1024 bytes) flows through STT → AI → TTS on unfixed code, then write a test to verify this continues after fix.
+2. **`skipAIPipeline` Preservation**: Observe that `skipAIPipeline = true` stops after STT on unfixed code, then verify this continues after fix.
+3. **Abort Preservation**: Observe that `abort()` calls `cleanup()` directly and skips the pipeline on unfixed code, then verify this continues after fix.
+4. **`deactivateVoice` Preservation**: Observe that `deactivateVoice` → `stopListening` correctly deactivates the mic on unfixed code, then verify the same sequence works through the new `onstop` gate.
+
+### Unit Tests
+
+- Test that `stopListening` does NOT call `cleanup()` synchronously (spy on `cleanup`).
+- Test that `onstop` handler calls `processAudioPipeline` with the assembled `Blob`.
+- Test that `onstop` handler does NOT call `processAudioPipeline` when `blob.size < 1024`.
+- Test that `onstop` handler calls `mediaRecorder.stream.getTracks().forEach(track => track.stop())` before pipeline.
+- Test that `abort()` still calls `cleanup()` directly without waiting for `onstop`.
+- Test edge case: `stopListening` called when `MediaRecorder` is not in `'recording'` state (no-op).
+
+### Property-Based Tests
+
+- Generate random audio chunk arrays (varying sizes, counts) and verify that only chunks totaling ≥ 1024 bytes trigger the pipeline.
+- Generate random `VoiceCommandOptions` configurations and verify that `skipAIPipeline`, `explicitActivation`, and `onAutoDeactivate` behaviors are preserved across all configurations.
+- Generate random sequences of `startListening` / `stopListening` / `abort` calls and verify that `processAudioPipeline` is called at most once per session.
+
+### Integration Tests
+
+- Full voice command flow: start → speak → stop → verify Whisper receives a valid blob → verify transcript delivered.
+- Abort flow: start → speak → Escape → verify no network request to STT endpoint.
+- Short recording flow: start → stop immediately → verify no network request to STT endpoint (size guard).
+- `deactivateVoice` flow: `activateVoice` → speak → `deactivateVoice` → verify pipeline completes correctly.

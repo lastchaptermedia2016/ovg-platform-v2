@@ -55,11 +55,13 @@ const StructuredPayloadSchema = z.object({
 // SYSTEM_BULK_CONFIRM / SYSTEM_BULK_CANCEL / SYSTEM_FILTER_GRID are structural payloads
 // that bypass database writes (see short-circuit guard in POST handler).
 const AIResponseSchema = z.object({
-  actionType: z.enum(['SINGLE', 'BULK', 'NO_MATCH', 'DELETE_CLIENT', 'SYSTEM_BULK_CONFIRM', 'SYSTEM_BULK_CANCEL', 'SYSTEM_FILTER_GRID', 'SYSTEM_UPDATE_BRANDING', 'SYSTEM_HELP']),
+  actionType: z.enum(['SINGLE', 'BULK', 'NO_MATCH', 'DELETE_CLIENT', 'SYSTEM_BULK_CONFIRM', 'SYSTEM_BULK_CANCEL', 'SYSTEM_FILTER_GRID', 'SYSTEM_UPDATE_BRANDING', 'SYSTEM_HELP', 'SYSTEM_NOTE', 'SYSTEM_DISARM', 'SYSTEM_EXPLAIN']),
   targetIds: z.array(z.string().uuid()).optional(),
   clientName: z.string().optional(),
+  contextKey: z.string().optional(), // Relevant capability key for SYSTEM_EXPLAIN
   payload: StructuredPayloadSchema.optional().default({}),
   summary: z.string().min(3).max(500), // For TTS confirmation
+  confidenceScore: z.number().min(0).max(1).optional().default(0.9),
 });
 
 // SYSTEM_PROMPT is now imported from @/core/ai/system-prompts as DEPLOYMENT_OFFICER
@@ -208,7 +210,37 @@ Output ONLY valid JSON.`;
       throw new Error('AI response does not match required schema');
     }
 
-    const { actionType, targetIds, clientName, payload, summary } = aiValidation.data;
+    const { actionType, targetIds, clientName, contextKey, payload, summary, confidenceScore } = aiValidation.data;
+
+    // 🔷 Confidence Threshold: If the AI is unsure (< 0.85), demote actionable types to SYSTEM_NOTE
+    // This prevents conversational filler from triggering ARMED state.
+    // Meta-commands (SYSTEM_NOTE, SYSTEM_HELP, SYSTEM_DISARM, NO_MATCH, SYSTEM_BULK_*) are exempt.
+    if (
+      actionType !== 'SYSTEM_NOTE' &&
+      actionType !== 'SYSTEM_DISARM' &&
+      actionType !== 'NO_MATCH' &&
+      actionType !== 'SYSTEM_HELP' &&
+      actionType !== 'SYSTEM_BULK_CONFIRM' &&
+      actionType !== 'SYSTEM_BULK_CANCEL' &&
+      actionType !== 'SYSTEM_FILTER_GRID' &&
+      actionType !== 'SYSTEM_EXPLAIN' &&
+      confidenceScore !== undefined &&
+      confidenceScore < 0.85
+    ) {
+      console.log('%c[ProcessCommand] ⚠️ Low confidence score — demoting to SYSTEM_NOTE:', 'color: #f59e0b; font-weight: bold;', { actionType, confidenceScore });
+      return NextResponse.json({
+        success: true,
+        actionType: 'SYSTEM_NOTE',
+        targetIds: [],
+        payload: {},
+        summary: 'Input unclear. Did you mean to issue a command?',
+        metadata: {
+          processedAt: new Date().toISOString(),
+          resellerId,
+          model: 'llama-3.3-70b-versatile',
+        },
+      });
+    }
 
     // 🔷 DELETE_CLIENT: fuzzy match the client name against fetched tenants
     if (actionType === 'DELETE_CLIENT') {
@@ -281,13 +313,14 @@ Output ONLY valid JSON.`;
     // These are emitted by the MACRO COMMAND DICTIONARY in DEPLOYMENT_OFFICER when the user
     // speaks confirmation ("yes", "confirm"), cancellation ("no", "cancel"), or grid filter intents.
     // They carry empty targetIds and must NOT reach the DB update layer.
-    if (actionType === 'SYSTEM_BULK_CONFIRM' || actionType === 'SYSTEM_BULK_CANCEL' || actionType === 'SYSTEM_FILTER_GRID' || actionType === 'SYSTEM_HELP') {
-      console.log('%c[ProcessCommand] 🔷 SYSTEM_ macro command recognized:', 'color: #3b82f6; font-weight: bold;', { actionType, payload });
+    if (actionType === 'SYSTEM_BULK_CONFIRM' || actionType === 'SYSTEM_BULK_CANCEL' || actionType === 'SYSTEM_FILTER_GRID' || actionType === 'SYSTEM_HELP' || actionType === 'SYSTEM_NOTE' || actionType === 'SYSTEM_DISARM' || actionType === 'SYSTEM_EXPLAIN') {
+      console.log('%c[ProcessCommand] 🔷 SYSTEM_ macro command recognized:', 'color: #3b82f6; font-weight: bold;', { actionType, payload, contextKey });
       return NextResponse.json({
         success: true,
         actionType,
         targetIds: [],
         payload,
+        contextKey, // Pass through for SYSTEM_EXPLAIN; undefined for others
         summary,
         metadata: {
           processedAt: new Date().toISOString(),
