@@ -432,6 +432,9 @@ export default function ClientsPage() {
       setIsAwaitingVoiceConfirm(false);
       speakVoiceRef.current('Microphone auto-deactivated due to inactivity.');
     },
+    onMaxDuration: () => {
+      speakVoiceRef.current('Processing your command.');
+    },
   });
 
   // Keep voice action refs in sync so handleTranscript can call them without

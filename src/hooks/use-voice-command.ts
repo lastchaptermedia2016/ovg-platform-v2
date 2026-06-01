@@ -50,10 +50,17 @@ interface VoiceCommandOptions {
   explicitActivation?: boolean;
   /** NEW: Fires when the 10s idle timeout elapses and mic auto-deactivates */
   onAutoDeactivate?: () => void;
+  /** Fires when the MAX_RECORDING_DURATION_MS cap is hit and the recorder is auto-stopped.
+   *  Use this to surface UX feedback (e.g. speak "Processing your command..."). */
+  onMaxDuration?: () => void;
 }
 
 /** Default idle timeout in milliseconds before the mic auto-deactivates */
 const IDLE_TIMEOUT_MS = 10_000;
+
+/** Maximum recording duration in milliseconds — keeps blobs within Groq Whisper's
+ *  practical file-size limit (~200 KB for audio/webm;codecs=opus). */
+const MAX_RECORDING_DURATION_MS = 5_000;
 
 export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceCommandReturn {
   const {
@@ -69,6 +76,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     onError,
     explicitActivation = false,
     onAutoDeactivate,
+    onMaxDuration,
   } = options;
 
   // ─── State ────────────────────────────────────────────────────────────────
@@ -98,6 +106,10 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   const isProcessingRef = useRef(false);
   const ttsAudioContextRef = useRef<AudioContext | null>(null);
   const ttsAudioSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  // Hard cap: auto-stop recording after 10s to stay within Groq Whisper's
+  // practical file-size limit (~200 KB). Recordings beyond this consistently
+  // produce 400 "could not process file" errors regardless of codec.
+  const maxDurationTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Ref indirection to break circular deps between monitorVolume and stopListening
   const stopListeningRef = useRef<() => void>(() => {});
@@ -176,6 +188,11 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = null;
+    }
+
+    if (maxDurationTimerRef.current) {
+      clearTimeout(maxDurationTimerRef.current);
+      maxDurationTimerRef.current = null;
     }
 
     if (animationFrameRef.current) {
@@ -448,7 +465,14 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       source.connect(analyser);
       analyserRef.current = analyser;
 
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
+      // Prefer audio/webm;codecs=opus — explicit codec prevents browsers from
+      // defaulting to video/webm or non-standard Opus headers that Whisper rejects.
+      // Fall back to audio/webm (no codec hint) then audio/mp4 for Safari.
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : 'audio/mp4';
       const mediaRecorder = new MediaRecorder(stream, { mimeType });
       // Capture the actual mimeType the recorder settled on (matches the constructor arg)
       mediaMimeTypeRef.current = mediaRecorder.mimeType;
@@ -483,6 +507,23 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
 
       mediaRecorderRef.current = mediaRecorder;
       mediaRecorder.start(100);
+
+      // Hard cap: auto-stop after MAX_RECORDING_DURATION_MS to prevent blobs that
+      // exceed Groq's practical Whisper file-size limit (~200 KB for webm;codecs=opus).
+      if (maxDurationTimerRef.current) {
+        clearTimeout(maxDurationTimerRef.current);
+      }
+      maxDurationTimerRef.current = setTimeout(() => {
+        if (mediaRecorderRef.current?.state === 'recording') {
+          console.log('[VoiceCommand] ⏱ Max recording duration reached — auto-stopping');
+          mediaRecorderRef.current.requestData();
+          mediaRecorderRef.current.stop();
+          setIsListening(false);
+          // Notify caller so the UI can surface feedback (e.g. TTS or toast)
+          onMaxDuration?.();
+        }
+        maxDurationTimerRef.current = null;
+      }, MAX_RECORDING_DURATION_MS);
 
       setIsListening(true);
 

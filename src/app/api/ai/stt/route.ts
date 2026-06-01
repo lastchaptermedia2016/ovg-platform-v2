@@ -28,6 +28,9 @@ export async function POST(req: Request) {
     // an Uploadable produced by toFile(). Convert via ArrayBuffer to preserve
     // the binary container exactly as assembled by MediaRecorder.
     const arrayBuffer = await file.arrayBuffer();
+
+    console.log('[STT] ArrayBuffer size:', arrayBuffer.byteLength);
+
     const uploadable = await toFile(
       new Blob([arrayBuffer], { type: file.type }),
       file.name,
@@ -49,7 +52,8 @@ export async function POST(req: Request) {
 
     const transcription = await groq.audio.transcriptions.create({
       file: uploadable,
-      model: "whisper-large-v3",
+      // whisper-large-v3-turbo has improved WebM/Opus container handling
+      model: "whisper-large-v3-turbo",
       response_format: "json",
       temperature: 0,
       prompt: vocabularyBoost,
