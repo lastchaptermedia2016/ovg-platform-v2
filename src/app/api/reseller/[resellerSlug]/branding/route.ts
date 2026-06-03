@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { PostgrestError } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { resolveResellerFull } from '@/lib/db/resolve-reseller';
+import type { ResolvedReseller } from '@/lib/db/resolve-reseller';
 import { BrandingFetchResponse, BrandingBag } from '@/types';
 
 /**
@@ -10,76 +12,7 @@ import { BrandingFetchResponse, BrandingBag } from '@/types';
  * for the helper function signatures.
  * ---------------------------------------------------------------------------
  */
-export type SupabaseDb = Awaited<ReturnType<typeof createClient>> | typeof supabaseAdmin;
-
-/**
- * ---------------------------------------------------------------------------
- * Resolved Reseller shape returned by both resolveReseller implementations.
- * ---------------------------------------------------------------------------
- */
-export interface ResolvedReseller {
-  id: string;
-  tenant_id: string;
-  name: string;
-  branding: BrandingBag | null;
-  version_stamp: number | null;
-}
-
-// ===================================================================
-// TWO-STEP RESOLUTION
-// ===================================================================
-
-/**
- * STEP 1 — Resolve a reseller record by slug OR tenant_id.
- *
- * Sequential resolution: try slug first, then fall back to tenant_id.
- * This avoids PostgREST .or() edge cases and works regardless of which
- * column (or both) exist in the current schema.
- */
-export async function resolveReseller(
-  db: SupabaseDb,
-  identifier: string,
-): Promise<{ data: ResolvedReseller | null; error: PostgrestError | Error | null }> {
-  try {
-    // 1 — Try slug lookup
-    const { data: slugResult, error: slugError } = await db
-      .from('resellers')
-      .select('id, tenant_id, name, branding, version_stamp')
-      .eq('slug', identifier)
-      .maybeSingle();
-
-    if (slugResult) {
-      return { data: slugResult as ResolvedReseller, error: null };
-    }
-
-    // 2 — Fallback to tenant_id lookup
-    const { data: tenantResult, error: tenantError } = await db
-      .from('resellers')
-      .select('id, tenant_id, name, branding, version_stamp')
-      .eq('tenant_id', identifier)
-      .maybeSingle();
-
-    if (tenantResult) {
-      return { data: tenantResult as ResolvedReseller, error: null };
-    }
-
-    // 3 — Neither matched; return the last error (if any) for diagnostics
-    const finalError = slugError || tenantError;
-    if (finalError) {
-      console.error('[branding GET] resolveReseller query error:', {
-        message: finalError.message,
-        details: finalError.details,
-        hint: finalError.hint,
-        code: finalError.code,
-      });
-    }
-    return { data: null, error: finalError };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error('[branding GET] resolveReseller unexpected exception:', msg);
-    return { data: null, error: err instanceof Error ? err : new Error(msg) };
-  }
-}
+type SupabaseDb = Awaited<ReturnType<typeof createClient>> | typeof supabaseAdmin;
 
 /**
  * STEP 2 — Authorize that the authenticated user has access to the
@@ -122,23 +55,36 @@ export async function authorizeResellerAccess(
 // ===================================================================
 
 /**
+ * Safely read a string-typed branding field from a nullable unknown record.
+ */
+function brandingField(
+  branding: Record<string, unknown> | null | undefined,
+  key: string,
+): string | null {
+  if (!branding) return null;
+  const val = branding[key];
+  return typeof val === 'string' ? val : null;
+}
+
+/**
  * Given a row from the resellers table, build a BrandingBag with
  * safe defaults for any missing values.
  */
 export function buildBrandingBag(row: ResolvedReseller): BrandingBag {
+  const b = row.branding;
   return {
-    primaryColor: row.branding?.primaryColor ?? '#0097b2',
-    accentColor: row.branding?.accentColor ?? '#D4AF37',
-    logoUrl: row.branding?.logoUrl ?? null,
-    favicon: row.branding?.favicon ?? null,
-    metaTitle: row.branding?.metaTitle ?? null,
-    metaDescription: row.branding?.metaDescription ?? null,
-    typography: row.branding?.typography ?? {
+    primaryColor: brandingField(b, 'primaryColor') ?? '#0097b2',
+    accentColor: brandingField(b, 'accentColor') ?? '#D4AF37',
+    logoUrl: brandingField(b, 'logoUrl') ?? null,
+    favicon: brandingField(b, 'favicon') ?? null,
+    metaTitle: brandingField(b, 'metaTitle') ?? null,
+    metaDescription: brandingField(b, 'metaDescription') ?? null,
+    typography: b?.typography as BrandingBag['typography'] ?? {
       headingFont: 'Inter',
       bodyFont: 'Inter',
     },
-    borderRadius: row.branding?.borderRadius ?? 8,
-    mode: row.branding?.mode ?? 'light',
+    borderRadius: typeof b?.borderRadius === 'number' ? b.borderRadius : 8,
+    mode: b?.mode as BrandingBag['mode'] ?? 'light',
   };
 }
 
@@ -192,9 +138,9 @@ export async function GET(
     }
 
     // -----------------------------------------------------------------
-    // STEP 1 — Resolve the reseller record
+    // STEP 1 — Resolve the reseller record (UUID-aware, single-pass)
     // -----------------------------------------------------------------
-    let resolved = await resolveReseller(supabase, resellerSlug);
+    let resolved = await resolveResellerFull(supabase, resellerSlug);
 
     // If user-session query failed with a real error (not just "not found"),
     // try the service-role client as a fallback.
@@ -202,7 +148,7 @@ export async function GET(
       console.log(
         '[branding GET] User-session resolve failed, trying service-role fallback',
       );
-      resolved = await resolveReseller(supabaseAdmin, resellerSlug);
+      resolved = await resolveResellerFull(supabaseAdmin, resellerSlug);
     }
 
     if (!resolved.data) {
@@ -226,11 +172,11 @@ export async function GET(
 
     /**
      * FALLBACK LOGIC:
-     * If the user-session query failed to verify access (likely due to RLS 
-     * restrictiveness on junction table lookups), we fall back to the 
-     * service-role client. 
-     * 
-     * Note: We still pass user.id to ensure the admin client is only 
+     * If the user-session query failed to verify access (likely due to RLS
+     * restrictiveness on junction table lookups), we fall back to the
+     * service-role client.
+     *
+     * Note: We still pass user.id to ensure the admin client is only
      * verifying a legitimate existing association for THIS specific user.
      */
     if (!auth.authorized && auth.error) {

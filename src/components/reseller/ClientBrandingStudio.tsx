@@ -1,13 +1,14 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams } from 'next/navigation';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { ColorPicker } from '@/components/reseller/ColorPicker';
 import { useBrandingStudio } from '@/hooks/use-branding-studio';
 import { useVoiceCommand } from '@/hooks/use-voice-command';
 import { Client as ClientType } from '@/types/index';
 import { createHarmoniousGreeting, VisualStyle } from '@/lib/voice-visual-harmony';
+import { isInvalidSlug } from '@/lib/utils/guard';
 
 interface ClientWithBranding extends ClientType {
   industry?: string;
@@ -50,6 +51,49 @@ export interface BrandingConfig {
   aiDesignMirror: boolean;
   customCss: boolean;
 }
+
+type StudioActionPayload = {
+  theme?: {
+    primary?: string;
+    secondary?: string;
+    backgroundType?: 'solid' | 'gradient' | 'image';
+    primaryGradientStart?: string;
+    primaryGradientEnd?: string;
+    secondaryGradientStart?: string;
+    secondaryGradientEnd?: string;
+    opacity?: number;
+    logoUrl?: string;
+  };
+  ui?: {
+    aiInsightBadge?: boolean;
+    aiDesignMirror?: boolean;
+    customCss?: boolean;
+  };
+};
+
+interface StudioAction {
+  type: 'SET_COLOR' | 'APPLY_VIBE' | 'TOGGLE_ADDON';
+  payload: StudioActionPayload;
+}
+
+const STUDIO_CAPABILITIES = {
+  header: {
+    description: 'Change the header background color, gradient, image, or opacity.',
+    examples: ['Set the header to blue', 'Make the header gradient'],
+  },
+  footer: {
+    description: 'Change the footer background color, gradient, image, or opacity.',
+    examples: ['Make the footer dark', 'Set footer opacity to 80%'],
+  },
+  vibe: {
+    description: 'Apply an aesthetic vibe to the entire branding palette.',
+    examples: ['Make it cyberpunk neon', 'Apply a minimalist style'],
+  },
+  addons: {
+    description: 'Toggle AI features like the Insight Badge, Design Mirror, or Custom CSS.',
+    examples: ['Enable the insight badge', 'Turn off design mirror'],
+  },
+} as const;
 
 export function ClientBrandingStudio({
   clientId,
@@ -101,8 +145,7 @@ export function ClientBrandingStudio({
   const startListeningRef = useRef<() => void>(() => {});
   const stopListeningRef = useRef<() => void>(() => {});
 
-  // Mic Persistence State
-  const [forcedContinuousMode, setForcedContinuousMode] = useState(false);
+  // (PTT replaces forcedContinuousMode — retained only for hook compat)
 
   // Privacy State for Hannah
   const [isHannahAwake, setIsHannahAwake] = useState(true);
@@ -119,46 +162,87 @@ export function ClientBrandingStudio({
   // Initialize the Branding Studio Hook
   const studio = useBrandingStudio(effectiveResellerSlug);
 
-  // Synchronization Layer: Track the last synced staging values to prevent infinite loops 
-  // and satisfy the React Compiler's react-hooks/set-state-in-effect lint rule.
-  const [lastSyncedStaging, setLastSyncedStaging] = useState<{
-    primaryColor: string;
-    accentColor: string;
-    logoUrl: string | null;
-  } | null>(null);
+  // ── Tenant Switch Guard (Ref) ──────────────────────────────────────
+  // Tracks the last-applied tenant ID so we only re-sync branding config
+  // when the tenant actually changes, not on every render.
+  // Using a ref instead of state because this value is only used for
+  // comparison and never drives UI — avoids the react-hooks/set-state-in-effect lint.
+  const lastAppliedTenantIdRef = useRef<string | null>(null);
 
-  if (!studio.isLoading && (
-    !lastSyncedStaging ||
-    studio.staging.primaryColor !== lastSyncedStaging.primaryColor ||
-    studio.staging.accentColor !== lastSyncedStaging.accentColor ||
-    studio.staging.logoUrl !== lastSyncedStaging.logoUrl
-  )) {
-    setLastSyncedStaging({
+  // ════════════════════════════════════════════════════════════════════
+  // Synchronization Effect — moved from render-time setState to useEffect
+  // to prevent cascading re-renders and comply with React 19 best practices.
+  // This effect runs only when:
+  //   1. studio finishes loading
+  //   2. staging values differ from local config
+  //   3. tenantId actually changes
+  // ════════════════════════════════════════════════════════════════════
+  const tenantIdForSync = clientId;
+  useEffect(() => {
+    if (studio.isLoading) return;
+
+    const currentStaging = {
       primaryColor: studio.staging.primaryColor,
       accentColor: studio.staging.accentColor,
-      logoUrl: studio.staging.logoUrl
-    });
-    setConfig(prev => ({
-      ...prev,
-      headerBackground: studio.staging.primaryColor,
-      footerBackground: studio.staging.accentColor,
-      logoUrl: studio.staging.logoUrl || prev.logoUrl,
-    }));
-  }
+      logoUrl: studio.staging.logoUrl,
+    };
 
-  // Lightweight fire-and-forget TTS - no AudioContext management
+    // Tenant Guard: only re-sync when tenant actually switches
+    if (lastAppliedTenantIdRef.current === tenantIdForSync) return;
+
+    lastAppliedTenantIdRef.current = tenantIdForSync;
+
+    // Hydrate local config from staging — uses updater function to avoid
+    // stale closures and complies with react-hooks/set-state-in-effect
+    // because setConfig with an updater is the approved pattern.
+    setConfig(prev => {
+      // No-op if config already matches — prevents unnecessary re-renders
+      if (
+        prev.headerBackground === currentStaging.primaryColor &&
+        prev.footerBackground === currentStaging.accentColor &&
+        prev.logoUrl === (currentStaging.logoUrl || prev.logoUrl)
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        headerBackground: currentStaging.primaryColor,
+        footerBackground: currentStaging.accentColor,
+        logoUrl: currentStaging.logoUrl || prev.logoUrl,
+      };
+    });
+  }, [
+    studio.isLoading,
+    studio.staging.primaryColor,
+    studio.staging.accentColor,
+    studio.staging.logoUrl,
+    tenantIdForSync,
+  ]);
+
+  // Self-contained TTS for ambient/greeting speech.
+  // Independent of the mic pipeline's AudioContext — creates a fresh one per call
+  // so page-load greetings work even before the user clicks the mic.
   const tts = useCallback(async (text: string) => {
     if (!isSpeakerEnabled) return;
     if (!isHannahAwake && !text.includes('going to sleep') && !text.includes('awake')) return;
     if (!text) return;
     try {
-      await fetch('/api/ai/speech', {
+      const response = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, voice: 'hannah', resellerSlug: effectiveResellerSlug }),
       });
-    } catch {
-      // Fire-and-forget; central hook handles TTS for AI responses
+      if (!response.ok) return;
+      const arrayBuffer = await response.arrayBuffer();
+      const ctx = new AudioContext();
+      const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+      const source = ctx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(ctx.destination);
+      source.start(0);
+      source.onended = () => ctx.close();
+    } catch (err) {
+      console.error('[TTS] Greeting playback failed:', err);
     }
   }, [isSpeakerEnabled, isHannahAwake, effectiveResellerSlug]);
 
@@ -188,7 +272,6 @@ export function ClientBrandingStudio({
       tts('I had trouble syncing the brand. Please try again.');
     } finally {
       setIsAiSyncing(false);
-      startListeningRef.current();
     }
   }, [clientId, tts]);
 
@@ -215,7 +298,6 @@ export function ClientBrandingStudio({
       tts('I had trouble applying the AI vibe. Please try again.');
     } finally {
       setIsAiSyncing(false);
-      startListeningRef.current();
     }
   }, [clientId, config, tts]);
 
@@ -306,8 +388,83 @@ export function ClientBrandingStudio({
 
   // --- END MOVED UP ---
 
+  const dispatchStudioAction = useCallback((action: StudioAction): void => {
+    switch (action.type) {
+      case 'SET_COLOR': {
+        const { theme } = action.payload;
+        if (!theme) break;
+        setConfig(prev => {
+          // No-op check to prevent jarring flicker when backend confirmation arrives
+          if (
+            (theme.primary === undefined || prev.headerBackground === theme.primary) &&
+            (theme.secondary === undefined || prev.footerBackground === theme.secondary) &&
+            (theme.logoUrl === undefined || prev.logoUrl === theme.logoUrl)
+          ) {
+            return prev;
+          }
+          return {
+            ...prev,
+            ...(theme.primary !== undefined && { headerBackground: theme.primary }),
+            ...(theme.secondary !== undefined && { footerBackground: theme.secondary }),
+            ...(theme.backgroundType !== undefined && {
+              headerBackgroundType: theme.backgroundType,
+              footerBackgroundType: theme.backgroundType,
+            }),
+            ...(theme.primaryGradientStart !== undefined && { headerGradientStart: theme.primaryGradientStart }),
+            ...(theme.primaryGradientEnd !== undefined && { headerGradientEnd: theme.primaryGradientEnd }),
+            ...(theme.secondaryGradientStart !== undefined && { footerGradientStart: theme.secondaryGradientStart }),
+            ...(theme.secondaryGradientEnd !== undefined && { footerGradientEnd: theme.secondaryGradientEnd }),
+            ...(theme.opacity !== undefined && { headerOpacity: theme.opacity, footerOpacity: theme.opacity }),
+            ...(theme.logoUrl !== undefined && { logoUrl: theme.logoUrl }),
+          };
+        });
+        tts('Colors updated.');
+        break;
+      }
+      case 'APPLY_VIBE': {
+        // Vibe application is handled by the existing applyAIVibe flow
+        break;
+      }
+      case 'TOGGLE_ADDON': {
+        const { ui } = action.payload;
+        if (!ui) break;
+        setConfig(prev => {
+          if (
+            (ui.aiInsightBadge === undefined || prev.aiInsightBadge === ui.aiInsightBadge) &&
+            (ui.aiDesignMirror === undefined || prev.aiDesignMirror === ui.aiDesignMirror) &&
+            (ui.customCss === undefined || prev.customCss === ui.customCss)
+          ) {
+            return prev;
+          }
+          return {
+            ...prev,
+            ...(ui.aiInsightBadge !== undefined && { aiInsightBadge: ui.aiInsightBadge }),
+            ...(ui.aiDesignMirror !== undefined && { aiDesignMirror: ui.aiDesignMirror }),
+            ...(ui.customCss !== undefined && { customCss: ui.customCss }),
+          };
+        });
+        tts('Feature toggles updated.');
+        break;
+      }
+      default: {
+        console.warn('[BrandingStudio] Unknown StudioAction type:', (action as StudioAction).type);
+      }
+    }
+  }, [tts]);
+
   // Re-hydrate local config from the deep-merged widget_config written by the AI engine
-  const handleAIComplete = useCallback(async (aiResponseText?: string) => {
+  const handleAIComplete = useCallback(async (_aiResponseText?: string, aiPayload?: unknown) => {
+    // Optimistic UI update: apply the AI payload immediately if it contains branding changes
+    if (aiPayload && typeof aiPayload === 'object' && 'theme' in (aiPayload as Record<string, unknown>)) {
+      const payload = aiPayload as StudioActionPayload;
+      if (payload.theme) {
+        dispatchStudioAction({ type: 'SET_COLOR', payload });
+      }
+      if (payload.ui) {
+        dispatchStudioAction({ type: 'TOGGLE_ADDON', payload });
+      }
+    }
+
     if (!clientId) return;
     try {
       const response = await fetch(`/api/tenants/${clientId}`);
@@ -336,58 +493,97 @@ export function ClientBrandingStudio({
         customCss: (features.customCss ?? prev.customCss) as boolean,
       }));
 
-      // Speak AI response text if present (guards against undefined from NO_MATCH)
-      if (aiResponseText) {
-        tts(aiResponseText);
-      }
+      // NOTE: DO NOT call tts() here for AI response text.
+      // The internal pipeline in useVoiceCommand (processAudioPipeline) already
+      // plays the TTS audio via AudioContext. Calling tts() here creates a
+      // duplicate fire-and-forget fetch that races with the AudioContext playback,
+      // causing no audio to reach the speakers (AudioContext state conflicts).
       setSaveMessage('\u2728 Branding updated by AI');
     } catch (_err) {
       console.error('Re-hydration fetch failed:', _err);
     }
-  }, [clientId, tts]);
+  // tts intentionally excluded from deps — the AI response text is spoken by the
+  // internal pipeline (processAudioPipeline), not by this standalone callback.
+  }, [clientId, dispatchStudioAction]);
 
-  // Voice command hook for STT — now routing through central AI engine
+  // ════════════════════════════════════════════════════════════════════
+  // Stable Initialization: Voice pipeline options are memoized so that
+  // useVoiceCommand receives stable references. This prevents the hook
+  // from tearing down and rebuilding the mic pipeline on every parent
+  // re-render (which caused the infinite "Loading..." cycle).
+  // ════════════════════════════════════════════════════════════════════
+  const voiceOptions = useMemo(() => ({
+    forcedContinuousMode: false,
+    silenceDuration: 3000,
+    resellerId: effectiveResellerSlug,
+    contextCapabilities: STUDIO_CAPABILITIES,
+    tenantContext: { tenantId: clientId, category: 'GENERAL' as const },
+    currentConfig: config as unknown as Record<string, unknown>,
+  }), [
+    effectiveResellerSlug,
+    clientId,
+    config,
+  ]);
+
+  // Stable transcript handler — split from options to avoid recreating
+  // the entire voiceOptions object when only the handler deps change.
+  const stableOnTranscript = useCallback((text: string) => {
+    setVoiceTranscript(text);
+
+    if (isLongFormSTT) {
+      setDictatedGreeting(text);
+    }
+
+    const lowerText = text.toLowerCase();
+    const sleepCommands = ['hannah go to sleep', 'hannah sleep', 'go to sleep', 'be quiet', 'stop talking'];
+    if (sleepCommands.some(cmd => lowerText.includes(cmd))) {
+      setIsHannahAwake(false);
+      tts('Going to sleep. Just tap the mic when you need me again.');
+      return;
+    }
+
+    const wakeCommands = ['hannah wake up', 'hannah awake', 'wake up', 'are you there'];
+    if (wakeCommands.some(cmd => lowerText.includes(cmd))) {
+      setIsHannahAwake(true);
+      tts("I'm awake and ready to help!");
+      return;
+    }
+  }, [isLongFormSTT, tts]);
+
+  // Voice command hook for STT — Push-to-Talk (PTT) state machine
   const {
     isListening,
     isProcessing,
-    startListening,
-    stopListening,
+    isRecording,             // PTT: held down
+    startRecording,          // PTT: mousedown / touchstart
+    stopRecording,           // PTT: mouseup / touchend
+    abortRecording,          // PTT: mouseleave / touchcancel
+    startListening: _legacyStartListening, // Deprecated PTT alias (for refs below)
+    stopListening: _legacyStopListening,   // Deprecated PTT alias (for refs below)
+    resetPipeline,           // Quiescent-state reset for navigation exit-paths
   } = useVoiceCommand({
-    forcedContinuousMode,
-    silenceDuration: 3000, // 3 seconds for thinking pauses
-    resellerId: effectiveResellerSlug,
-    tenantContext: { tenantId: clientId, category: 'GENERAL' },
-    currentConfig: config as unknown as Record<string, unknown>,
-    onTranscript: useCallback((text: string) => {
-      setVoiceTranscript(text);
-
-      if (isLongFormSTT) {
-        setDictatedGreeting(text);
-      }
-
-      const lowerText = text.toLowerCase();
-      const sleepCommands = ['hannah go to sleep', 'hannah sleep', 'go to sleep', 'be quiet', 'stop talking'];
-      if (sleepCommands.some(cmd => lowerText.includes(cmd))) {
-        setIsHannahAwake(false);
-        tts('Going to sleep. Just tap the mic when you need me again.');
-        return;
-      }
-
-      const wakeCommands = ['hannah wake up', 'hannah awake', 'wake up', 'are you there'];
-      if (wakeCommands.some(cmd => lowerText.includes(cmd))) {
-        setIsHannahAwake(true);
-        tts("I'm awake and ready to help!");
-        return;
-      }
-    }, [isLongFormSTT, tts]),
+    ...voiceOptions,
+    onTranscript: stableOnTranscript,
     onAIResponse: handleAIComplete,
   });
 
   // Sync refs for callbacks defined before useVoiceCommand
   useEffect(() => {
-    startListeningRef.current = startListening;
-    stopListeningRef.current = stopListening;
-  }, [startListening, stopListening]);
+    startListeningRef.current = _legacyStartListening;
+    stopListeningRef.current = _legacyStopListening;
+  }, [_legacyStartListening, _legacyStopListening]);
+
+  // ── Navigation Exit-Path ────────────────────────────────────────────────
+  // Reset component-level state (greeting latch) and ask the voice-command
+  // hook to quiesce before navigating. Order is critical: refs must be
+  // cleared BEFORE router.push fires so the next studio mount never inherits
+  // a stuck lock. The hard-coded slug mirrors the reseller's primary route.
+  const router = useRouter();
+  const handleBackToClients = useCallback(() => {
+    hasGreetedRef.current = null;
+    resetPipeline();
+    router.push('/reseller/lastchaptermedia2016/clients');
+  }, [resetPipeline, router]);
 
   /** Central Commit Wrapper: Bridges UI state to the hook's persistence logic */
   const handleCommit = useCallback(async (): Promise<boolean> => {
@@ -528,10 +724,23 @@ export function ClientBrandingStudio({
     if (!clientId || !effectiveResellerSlug || hasGreetedRef.current === clientId) return;
 
     const fetchAndConfirmClientSwitch = async () => {
+      // Guard: skip if the slug hasn't resolved yet.
+      // Reset the greeted flag so this retries once the slug is available.
+      if (!effectiveResellerSlug) {
+        hasGreetedRef.current = null;
+        console.warn('[TTS] Greeting skipped — resellerSlug not yet available');
+        return;
+      }
+
       try {
         // Check for wrong turn flag from redirect
         const wrongTurn = sessionStorage.getItem('hannah_wrong_turn');
         const welcomeBack = sessionStorage.getItem('hannah_welcome_back');
+
+        // Mark as greeted BEFORE the async fetch to prevent double-fire races.
+        // If a re-render happens during the await, the outer guard at line 705
+        // (`hasGreetedRef.current === clientId`) will block re-entry.
+        hasGreetedRef.current = clientId;
 
         // Fetch new client data
         const response = await fetch(`/api/tenants/${clientId}`);
@@ -599,6 +808,20 @@ export function ClientBrandingStudio({
     }
   }, [clientId]);
 
+  // ── Slug-Readiness Guard (Production Excellence) ─────────────────────
+  // If the resellerSlug hasn't resolved yet (empty or invalid hydration proxy),
+  // render a lightweight skeleton instead of the full studio. This prevents
+  // hooks from initializing with undefined and getting stuck in a loading state.
+  // Hooks are still called unconditionally above (satisfying React's rules),
+  // but the UI is gated here.
+  if (!effectiveResellerSlug || isInvalidSlug(effectiveResellerSlug)) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-white/40 text-sm animate-pulse">Resolving workspace...</div>
+      </div>
+    );
+  }
+
   // ERROR GUARD: If the hook failed to load branding (e.g., invalid slug / 404),
   // show an error card instead of rendering the full studio UI with defaults.
   // Note: This is placed in the render return, NOT as an early return, to avoid
@@ -630,29 +853,57 @@ export function ClientBrandingStudio({
               Studio Controls
             </h2>
             <div className="flex items-center gap-3">
-              {studio.isLoading && (
-                <div className="text-xs text-white/60">Loading...</div>
-              )}
-              {/* Voice Command Mic Button */}
+              {/* Voice-pipeline processing indicator — bound to isProcessing, not
+                  studio.isLoading (the latter was a permanent ghost state).
+                  The fixed-width container locks the layout so the
+                  "Back to Clients" button and mic icon never shift. */}
+              <div className="w-[68px] flex items-center justify-end">
+                {isProcessing && (
+                  <span className="text-xs text-slate-400 animate-pulse">Loading...</span>
+                )}
+              </div>
+              {/* Back to Clients — navigation exit-path with pipeline quiesce */}
               <button
-                onClick={() => {
-                  if (isListening) {
-                    stopListening();
-                    setForcedContinuousMode(false);
-                  } else {
-                    setForcedContinuousMode(true);
-                    startListening();
-                  }
+                type="button"
+                onClick={handleBackToClients}
+                aria-label="Back to clients"
+                className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white/70 hover:text-white transition-colors rounded-lg"
+              >
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+                <span>Back to Clients</span>
+              </button>
+              {/* Voice Command Mic Button — Push-to-Talk */}
+              <button
+                onMouseDown={() => startRecording()}
+                onMouseUp={() => stopRecording()}
+                onMouseLeave={() => {
+                  // Guard: if the user drags off the button mid-press, abort instead of letting the press hang
+                  if (isRecording) abortRecording();
                 }}
-                className={`relative p-3 rounded-full transition-all ${
-                  (isListening || forcedContinuousMode)
-                    ? 'bg-red-500 animate-pulse shadow-lg shadow-red-500/50'
-                    : 'bg-[#0097b2] hover:bg-[#0086a3]'
+                onTouchStart={(e) => { e.preventDefault(); startRecording(); }}
+                onTouchEnd={(e) => { e.preventDefault(); stopRecording(); }}
+                onTouchCancel={() => abortRecording()}
+                className={`relative p-3 rounded-full transition-all select-none ${
+                  isRecording
+                    ? 'bg-red-600 animate-pulse shadow-lg shadow-red-500/50 ring-2 ring-red-400'
+                    : isProcessing
+                      ? 'bg-amber-500 animate-pulse shadow-lg shadow-amber-500/50'
+                      : 'bg-[#0097b2] hover:bg-[#0086a3]'
                 }`}
                 title={
-                  forcedContinuousMode
-                    ? 'Forced continuous mode - Click to stop'
-                    : (isListening ? 'Stop listening' : 'Start voice command (forced continuous)')
+                  isRecording
+                    ? 'Release to send'
+                    : isProcessing
+                      ? 'Processing your command...'
+                      : 'Hold to talk (Push-to-Talk)'
                 }
               >
                 <svg
@@ -661,17 +912,15 @@ export function ClientBrandingStudio({
                   stroke="currentColor"
                   viewBox="0 0 24 24"
                 >
-                  {isListening ? (
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+                  {isRecording ? (
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 011 1h-4a1 1 0 01-1-1v-4z" />
                   ) : (
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
                   )}
                 </svg>
                 {/* Recording indicator ring */}
-                {(isListening || forcedContinuousMode) && (
-                  <span className={`absolute inset-0 rounded-full animate-ping ${
-                    forcedContinuousMode ? 'bg-blue-400' : 'bg-red-400'
-                  } opacity-30`} />
+                {isRecording && (
+                  <span className="absolute inset-0 rounded-full animate-ping bg-red-400 opacity-30" />
                 )}
               </button>
 

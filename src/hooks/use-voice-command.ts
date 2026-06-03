@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, type MutableRefObject } from 'react';
+import { isInvalidSlug } from '@/lib/utils/guard';
 
 interface UseVoiceCommandReturn {
   isListening: boolean;
@@ -10,7 +11,19 @@ interface UseVoiceCommandReturn {
   transcript: string;
   aiResponse: string;
   error: string | null;
+  /** NEW (PTT): Whether the mic button is currently being held down. */
+  isRecording: boolean;
+  /** NEW (PTT): Wall-clock start time of the current press (used for the 200ms tap guard). */
+  recordingStartedAtRef: MutableRefObject<number | null>;
+  /** NEW (PTT): Begin audio capture on mousedown / touchstart. Clears any previous pipeline state. */
+  startRecording: () => Promise<void>;
+  /** NEW (PTT): Finalize the audio chunk on mouseup / touchend. Triggers the pipeline if the press was >= 200ms; aborts otherwise. */
+  stopRecording: () => void;
+  /** NEW (PTT): Abort capture on mouseleave / touchcancel. Never triggers the pipeline. */
+  abortRecording: () => void;
+  /** @deprecated Use startRecording instead. Retained as a one-cycle alias. */
   startListening: () => Promise<void>;
+  /** @deprecated Use stopRecording instead. Retained as a one-cycle alias. */
   stopListening: () => void;
   abort: () => void;
   /** NEW: Whether the mic is explicitly activated (higher-level than isListening) */
@@ -19,7 +32,19 @@ interface UseVoiceCommandReturn {
   activateVoice: () => Promise<void>;
   /** NEW: Explicitly deactivate the mic (Push-to-Talk exit point) */
   deactivateVoice: () => void;
+  /** NEW: Reset the pipeline lock so the next manual startListening works.
+   *  Called when the UI explicitly authorises a new recording cycle
+   *  (e.g. onAutoDeactivate, after a lifecycle reset). */
+  resetPipelineLock: () => void;
+  /** NEW: Comprehensive quiescent-state reset for navigation exit-paths.
+   *  Releases the pipeline lock AND the processing flag, then halts any
+   *  in-flight audio capture so the hook returns to a clean idle state. */
+  resetPipeline: () => void;
 }
+
+/** Minimum press duration (ms) before stopRecording finalises the pipeline.
+ *  Presses shorter than this are treated as accidental taps and aborted. */
+const MIN_RECORDING_DURATION_MS = 200;
 
 interface TenantContext {
   tenantId?: string;
@@ -29,6 +54,7 @@ interface TenantContext {
 interface ProcessResponse {
   response: string;
   summary?: string;
+  payload?: unknown;
 }
 
 interface SttResponse {
@@ -42,9 +68,10 @@ interface VoiceCommandOptions {
   resellerId?: string;
   tenantContext?: TenantContext;
   currentConfig?: Record<string, unknown>;
+  contextCapabilities?: Record<string, { key?: string; description: string; examples: readonly string[] | string[] }>;
   skipAIPipeline?: boolean;
   onTranscript?: (text: string) => void;
-  onAIResponse?: (text: string) => void;
+  onAIResponse?: (text: string, payload?: unknown) => void;
   onError?: (error: string) => void;
   /** NEW: Enable explicit activation (Push-to-Talk) mode. Disables auto-stop on silence. */
   explicitActivation?: boolean;
@@ -67,10 +94,11 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     silenceThreshold = 0.02,
     silenceDuration = 3000,
     forcedContinuousMode = false,
-    resellerId,
+    resellerId: _resellerId,
     tenantContext: _tenantContext,
     currentConfig: _currentConfig,
     skipAIPipeline = false,
+    contextCapabilities: _contextCapabilities,
     onTranscript,
     onAIResponse,
     onError,
@@ -78,6 +106,12 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     onAutoDeactivate,
     onMaxDuration,
   } = options;
+
+  // ─── Refs for dynamic options ────────────────────────────────────────
+  // Synced via useEffect (React 19 compliant). This is safe because the
+  // mic pipeline is only triggered by explicit user action (click), so the
+  // effect will have fired and synced the ref before any async work runs.
+  const resellerIdRef = useRef(options.resellerId);
 
   // ─── State ────────────────────────────────────────────────────────────────
   const [isListening, setIsListening] = useState(false);
@@ -90,6 +124,15 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
 
   /** NEW: Higher-level activation state for Push-to-Talk */
   const [voiceActive, setVoiceActive] = useState(false);
+
+  // ─── NEW (PTT): Push-to-Talk state machine ───────────────────────────────
+  /** Whether the mic button is currently being held down. */
+  const [isRecording, setIsRecording] = useState(false);
+  /** Wall-clock start time of the current press (used by the 200ms tap guard). */
+  const recordingStartedAtRef = useRef<number | null>(null);
+  /** Mirror of `isRecording` for synchronous access in event handlers / abort paths. */
+  const isRecordingRef = useRef(false);
+  useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
 
   // ─── Refs for audio handling ──────────────────────────────────────────────
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -106,6 +149,11 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   const isProcessingRef = useRef(false);
   const ttsAudioContextRef = useRef<AudioContext | null>(null);
   const ttsAudioSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  // Pipeline latch: prevents re-triggering after a max-duration stop.
+  // Set to true by the max-duration handler; only cleared by explicit
+  // user action (deactivateVoice / resetPipelineLock).
+  const isLockedRef = useRef(false);
+
   // Hard cap: auto-stop recording after 10s to stay within Groq Whisper's
   // practical file-size limit (~200 KB). Recordings beyond this consistently
   // produce 400 "could not process file" errors regardless of codec.
@@ -117,7 +165,8 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   const monitorVolumeRef = useRef<() => void>(() => {});
   // Refs for dynamic hook options to avoid stale closures without recreating callbacks
   const tenantContextRef = useRef(options.tenantContext);
-  const resellerIdRef = useRef(options.resellerId);
+  const contextCapabilitiesRef = useRef(options.contextCapabilities);
+  useEffect(() => { contextCapabilitiesRef.current = options.contextCapabilities; }, [options.contextCapabilities]);
 
   // ─── NEW: 10s idle timeout refs ───────────────────────────────────────────
   const voiceActiveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -170,20 +219,10 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     audioContextRef.current = null;
     analyserRef.current = null;
 
-    if (ttsAudioSourceRef.current) {
-      try {
-        ttsAudioSourceRef.current.stop();
-        ttsAudioSourceRef.current.disconnect();
-      } catch {
-        // Ignore errors during cleanup
-      }
-      ttsAudioSourceRef.current = null;
-    }
-
-    if (ttsAudioContextRef.current?.state !== 'closed') {
-      ttsAudioContextRef.current?.close();
-    }
-    ttsAudioContextRef.current = null;
+    // NOTE: ttsAudioContextRef is intentionally NOT closed here.
+    // It is a long-lived resource managed by the TTS playback lifecycle
+    // (onended/timeout) and should only be closed on component unmount or abort.
+    // Closing it here would act as a "kill shot" to active TTS playback.
 
     streamRef.current?.getTracks().forEach(track => track.stop());
     streamRef.current = null;
@@ -292,10 +331,21 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
 
   // Process audio through pipeline
   const processAudioPipeline = useCallback(async (audioBlob: Blob) => {
+    console.log('[Pipeline] started, isProcessingRef:', isProcessingRef.current);
     isProcessingRef.current = true;
     setIsProcessing(true);
     abortControllerRef.current = new AbortController();
     const { signal } = abortControllerRef.current;
+
+    // ── Production Excellence: Slug-Readiness Guard ─────────────────────
+    // Read the CURRENT value from the synchronised ref — no stale-closure risk.
+    const currentResellerId = resellerIdRef.current;
+    if (!currentResellerId || isInvalidSlug(currentResellerId)) {
+      console.warn('[VoiceCommand] 🚫 Blocking pipeline — resellerId not yet resolved:', currentResellerId);
+      isProcessingRef.current = false;
+      setIsProcessing(false);
+      return;
+    }
 
     try {
       // Step 1: Speech-to-Text (Whisper)
@@ -314,6 +364,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       });
 
       sttFormData.append('file', audioFile);
+      console.log('[DEBUG] STT FormData keys:', Array.from(sttFormData.keys()));
 
       const sttResponse = await fetch('/api/ai/stt', {
         method: 'POST',
@@ -322,8 +373,13 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       });
 
       if (!sttResponse.ok) {
-        const errorData = await sttResponse.json();
-        throw new Error(`STT failed: ${sttResponse.status} - ${errorData.error}`);
+        const errorData = await sttResponse.json().catch(() => ({}));
+        console.error('[STT] Server response:', {
+          status: sttResponse.status,
+          statusText: sttResponse.statusText,
+          body: errorData,
+        });
+        throw new Error(`STT failed: ${sttResponse.status} - ${errorData.error ?? sttResponse.statusText}`);
       }
 
       const { text } = await sttResponse.json() as SttResponse;
@@ -334,19 +390,15 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
         return;
       }
 
-      if (!resellerId || resellerId.includes('[') || resellerId.includes(']') || resellerId.includes('%5B')) {
-        console.warn('[VoiceCommand] Skipping AI pipeline - invalid resellerId:', resellerId);
-        return;
-      }
-
       const currentContext = tenantContextRef.current || {};
       const processResponse = await fetch('/api/ai/process-command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          resellerId: resellerId.trim(),
+          resellerId: currentResellerId.trim(),
           userCommand: text,
           currentConfig: _currentConfig || {},
+          contextCapabilities: contextCapabilitiesRef.current || undefined,
           tenantContext: {
             tenantId: currentContext.tenantId,
             category: currentContext.category || 'GENERAL',
@@ -366,11 +418,10 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
         return;
       }
       setAiResponse(aiText);
-      onAIResponse?.(aiText);
+      onAIResponse?.(aiText, parsedResponse?.payload);
 
       // Step 3: Text-to-Speech (Orpheus) — read fresh context from refs
       const currentTtsContext = tenantContextRef.current || {};
-      const currentResellerId = resellerIdRef.current || '';
       const ttsResponse = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -391,46 +442,42 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
         throw new Error(`TTS failed: ${ttsResponse.status}`);
       }
 
-      const audioBuffer = await ttsResponse.arrayBuffer();
+      // ── Stripped-down TTS playback ──────────────
       setIsSpeaking(true);
 
-      if (ttsAudioContextRef.current?.state !== 'closed') {
-        ttsAudioContextRef.current?.close();
-      }
+      const ttsCtx = ttsAudioContextRef.current;
+      if (!ttsCtx) throw new Error('TTS AudioContext not initialized');
+
+      // Stop any currently playing TTS
       if (ttsAudioSourceRef.current) {
-        try {
-          ttsAudioSourceRef.current.stop();
-          ttsAudioSourceRef.current.disconnect();
-        } catch {
-          // Ignore errors during cleanup
-        }
+        try { ttsAudioSourceRef.current.stop(); } catch {}
+        ttsAudioSourceRef.current = null;
       }
 
-      const AudioContextCtor = getAudioContextConstructor();
-      const audioContext = new AudioContextCtor();
-      ttsAudioContextRef.current = audioContext;
+      const arrayBuffer = await ttsResponse.arrayBuffer();
+      const audioBuffer = await ttsCtx.decodeAudioData(arrayBuffer);
 
-      const audioSource = audioContext.createBufferSource();
-      ttsAudioSourceRef.current = audioSource;
+      const source = ttsCtx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(ttsCtx.destination);
 
-      const audioBufferData = await audioContext.decodeAudioData(audioBuffer);
-      audioSource.buffer = audioBufferData;
-      audioSource.connect(audioContext.destination);
+      if (ttsCtx.state === 'suspended') {
+        await ttsCtx.resume();
+      }
 
-      audioSource.onended = () => {
+      console.log('[TTS] Playing, duration:', audioBuffer.duration, 'ctx state:', ttsCtx.state);
+
+      source.start(0);
+      ttsAudioSourceRef.current = source;
+
+      // Single cleanup timeout — fires after audio should be done
+      const playbackMs = Math.ceil(audioBuffer.duration * 1000) + 500;
+      setTimeout(() => {
+        console.log('[TTS] Cleanup timeout fired');
         setIsSpeaking(false);
-        try {
-          audioSource.stop();
-          audioSource.disconnect();
-        } catch {
-          // Ignore errors during cleanup
-        }
-        audioContext.close();
         ttsAudioSourceRef.current = null;
-        ttsAudioContextRef.current = null;
-      };
-
-      audioSource.start();
+      }, playbackMs);
+      // ── End inner try/catch ─────────────────────────────────────────
 
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') {
@@ -441,13 +488,21 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       setError(errorMsg);
       onError?.(errorMsg);
     } finally {
+      // Atomic Pipeline Cleanup — the latch MUST release on every exit path,
+      // including early returns from throws inside the try, so the next user
+      // gesture is never blocked by a stale lock.
       isProcessingRef.current = false;
       setIsProcessing(false);
+      isLockedRef.current = false;
     }
-  }, [onTranscript, onAIResponse, onError, skipAIPipeline, resellerId, _currentConfig, getAudioContextConstructor, mimeTypeToExtension]);
+  }, [onTranscript, onAIResponse, onError, skipAIPipeline, _currentConfig, mimeTypeToExtension]);
 
-  // Start listening
+  // Start listening — safety gate: block all triggers while locked
   const startListening = useCallback(async () => {
+    if (isLockedRef.current) {
+      console.log('[VoiceCommand] 🔒 Pipeline locked: ignoring trigger');
+      return;
+    }
     try {
       setTranscript('');
       setAiResponse('');
@@ -461,6 +516,14 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       const AudioContextCtor = getAudioContextConstructor();
       const audioContext = new AudioContextCtor();
       audioContextRef.current = audioContext;
+
+      // Create a dedicated TTS AudioContext during the user gesture to bypass autoplay policy
+      const ttsCtx = new AudioContextCtor();
+      ttsAudioContextRef.current = ttsCtx;
+
+      // Proactively resume the context while the user gesture is still active
+      await ttsCtx.resume();
+      console.log('[Voice] TTS AudioContext state after resume:', ttsCtx.state);
 
       const source = audioContext.createMediaStreamSource(stream);
       const analyser = audioContext.createAnalyser();
@@ -519,6 +582,9 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       maxDurationTimerRef.current = setTimeout(() => {
         if (mediaRecorderRef.current?.state === 'recording') {
           console.log('[VoiceCommand] ⏱ Max recording duration reached — auto-stopping');
+          // Lock the pipeline BEFORE stop() so the onstop handler / any
+          // TTS-completion intervals that try to re-startListening are blocked.
+          isLockedRef.current = true;
           mediaRecorderRef.current.requestData();
           mediaRecorderRef.current.stop();
           setIsListening(false);
@@ -558,17 +624,89 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   }, [voiceActive, startListening]);
 
   // ─── NEW: deactivateVoice — explicit activation exit point ────────────────
+  // Must be robust: (1) force the gate open, (2) release hardware, (3) clear timers, (4) update state.
   const deactivateVoice = useCallback(() => {
-    if (!voiceActive) return; // Already inactive — no-op
+    // 1. Force the gate open so the next manual action works
+    isLockedRef.current = false;
+
+    // 2. Perform actual cleanup
     clearVoiceActiveTimeout();
     stopListening();
+    if (maxDurationTimerRef.current) {
+      clearTimeout(maxDurationTimerRef.current);
+      maxDurationTimerRef.current = null;
+    }
+
+    // 3. Update internal UI state
     setVoiceActive(false);
-  }, [voiceActive, clearVoiceActiveTimeout, stopListening]);
+  }, [clearVoiceActiveTimeout, stopListening]);
+
+  // ─── NEW (PTT): startRecording — mousedown / touchstart handler ────────────
+  // Begins audio capture immediately, clears any previous pipeline state,
+  // and records the wall-clock start time for the 200ms tap guard.
+  const startRecording = useCallback(async () => {
+    if (isRecordingRef.current) return; // Idempotent: already recording
+    recordingStartedAtRef.current = Date.now();
+    setIsRecording(true);
+    await startListening();
+  }, [startListening]);
+
+  // ─── NEW (PTT): stopRecording — mouseup / touchend handler ───────────────
+  // Finalizes the audio chunk. Applies the 200ms tap guard: if the press
+  // was shorter than MIN_RECORDING_DURATION_MS, abort instead of triggering
+  // the pipeline. Strictly deterministic: same input timing → same outcome.
+  const stopRecording = useCallback(() => {
+    if (!isRecordingRef.current) return;
+    const startedAt = recordingStartedAtRef.current;
+    recordingStartedAtRef.current = null;
+    setIsRecording(false);
+
+    const elapsed = startedAt !== null ? Date.now() - startedAt : Infinity;
+    if (elapsed < MIN_RECORDING_DURATION_MS) {
+      console.log(`[VoiceCommand] ⏱ Tap too short (${elapsed}ms < ${MIN_RECORDING_DURATION_MS}ms) — aborting`);
+      cleanup();
+      return;
+    }
+    stopListening();
+  }, [stopListening, cleanup]);
+
+  // ─── NEW (PTT): abortRecording — mouseleave / touchcancel handler ──────
+  // Cancels capture WITHOUT triggering the pipeline. Critical production
+  // guard: if the user drags off the button mid-press, the press hangs.
+  // Never fires the STT / process-command / TTS pipeline.
+  const abortRecording = useCallback(() => {
+    if (!isRecordingRef.current) return;
+    recordingStartedAtRef.current = null;
+    setIsRecording(false);
+    console.log('[VoiceCommand] 🛑 abortRecording — drag-off or touch-cancel detected');
+    cleanup();
+  }, [cleanup]);
 
   // Keep deactivateVoiceRef synced so the timeout can call it without deps
   useEffect(() => {
     deactivateVoiceRef.current = deactivateVoice;
   }, [deactivateVoice]);
+
+  // ─── NEW: resetPipelineLock — public API to clear the latch from the UI ───
+  const resetPipelineLock = useCallback(() => {
+    isLockedRef.current = false;
+    console.log('[VoiceCommand] 🔓 Pipeline lock cleared by UI');
+  }, []);
+
+  // ─── NEW: resetPipeline — comprehensive quiescent-state reset for navigation exit-paths.
+  // Owns its own state: releases the pipeline lock, clears the processing flag,
+  // aborts any in-flight fetch, and clears UI state. Does NOT touch the
+  // long-lived TTS AudioContext (managed by the playback lifecycle).
+  const resetPipeline = useCallback(() => {
+    isLockedRef.current = false;
+    isProcessingRef.current = false;
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    setIsProcessing(false);
+    setIsListening(false);
+    setIsSpeaking(false);
+    console.log('[VoiceCommand] 🔄 Pipeline and locks reset to idle');
+  }, []);
 
   // ─── NEW: Reset idle timeout whenever a new transcript arrives ────────────
   // This keeps the mic hot as long as the user is speaking
@@ -610,6 +748,13 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     transcript,
     aiResponse,
     error,
+    // NEW (PTT): Push-to-Talk state machine
+    isRecording,
+    recordingStartedAtRef,
+    startRecording,
+    stopRecording,
+    abortRecording,
+    // Legacy aliases (one-cycle deprecation)
     startListening,
     stopListening,
     abort,
@@ -617,5 +762,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     voiceActive,
     activateVoice,
     deactivateVoice,
+    resetPipelineLock,
+    resetPipeline,
   };
 }

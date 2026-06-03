@@ -4,6 +4,12 @@
  * and "production excellence" grade quality.
  */
 
+import {
+  STUDIO_CAPABILITIES,
+  buildCapabilitiesPrompt,
+  type StudioCapabilitiesMap,
+} from './studio-capabilities';
+
 /**
  * Hannah's Onboarding Assistant persona.
  * Used by /api/ai/create-client to extract client details from voice commands.
@@ -103,8 +109,22 @@ Always output ONLY valid JSON — no markdown, no code blocks, no extra text.`;
  * Technical Deployment Officer persona for the AI Intelligence module.
  * Used by /api/ai/process-command for widget configuration management.
  * Now also handles branding design commands (SYSTEM_UPDATE_BRANDING).
+ * 
+ * Accepts an optional capabilities map so that frontend context
+ * (e.g. STUDIO_CAPABILITIES on the /branding route) is dynamically
+ * injected into the prompt as the agent's "Operating Manual".
+ * 
+ * FUTURE CAPABILITIES: Add a new key in studio-capabilities.ts and
+ * the frontend constant. The prompt will automatically include it.
  */
-export const DEPLOYMENT_OFFICER = `You are a high-stakes deployment orchestrator for OVG Platform's AI Intelligence module.
+export function buildDeploymentOfficerPrompt(
+  capabilities?: StudioCapabilitiesMap
+): string {
+  const capabilitiesBlock = capabilities
+    ? buildCapabilitiesPrompt(capabilities)
+    : buildCapabilitiesPrompt(STUDIO_CAPABILITIES);
+
+  return `You are a high-stakes deployment orchestrator for OVG Platform's AI Intelligence module.
 
 🔒 SKEPTICISM DIRECTIVE — This is your highest priority rule:
 Never move to an ARMED state unless the input contains a clear, unambiguous command from the defined MACRO COMMAND DICTIONARY. If the input is conversational, a note, or ambiguous, you MUST return actionType "SYSTEM_NOTE" with a polite, neutral acknowledgement. Do not interpret fragments or conversational filler as commands. When in doubt, return SYSTEM_NOTE. It is better to ask for clarification than to execute an unintended action.
@@ -157,6 +177,13 @@ MACRO COMMAND DICTIONARY — These override all other logic and MUST be checked 
   → actionType "SYSTEM_NOTE"
   Set a low confidenceScore (0.0-0.5). Do NOT extract tenants, IDs, or config changes.
   Return a polite, neutral summary acknowledging the user.
+
+BRANDING ROUTE — STUDIO CAPABILITIES (Operating Manual):
+When the user is on the /branding route, the following capabilities are available as your operating manual.
+Read this list carefully — it defines everything you can do for design commands.
+${capabilitiesBlock}
+
+When the user asks "what can you do" or "help" while in the branding studio, return actionType "SYSTEM_HELP" with payload.brandingCapabilities containing a conversational summary based on the capabilities above. Begin with "I can help you..." and end with a suggestion like "Try saying: "Make the header minimalist"".
 
 BRANDING COMMANDS — When the user speaks a visual design or branding command, use actionType "SYSTEM_UPDATE_BRANDING".
 This action type is structurally handled by the central platform engine (deep-merges into widget_config).
@@ -297,6 +324,10 @@ When the user explicitly wants to reset / disarm the session:
 }
 
 The payload should only include fields that need to change. Preserve all existing values not explicitly changed.`;
+}
+
+/** @deprecated Use buildDeploymentOfficerPrompt(capabilities) instead */
+export const DEPLOYMENT_OFFICER = buildDeploymentOfficerPrompt();
 
 /**
  * Client-identifying persona for the deletion workflow.

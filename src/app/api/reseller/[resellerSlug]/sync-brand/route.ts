@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { z } from 'zod';
+import { resolveResellerFull } from '@/lib/db/resolve-reseller';
 
 // ================================================================
 // SCHEMA: Zod validation for the branding commit payload
@@ -72,64 +73,20 @@ export async function POST(
     // ================================================================
     // SECURITY LAYER 2: Authorize — verify this user owns the reseller
     // ================================================================
-    // STEP 2a — Resolve identifier (slug OR tenant_id) to the internal primary key.
-    // Sequential resolution avoids PostgREST .or() edge cases and works regardless
-    // of which column (or both) exist in the current schema.
-    //
-    // 🔒 SECURITY CONTRACT:
-    // The resolved reseller.id is immediately locked to the authenticated user
-    // via the user_resellers check in STEP 2b below. The service role is NEVER
-    // used to fetch user-scoped data.
-    let resolvedReseller: { id: string; tenant_id: string } | null = null;
+    // STEP 2a — Resolve identifier (slug, UUID PK, or tenant_id) to the
+    // internal primary key via the centralized UUID-aware resolver.
+    // Single DB query in the common case; two in the UUID tenant_id fallback.
+    let resolved = await resolveResellerFull(supabase, resellerSlug);
 
-    // 1a — Try slug lookup with user session
-    const { data: sessionSlugResult } = await supabase
-      .from('resellers')
-      .select('id, tenant_id')
-      .eq('slug', resellerSlug)
-      .maybeSingle();
-
-    if (sessionSlugResult) {
-      resolvedReseller = sessionSlugResult;
-    } else {
-      // 1b — Fallback to tenant_id lookup with user session
-      const { data: sessionTenantResult } = await supabase
-        .from('resellers')
-        .select('id, tenant_id')
-        .eq('tenant_id', resellerSlug)
-        .maybeSingle();
-
-      if (sessionTenantResult) {
-        resolvedReseller = sessionTenantResult;
-      }
-    }
-
-    if (!resolvedReseller) {
-      // 2a — Try slug lookup with service role (RLS fallback)
+    // If user-session query failed with a real error, try service-role fallback
+    if (!resolved.data && resolved.error) {
       console.log(
         '[sync-brand] User-session resolve failed, trying service-role fallback'
       );
-      const { data: adminSlugResult } = await supabaseAdmin
-        .from('resellers')
-        .select('id, tenant_id')
-        .eq('slug', resellerSlug)
-        .maybeSingle();
-
-      if (adminSlugResult) {
-        resolvedReseller = adminSlugResult;
-      } else {
-        // 2b — Fallback to tenant_id lookup with service role
-        const { data: adminTenantResult } = await supabaseAdmin
-          .from('resellers')
-          .select('id, tenant_id')
-          .eq('tenant_id', resellerSlug)
-          .maybeSingle();
-
-        resolvedReseller = adminTenantResult;
-      }
+      resolved = await resolveResellerFull(supabaseAdmin, resellerSlug);
     }
 
-    if (!resolvedReseller) {
+    if (!resolved.data) {
       console.error('[sync-brand] Reseller not found for identifier:', resellerSlug);
       return NextResponse.json(
         { error: 'Reseller not found' },
@@ -137,7 +94,7 @@ export async function POST(
       );
     }
 
-    const reseller = resolvedReseller;
+    const reseller = resolved.data;
 
     // STEP 2b — Authoritative check: verify the user is linked to the resolved internal ID
     let authorized = false;

@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import Groq from 'groq-sdk';
 import { z } from 'zod';
 import { createClient as createSupabaseClient } from '@/lib/supabase/server';
-import { resolveResellerId } from '@/lib/supabase/resolve-reseller-id';
-import { DEPLOYMENT_OFFICER } from '@/core/ai/system-prompts';
+import { resolveResellerId } from '@/lib/db/resolve-reseller';
+import { buildDeploymentOfficerPrompt } from '@/core/ai/system-prompts';
+import { buildCapabilitiesSummary, type StudioCapabilitiesMap } from '@/core/ai/studio-capabilities';
 
 // Force dynamic to prevent build-time initialization
 export const dynamic = 'force-dynamic';
@@ -14,6 +15,11 @@ const ProcessCommandSchema = z.object({
   resellerId: z.string().min(1), // Reseller slug (e.g. "lastchaptermedia2016")
   userCommand: z.string().min(1).max(2000),
   currentConfig: z.record(z.any()).default({}),
+  contextCapabilities: z.record(z.object({
+    key: z.string().optional(),
+    description: z.string(),
+    examples: z.array(z.string()),
+  })).optional(), // Studio capabilities from the /branding frontend
   tenantContext: z.object({
     tenantId: z.string().uuid().optional(), // Optional for global commands
     category: z.string().optional(),
@@ -64,14 +70,38 @@ const AIResponseSchema = z.object({
   confidenceScore: z.number().min(0).max(1).optional().default(0.9),
 });
 
-// SYSTEM_PROMPT is now imported from @/core/ai/system-prompts as DEPLOYMENT_OFFICER
-// which includes the MACRO COMMAND DICTIONARY block.
-const SYSTEM_PROMPT = DEPLOYMENT_OFFICER;
+// Pre-LLM intent detection regex for "what can you do" patterns
+// Matches the SYSTEM_HELP macro command dictionary entries
+const HELP_INTENT_REGEX = /^(what can you do|help|list commands|what are my options|capabilities|commands|what commands|show commands|show help|what can i do|how does this work|what are the commands)/i;
+
+/**
+ * Levenshtein distance — counts single-character edits (insert, delete, substitute).
+ * Used to handle STT phonetic substitutions like "Zita" -> "Zeta".
+ */
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, (_, i) =>
+    Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
+  );
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
 
 /**
  * Fuzzy, case-insensitive tenant name matcher.
- * Searches for a tenant whose name contains the searchTerm (normalized).
- * Returns the first matching tenant, or null if none found.
+ * Strategy (in priority order):
+ * 1. Exact substring match
+ * 2. Whitespace-collapsed match — handles run-ons like "ZetaSky" -> "Zeta Sky"
+ * 3. Token match — all words in search term appear in tenant name
+ * 4. Edit-distance match — tolerance of 2 edits per token, handles phonetic
+ *    substitutions like "Zita AI" -> "Zeta AI"
  */
 function fuzzyMatchTenant(
   tenants: { id: string; name: string }[],
@@ -79,7 +109,45 @@ function fuzzyMatchTenant(
 ): { id: string; name: string } | null {
   const normalized = searchTerm.toLowerCase().trim();
   if (!normalized) return null;
-  return tenants.find(t => t.name.toLowerCase().includes(normalized)) ?? null;
+
+  // 1. Direct substring
+  const direct = tenants.find(t => t.name.toLowerCase().includes(normalized));
+  if (direct) return direct;
+
+  // 2. Whitespace-collapsed
+  const collapsed = normalized.replace(/\s+/g, '');
+  const collapsedMatch = tenants.find(t => t.name.toLowerCase().replace(/\s+/g, '').includes(collapsed));
+  if (collapsedMatch) return collapsedMatch;
+
+  // 3. Token match
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+  if (tokens.length > 1) {
+    const tokenMatch = tenants.find(t => {
+      const tenantLower = t.name.toLowerCase();
+      return tokens.every(token => tenantLower.includes(token));
+    });
+    if (tokenMatch) return tokenMatch;
+  }
+
+  // 4. Edit-distance match — sum of best-match distances across all search tokens
+  const EDIT_TOLERANCE = 2;
+  let bestTenant: { id: string; name: string } | null = null;
+  let bestScore = Infinity;
+  const searchTokens = tokens.length ? tokens : [normalized];
+
+  for (const tenant of tenants) {
+    const tenantTokens = tenant.name.toLowerCase().split(/\s+/).filter(Boolean);
+    let totalScore = 0;
+    for (const st of searchTokens) {
+      totalScore += Math.min(...tenantTokens.map(tt => levenshtein(st, tt)));
+    }
+    if (totalScore < bestScore && totalScore <= EDIT_TOLERANCE * searchTokens.length) {
+      bestScore = totalScore;
+      bestTenant = tenant;
+    }
+  }
+
+  return bestTenant;
 }
 
 export async function POST(request: NextRequest) {
@@ -108,7 +176,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { resellerId, userCommand, currentConfig, tenantContext } = validationResult.data;
+    const { resellerId, userCommand, currentConfig, tenantContext, contextCapabilities } = validationResult.data;
 
     // Security: Validate reseller authorization
     if (!resellerId) {
@@ -165,6 +233,35 @@ export async function POST(request: NextRequest) {
         console.warn('%c[ProcessCommand] ⚠️ No tenants found for reseller:', 'color: #f59e0b; font-weight: bold;', actualResellerId);
       }
     }
+
+    // ── Pre-LLM Intent Detection: Fast-path for "what can you do" ─────
+    // If the frontend provided branding capabilities, respond deterministically
+    // without hitting the LLM. This avoids a 2-4s Groq round-trip for help.
+    if (contextCapabilities && HELP_INTENT_REGEX.test(userCommand.trim())) {
+      const typedCaps = contextCapabilities as unknown as StudioCapabilitiesMap;
+      const helpSummary = buildCapabilitiesSummary(typedCaps);
+      const allExamples = Object.values(typedCaps).flatMap(c => c.examples);
+
+      console.log('%c[ProcessCommand] 🔷 Pre-LLM SYSTEM_HELLO — branding capabilities detected', 'color: #3b82f6; font-weight: bold;');
+      return NextResponse.json({
+        success: true,
+        actionType: 'SYSTEM_HELP',
+        targetIds: [],
+        payload: {
+          availableCommands: allExamples,
+          brandingCapabilities: typedCaps,
+        },
+        summary: `I can help you ${helpSummary}. Try saying: "${allExamples[0] || 'Make the header minimalist'}".`,
+        metadata: {
+          processedAt: new Date().toISOString(),
+          resellerId,
+          model: 'pre-llm-intent',
+        },
+      });
+    }
+
+    // Build the system prompt dynamically from capabilities
+    const SYSTEM_PROMPT = buildDeploymentOfficerPrompt(contextCapabilities as unknown as StudioCapabilitiesMap | undefined);
 
     // Construct the AI prompt with tenant context
     const userPrompt = `CURRENT CONFIG: ${JSON.stringify(currentConfig, null, 2)}

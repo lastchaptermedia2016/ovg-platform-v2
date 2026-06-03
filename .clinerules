@@ -21,3 +21,12 @@
 ## Verification Workflow
 - After every file modification, you MUST run `npm run lint` on the affected file.
 - If linting fails, self-correct immediately before reporting completion.
+
+## Hardware Lifecycle Management
+When managing WebAudio or MediaStream objects, all hardware-accessing functions must be triggered only within an explicit user-gesture event (e.g., onClick). Avoid initializing AudioContext or MediaRecorder in useEffect or async callback chains to prevent browser autoplay blocking."
+
+## Resource Cleanup Integrity
+"When writing cleanup functions for hooks, verify the distinction between 'Hardware Cleanup' (closing mics/streams) and 'Lifecycle Cleanup' (closing audio contexts). Never call .close() or .pause() on shared persistent resources (like a global AudioContext) within a per-pipeline cleanup function."
+
+## State-Machine Synchronization
+"Avoid 'loading' or 'busy' states that rely on implicit completion. Always pair async requests with a corresponding try...finally block that ensures state flags (like isProcessing or isSpeaking) are reset to idle, regardless of whether the request succeeded or failed."

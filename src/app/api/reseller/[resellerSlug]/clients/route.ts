@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
-import { resolveResellerId } from '@/lib/supabase/resolve-reseller-id';
+import { resolveResellerId } from '@/lib/db/resolve-reseller';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';

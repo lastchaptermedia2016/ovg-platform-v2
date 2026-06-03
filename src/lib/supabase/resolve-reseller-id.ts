@@ -1,40 +1,16 @@
-import { createClient as createServerClient } from '@/lib/supabase/server';
-import { createBrowserClient } from '@/lib/supabase';
-import { supabaseAdmin } from '@/lib/supabase/admin';
-
-type SupabaseClient = Awaited<ReturnType<typeof createServerClient>> | ReturnType<typeof createBrowserClient> | typeof supabaseAdmin;
-
 /**
- * Resolve a reseller's primary key (id) from a slug or tenant_id string.
+ * @deprecated Migrate to `@/lib/db/resolve-reseller` which provides the same
+ * `resolveResellerId` export plus `resolveResellerFull` for full-row lookups
+ * and `ResolvedReseller` for strict typing.
  *
- * Sequential resolution — matches the pattern in layout.tsx and
- * branding/route.ts. First tries `slug`, falls back to `tenant_id`.
+ * The new resolver uses a UUID-aware branching strategy (single-pass in the
+ * common case) instead of the sequential slug→tenant_id fallback pattern.
  *
- * @param db - Any Supabase client (server, browser, or admin)
- * @param identifier - The resellerSlug from the route param
- * @returns The resolved reseller.id, or null if not found
+ * Import replacement:
+ *   import { resolveResellerId } from '@/lib/db/resolve-reseller';
+ *
+ * Full resolution:
+ *   import { resolveResellerFull } from '@/lib/db/resolve-reseller';
+ *   const { data, error } = await resolveResellerFull(db, identifier);
  */
-export async function resolveResellerId(
-  db: SupabaseClient,
-  identifier: string,
-): Promise<string | null> {
-  if (!identifier) return null;
-
-  // 1 — Try slug lookup
-  const { data: slugResult } = await db
-    .from('resellers')
-    .select('id')
-    .eq('slug', identifier)
-    .maybeSingle();
-
-  if (slugResult?.id) return slugResult.id;
-
-  // 2 — Fallback to tenant_id lookup
-  const { data: tenantResult } = await db
-    .from('resellers')
-    .select('id')
-    .eq('tenant_id', identifier)
-    .maybeSingle();
-
-  return tenantResult?.id ?? null;
-}
+export { resolveResellerId } from '@/lib/db/resolve-reseller';

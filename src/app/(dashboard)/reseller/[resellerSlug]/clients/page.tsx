@@ -420,6 +420,7 @@ export default function ClientsPage() {
     deactivateVoice,
     startListening,
     stopListening,
+    resetPipelineLock,
   } = useVoiceCommand({
     resellerId: resellerSlug,
     tenantContext: selectedTenantId ? { tenantId: selectedTenantId, category: activeFilter } : { category: activeFilter },
@@ -429,6 +430,7 @@ export default function ClientsPage() {
     onTranscript: handleTranscript,
     onError: (err) => console.error('Voice command error:', err),
     onAutoDeactivate: () => {
+      resetPipelineLock();
       setIsAwaitingVoiceConfirm(false);
       speakVoiceRef.current('Microphone auto-deactivated due to inactivity.');
     },
