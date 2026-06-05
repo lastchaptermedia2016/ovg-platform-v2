@@ -74,6 +74,23 @@ const STUDIO_CAPABILITIES = {
   },
 } as const;
 
+// ── Acoustic Normalizer ────────────────────────────────────────────────
+// Module-level utility for repairing STT phonetic distortions in high-frequency
+// studio vocabulary. Whole-word, case-insensitive, regex-anchored so partial
+// substrings are never corrupted.
+const ACOUSTIC_VERB_MAP: ReadonlyMap<string, string> = new Map([
+  ['doggle', 'toggle'],
+  ['goggle', 'toggle'],
+  ['five',   'vibe'],
+  ['bide',   'vibe'],
+]);
+
+function normalizeAcousticCommand(input: string): string {
+  return input.replace(/\b(doggle|goggle|five|bide)\b/gi, (match) =>
+    ACOUSTIC_VERB_MAP.get(match.toLowerCase()) ?? match
+  );
+}
+
 export function ClientBrandingStudio({
   clientId,
   resellerSlug,
@@ -107,6 +124,9 @@ export function ClientBrandingStudio({
   const [vibeInput, setVibeInput] = useState('');
   const [isSpeakerEnabled, setIsSpeakerEnabled] = useState(true);
   const [voiceTranscript, setVoiceTranscript] = useState('');
+  const [textCommand, setTextCommand] = useState('');
+  const [isProcessingText, setIsProcessingText] = useState(false);
+  const userHasTypedRef = useRef(false);
 
   // Guided Onboarding State
   const [showGuidedSetup, setShowGuidedSetup] = useState(false);
@@ -507,6 +527,89 @@ export function ClientBrandingStudio({
       }
     }
   }, [handleThemeUpdateEngine, applyAIVibe, handleSave, syncBrandWithURL]);
+
+  /** System Command Console: dispatch typed text through the same /api/ai/process-command
+   *  pipeline the voice path uses, ensuring identical action derivation and UI state updates. */
+  const handleTextCommand = useCallback(async (text: string) => {
+    console.log('[SST Console] Execution Triggered with Text:', text);
+    console.log('[SST Console] isProcessingText at trigger:', isProcessingText);
+    const normalized = normalizeAcousticCommand(text);
+    console.log('[SST Console] Normalized:', normalized);
+    const trimmed = normalized.trim();
+    console.log('[SST Console] Trimmed:', JSON.stringify(trimmed), '| length:', trimmed.length);
+    if (!trimmed || isProcessingText) {
+      console.warn('[SST Console] Early return — empty input or already processing');
+      return;
+    }
+    setIsProcessingText(true);
+    const requestPayload = {
+      resellerId: effectiveResellerSlug,
+      userCommand: trimmed,
+      currentConfig: config as unknown as Record<string, unknown>,
+      tenantContext: { tenantId: clientId, category: 'GENERAL' as const },
+      contextCapabilities: STUDIO_CAPABILITIES,
+    };
+    console.log('[SST Console] Assembling fetch payload:', requestPayload);
+    try {
+      console.log('[SST Console] Entering try block, dispatching fetch');
+      const res = await fetch('/api/ai/process-command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestPayload),
+      });
+      console.log('[SST Console] Fetch response status:', res.status, res.statusText);
+      if (!res.ok) throw new Error(`Process failed: ${res.status}`);
+      const data = await res.json() as { actions?: IncomingAIAction[]; payload?: unknown; actionType?: string; summary?: string };
+      console.log('[SST Console] Success: parsed response', { actionType: data?.actionType, summary: data?.summary, hasPayload: !!data?.payload });
+      const actions: IncomingAIAction[] = Array.isArray(data?.actions)
+        ? data.actions
+        : [];
+      if (actions.length === 0 && data?.payload) {
+        const p = data.payload as Record<string, unknown>;
+        if (p.theme && typeof p.theme === 'object' && Object.keys(p.theme as Record<string, unknown>).length > 0) {
+          const type: 'APPLY_VIBE' | 'UPDATE_THEME_COLORS' = data.actionType === 'SYSTEM_UPDATE_BRANDING' ? 'APPLY_VIBE' : 'UPDATE_THEME_COLORS';
+          actions.push({ type, payload: { theme: p.theme as Record<string, unknown> } });
+        }
+      }
+      console.log('[SST Console] Dispatching actions to studio:', actions.length);
+      for (const action of actions) {
+        await dispatchStudioAction(action);
+      }
+      // Vocal confirmation layer — fire-and-forget so it never blocks
+      // the input clearing, the isProcessingText reset, or any UI state.
+      // Audio errors are caught by the local .catch and never cascade.
+      if (data?.summary && isSpeakerEnabled && isHannahAwake) {
+        void tts(data.summary).catch((ttsErr) => {
+          console.error('[SST Console] TTS read-back failed (non-fatal):', ttsErr);
+        });
+      }
+      // Clear the console if UI actions were triggered OR if a conversational system macro matched successfully
+      const isConversationalSuccess = data?.actionType?.startsWith('SYSTEM_');
+      const isStandardMatch = actions.length > 0;
+
+      if (isStandardMatch || isConversationalSuccess) {
+        setTextCommand('');
+        userHasTypedRef.current = false;
+        console.log('[SST Console] Console cleared after successful dispatch');
+      } else {
+        console.warn('[SST] Command parsed with zero actionable intents — retaining text for correction.');
+      }
+    } catch (err) {
+      console.error('[SST Console] Error caught during dispatch:', err);
+      setTextCommand(trimmed);
+      userHasTypedRef.current = true;
+    } finally {
+      setIsProcessingText(false);
+      console.log('[SST Console] isProcessingText reset in finally');
+    }
+  }, [clientId, config, effectiveResellerSlug, dispatchStudioAction, isProcessingText, isSpeakerEnabled, isHannahAwake, tts]);
+
+  // Stream live STT transcript into the console input while the user hasn't started typing manually
+  useEffect(() => {
+    if (!userHasTypedRef.current && voiceTranscript) {
+      setTextCommand(voiceTranscript);
+    }
+  }, [voiceTranscript]);
 
   // Re-hydrate local config from the deep-merged widget_config written by the AI engine
   const handleAIComplete = useCallback(async (_aiResponseText?: string, aiPayload?: unknown) => {
@@ -1511,7 +1614,7 @@ export function ClientBrandingStudio({
           </button>
         </div>
 
-        <div className="relative rounded-lg overflow-hidden" style={{ height: '500px' }}>
+        <div className="relative rounded-lg overflow-hidden h-[440px]">
           {/* Widget Preview */}
           <div className="absolute inset-0 flex flex-col">
             {/* Header */}
@@ -1552,7 +1655,7 @@ export function ClientBrandingStudio({
             </div>
 
             {/* Content */}
-            <div className="flex-1 backdrop-blur-lg bg-opacity-40 bg-black/30 p-4">
+            <div className="flex-1 overflow-y-auto backdrop-blur-lg bg-opacity-40 bg-black/30 p-4">
               <div className="space-y-3">
                 <div className="flex justify-end">
                   <div className="bg-[#0097b2] text-white px-4 py-2 rounded-lg max-w-[80%] text-sm">
@@ -1632,6 +1735,55 @@ export function ClientBrandingStudio({
             </div>
           </div>
         )}
+
+        {/* System Command Console (SST) — anchored at the base of the Live Preview panel */}
+        <div className="mt-4 pt-4 border-t border-white/10">
+          <label className="block text-[10px] font-semibold uppercase tracking-wider text-white/40 mb-2">
+            System Command Console
+          </label>
+          <div className="flex items-center border border-white/10 bg-white/5 rounded-lg px-3 py-2 focus-within:border-[#0097b2]/50 transition-colors">
+            <input
+              type="text"
+              value={textCommand}
+              onChange={(e) => {
+                userHasTypedRef.current = true;
+                setTextCommand(e.target.value);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleTextCommand(textCommand);
+                }
+              }}
+              placeholder="Type a command or speak — e.g. 'what can you do?'"
+              disabled={isProcessingText}
+              className="flex-1 bg-transparent text-xs text-white placeholder-white/40 outline-none disabled:opacity-50"
+            />
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                handleTextCommand(textCommand);
+              }}
+              disabled={isProcessingText || !textCommand.trim()}
+              className="ml-2 flex-shrink-0 p-1 rounded hover:bg-white/10 transition-colors disabled:opacity-30"
+              aria-label="Send command"
+            >
+              {isProcessingText ? (
+                <svg className="h-3.5 w-3.5 text-[#0097b2] animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              ) : (
+                <svg className="h-3.5 w-3.5 text-white/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9-2-9-18-9 18 9 2zm0 0v-8" />
+                </svg>
+              )}
+            </button>
+          </div>
+        </div>
 
         {/* Transcribing Overlay */}
         {(isListening || isProcessing || voiceTranscript) && (
