@@ -9,6 +9,7 @@ import { useVoiceCommand } from '@/hooks/use-voice-command';
 import { Client as ClientType } from '@/types/index';
 import { createHarmoniousGreeting, VisualStyle } from '@/lib/voice-visual-harmony';
 import { isInvalidSlug } from '@/lib/utils/guard';
+import { type IncomingAIAction } from '@/hooks/use-voice-command';
 
 interface ClientWithBranding extends ClientType {
   industry?: string;
@@ -52,29 +53,7 @@ export interface BrandingConfig {
   customCss: boolean;
 }
 
-type StudioActionPayload = {
-  theme?: {
-    primary?: string;
-    secondary?: string;
-    backgroundType?: 'solid' | 'gradient' | 'image';
-    primaryGradientStart?: string;
-    primaryGradientEnd?: string;
-    secondaryGradientStart?: string;
-    secondaryGradientEnd?: string;
-    opacity?: number;
-    logoUrl?: string;
-  };
-  ui?: {
-    aiInsightBadge?: boolean;
-    aiDesignMirror?: boolean;
-    customCss?: boolean;
-  };
-};
-
-interface StudioAction {
-  type: 'SET_COLOR' | 'APPLY_VIBE' | 'TOGGLE_ADDON' | 'APPLY_BRAND_VIBE' | 'SAVE_STUDIO_CONFIG' | 'TRIGGER_AI_MAGIC';
-  payload: StudioActionPayload;
-}
+type StudioAction = IncomingAIAction;
 
 const STUDIO_CAPABILITIES = {
   header: {
@@ -388,80 +367,165 @@ export function ClientBrandingStudio({
 
   // --- END MOVED UP ---
 
-  const dispatchStudioAction = useCallback((action: StudioAction): void => {
+  /** Shared theme-palette merge engine — used by both SET_COLOR and UPDATE_THEME_COLORS / APPLY_VIBE actions. */
+  const handleThemeUpdateEngine = useCallback((theme: Record<string, unknown>) => {
+    setConfig(prev => {
+      // No-op check to prevent jarring flicker when backend confirmation arrives
+      if (
+        (theme.primary === undefined || prev.headerBackground === theme.primary) &&
+        (theme.secondary === undefined || prev.footerBackground === theme.secondary) &&
+        (theme.logoUrl === undefined || prev.logoUrl === theme.logoUrl)
+      ) {
+        return prev;
+      }
+      return {
+        ...prev,
+        ...(theme.primary !== undefined && { headerBackground: theme.primary as string }),
+        ...(theme.secondary !== undefined && { footerBackground: theme.secondary as string }),
+        ...(theme.backgroundType !== undefined && {
+          headerBackgroundType: theme.backgroundType as 'solid' | 'gradient' | 'image',
+          footerBackgroundType: theme.backgroundType as 'solid' | 'gradient' | 'image',
+        }),
+        ...(theme.primaryGradientStart !== undefined && { headerGradientStart: theme.primaryGradientStart as string }),
+        ...(theme.primaryGradientEnd !== undefined && { headerGradientEnd: theme.primaryGradientEnd as string }),
+        ...(theme.secondaryGradientStart !== undefined && { footerGradientStart: theme.secondaryGradientStart as string }),
+        ...(theme.secondaryGradientEnd !== undefined && { footerGradientEnd: theme.secondaryGradientEnd as string }),
+        ...(theme.opacity !== undefined && { headerOpacity: theme.opacity as number, footerOpacity: theme.opacity as number }),
+        ...(theme.logoUrl !== undefined && { logoUrl: theme.logoUrl as string }),
+      };
+    });
+  }, []);
+
+  /** Central Commit Wrapper: Bridges UI state to the hook's persistence logic */
+  const handleCommit = useCallback(async (): Promise<boolean> => {
+    // Extract persisted fields from UI config
+    studio.stageBulk({
+      primaryColor: config.headerBackground,
+      accentColor: config.footerBackground,
+      logoUrl: config.logoUrl,
+    });
+
+    const result = await studio.commit();
+
+    if (!result.success) {
+      if (result.conflict) {
+        setSaveMessage('⚠️ Branding conflict: another session modified branding. Rollback initiated.');
+        studio.rollback();
+      } else {
+        setSaveMessage(`Error: ${result.error || 'Commit failed'}`);
+      }
+      return false;
+    }
+    return true;
+  }, [config, studio]);
+
+  // Handle save — uses atomic commit pipeline with version_stamp optimistic locking
+  const handleSave = useCallback(async () => {
+    setIsSaving(true);
+    setSaveMessage(null);
+
+    try {
+      const success = await handleCommit();
+      if (!success) return;
+
+      // Branding committed successfully — also save greeting via existing endpoint
+      if (generatedGreeting) {
+        const greetingResponse = await fetch('/api/tenants/update-config-with-greeting', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tenantId: clientId,
+            configPatch: {},
+            aiSettings: {
+              initial_greeting: generatedGreeting,
+              voice_persona: 'auto-generated',
+            },
+          }),
+        });
+
+        if (!greetingResponse.ok) {
+          console.warn('[BrandingStudio] Greeting save failed, but branding committed');
+        }
+      }
+
+      setSaveMessage('✨ Perfect! Both the visual design and greeting have been saved.');
+      tts('Excellent! Your complete branding setup is now live.');
+      setShowGreetingPreview(false);
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setSaveMessage(errorMessage || 'Error saving configuration');
+      tts('Sorry, I had trouble saving your changes.');
+      console.error('[ClientBrandingStudio] Save error:', err);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [handleCommit, clientId, generatedGreeting, tts]);
+
+  const dispatchStudioAction = useCallback(async (action: StudioAction): Promise<void> => {
     switch (action.type) {
-      case 'SET_COLOR': {
-        const { theme } = action.payload;
-        if (!theme) break;
-        setConfig(prev => {
-          // No-op check to prevent jarring flicker when backend confirmation arrives
-          if (
-            (theme.primary === undefined || prev.headerBackground === theme.primary) &&
-            (theme.secondary === undefined || prev.footerBackground === theme.secondary) &&
-            (theme.logoUrl === undefined || prev.logoUrl === theme.logoUrl)
-          ) {
-            return prev;
-          }
-          return {
-            ...prev,
-            ...(theme.primary !== undefined && { headerBackground: theme.primary }),
-            ...(theme.secondary !== undefined && { footerBackground: theme.secondary }),
-            ...(theme.backgroundType !== undefined && {
-              headerBackgroundType: theme.backgroundType,
-              footerBackgroundType: theme.backgroundType,
-            }),
-            ...(theme.primaryGradientStart !== undefined && { headerGradientStart: theme.primaryGradientStart }),
-            ...(theme.primaryGradientEnd !== undefined && { headerGradientEnd: theme.primaryGradientEnd }),
-            ...(theme.secondaryGradientStart !== undefined && { footerGradientStart: theme.secondaryGradientStart }),
-            ...(theme.secondaryGradientEnd !== undefined && { footerGradientEnd: theme.secondaryGradientEnd }),
-            ...(theme.opacity !== undefined && { headerOpacity: theme.opacity, footerOpacity: theme.opacity }),
-            ...(theme.logoUrl !== undefined && { logoUrl: theme.logoUrl }),
-          };
-        });
-        tts('Colors updated.');
+      case 'TOGGLE_INSIGHTS':
+      case 'TOGGLE_DESIGN_MIRROR':
+      case 'SET_CUSTOM_CSS': {
+        setConfig(prev => ({
+          ...prev,
+          ...(action.type === 'TOGGLE_INSIGHTS'      && { aiInsightBadge: action.payload.enabled }),
+          ...(action.type === 'TOGGLE_DESIGN_MIRROR' && { aiDesignMirror: action.payload.enabled }),
+          ...(action.type === 'SET_CUSTOM_CSS'       && { customCss: action.payload.enabled }),
+        }));
         break;
       }
+
+      case 'UPDATE_THEME_COLORS':
       case 'APPLY_VIBE': {
-        // Vibe application is handled by the existing applyAIVibe flow
+        if (action.payload?.theme) {
+          handleThemeUpdateEngine(action.payload.theme);
+        }
         break;
       }
-      case 'TOGGLE_ADDON': {
-        const { ui } = action.payload;
-        if (!ui) break;
-        setConfig(prev => {
-          if (
-            (ui.aiInsightBadge === undefined || prev.aiInsightBadge === ui.aiInsightBadge) &&
-            (ui.aiDesignMirror === undefined || prev.aiDesignMirror === ui.aiDesignMirror) &&
-            (ui.customCss === undefined || prev.customCss === ui.customCss)
-          ) {
-            return prev;
-          }
-          return {
-            ...prev,
-            ...(ui.aiInsightBadge !== undefined && { aiInsightBadge: ui.aiInsightBadge }),
-            ...(ui.aiDesignMirror !== undefined && { aiDesignMirror: ui.aiDesignMirror }),
-            ...(ui.customCss !== undefined && { customCss: ui.customCss }),
-          };
-        });
-        tts('Feature toggles updated.');
+
+      case 'APPLY_BRAND_VIBE': {
+        if (action.payload?.vibeText) {
+          setVibeInput(action.payload.vibeText); // Visual feedback echo
+          await applyAIVibe(action.payload.vibeText);
+        }
         break;
       }
+
+      case 'SAVE_STUDIO_CONFIG': {
+        await handleSave(); // Concrete async Supabase persistence
+        break;
+      }
+
+      case 'TRIGGER_AI_MAGIC': {
+        await syncBrandWithURL(); // Concrete layout optimization pass
+        break;
+      }
+
       default: {
-        console.warn('[BrandingStudio] Unknown StudioAction type:', (action as StudioAction).type);
+        console.warn(`[StudioDispatcher] Unhandled or unexpected action type: ${(action as StudioAction).type}`);
+        break;
       }
     }
-  }, [tts]);
+  }, [handleThemeUpdateEngine, applyAIVibe, handleSave, syncBrandWithURL]);
 
   // Re-hydrate local config from the deep-merged widget_config written by the AI engine
   const handleAIComplete = useCallback(async (_aiResponseText?: string, aiPayload?: unknown) => {
-    // Optimistic UI update: apply the AI payload immediately if it contains branding changes
+    // Legacy fallback: handle raw payload shapes for backward-compat with older server builds
+    // that don't return an explicit `actions` array. The new `onActionsReceived` path handles
+    // the canonical IncomingAIAction[] — this path only fires when actions[] is absent.
     if (aiPayload && typeof aiPayload === 'object' && 'theme' in (aiPayload as Record<string, unknown>)) {
-      const payload = aiPayload as StudioActionPayload;
-      if (payload.theme) {
-        dispatchStudioAction({ type: 'SET_COLOR', payload });
+      const p = aiPayload as Record<string, unknown>;
+      if (p.theme && typeof p.theme === 'object') {
+        handleThemeUpdateEngine(p.theme as Record<string, unknown>);
       }
-      if (payload.ui) {
-        dispatchStudioAction({ type: 'TOGGLE_ADDON', payload });
+      if (p.ui && typeof p.ui === 'object') {
+        const ui = p.ui as Record<string, unknown>;
+        setConfig(prev => ({
+          ...prev,
+          ...(typeof ui.aiInsightBadge === 'boolean' && { aiInsightBadge: ui.aiInsightBadge }),
+          ...(typeof ui.aiDesignMirror === 'boolean' && { aiDesignMirror: ui.aiDesignMirror }),
+          ...(typeof ui.customCss === 'boolean' && { customCss: ui.customCss }),
+        }));
       }
     }
 
@@ -504,7 +568,7 @@ export function ClientBrandingStudio({
     }
   // tts intentionally excluded from deps — the AI response text is spoken by the
   // internal pipeline (processAudioPipeline), not by this standalone callback.
-  }, [clientId, dispatchStudioAction]);
+  }, [clientId, handleThemeUpdateEngine]);
 
   // ════════════════════════════════════════════════════════════════════
   // Stable Initialization: Voice pipeline options are memoized so that
@@ -565,6 +629,12 @@ export function ClientBrandingStudio({
     ...voiceOptions,
     onTranscript: stableOnTranscript,
     onAIResponse: handleAIComplete,
+    // Execute actions sequentially to ensure asynchronous state determinism
+    onActionsReceived: useCallback(async (actions: IncomingAIAction[]) => {
+      for (const action of actions) {
+        await dispatchStudioAction(action);
+      }
+    }, [dispatchStudioAction]),
   });
 
   // Sync refs for callbacks defined before useVoiceCommand
@@ -584,29 +654,6 @@ export function ClientBrandingStudio({
     resetPipeline();
     router.push('/reseller/lastchaptermedia2016/clients');
   }, [resetPipeline, router]);
-
-  /** Central Commit Wrapper: Bridges UI state to the hook's persistence logic */
-  const handleCommit = useCallback(async (): Promise<boolean> => {
-    // Extract persisted fields from UI config
-    studio.stageBulk({
-      primaryColor: config.headerBackground,
-      accentColor: config.footerBackground,
-      logoUrl: config.logoUrl,
-    });
-
-    const result = await studio.commit();
-
-    if (!result.success) {
-      if (result.conflict) {
-        setSaveMessage('⚠️ Branding conflict: another session modified branding. Rollback initiated.');
-        studio.rollback();
-      } else {
-        setSaveMessage(`Error: ${result.error || 'Commit failed'}`);
-      }
-      return false;
-    }
-    return true;
-  }, [config, studio]);
 
   const updateConfig = (key: keyof BrandingConfig, value: string | number | boolean) => {
     setConfig((prev) => ({ ...prev, [key]: value }));
@@ -634,48 +681,6 @@ export function ClientBrandingStudio({
     };
     return lockedFeatures[planTier]?.includes(feature) || false;
   }, [planTier]);
-
-  // Handle save — uses atomic commit pipeline with version_stamp optimistic locking
-  const handleSave = useCallback(async () => {
-    setIsSaving(true);
-    setSaveMessage(null);
-
-    try {
-      const success = await handleCommit();
-      if (!success) return;
-
-      // Branding committed successfully — also save greeting via existing endpoint
-      if (generatedGreeting) {
-        const greetingResponse = await fetch('/api/tenants/update-config-with-greeting', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            tenantId: clientId,
-            configPatch: {},
-            aiSettings: {
-              initial_greeting: generatedGreeting,
-              voice_persona: 'auto-generated',
-            },
-          }),
-        });
-
-        if (!greetingResponse.ok) {
-          console.warn('[BrandingStudio] Greeting save failed, but branding committed');
-        }
-      }
-
-      setSaveMessage('✨ Perfect! Both the visual design and greeting have been saved.');
-      tts('Excellent! Your complete branding setup is now live.');
-      setShowGreetingPreview(false);
-    } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      setSaveMessage(errorMessage || 'Error saving configuration');
-      tts('Sorry, I had trouble saving your changes.');
-      console.error('[ClientBrandingStudio] Save error:', err);
-    } finally {
-      setIsSaving(false);
-    }
-  }, [handleCommit, clientId, generatedGreeting, tts]);
 
   // Instant Save — saves both visuals and greeting with atomic commit
   const instantSave = useCallback(async () => {
