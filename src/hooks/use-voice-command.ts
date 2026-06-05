@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect, type MutableRefObject } from 'react';
 import { isInvalidSlug } from '@/lib/utils/guard';
+import { transcodeBlobToWav } from '@/utils/audio/transcode-to-wav';
 
 interface UseVoiceCommandReturn {
   isListening: boolean;
@@ -13,11 +14,11 @@ interface UseVoiceCommandReturn {
   error: string | null;
   /** NEW (PTT): Whether the mic button is currently being held down. */
   isRecording: boolean;
-  /** NEW (PTT): Wall-clock start time of the current press (used for the 200ms tap guard). */
+  /** NEW (PTT): Wall-clock start time of the current press (used for the 500ms tap guard). */
   recordingStartedAtRef: MutableRefObject<number | null>;
   /** NEW (PTT): Begin audio capture on mousedown / touchstart. Clears any previous pipeline state. */
   startRecording: () => Promise<void>;
-  /** NEW (PTT): Finalize the audio chunk on mouseup / touchend. Triggers the pipeline if the press was >= 200ms; aborts otherwise. */
+  /** NEW (PTT): Finalize the audio chunk on mouseup / touchend. Triggers the pipeline if the press was >= 500ms; aborts otherwise. */
   stopRecording: () => void;
   /** NEW (PTT): Abort capture on mouseleave / touchcancel. Never triggers the pipeline. */
   abortRecording: () => void;
@@ -43,8 +44,10 @@ interface UseVoiceCommandReturn {
 }
 
 /** Minimum press duration (ms) before stopRecording finalises the pipeline.
- *  Presses shorter than this are treated as accidental taps and aborted. */
-const MIN_RECORDING_DURATION_MS = 200;
+ *  Presses shorter than this are treated as accidental taps and aborted.
+ *  500ms is the lower bound at which a webm/opus container has produced
+ *  a valid, decodeable header + initial frames for Groq Whisper. */
+const MIN_RECORDING_DURATION_MS = 500;
 
 interface TenantContext {
   tenantId?: string;
@@ -55,7 +58,32 @@ interface ProcessResponse {
   response: string;
   summary?: string;
   payload?: unknown;
+  /** Optional explicit action array — the server may return structured actions directly.
+   *  When absent, the hook derives them from `payload` to remain backward-compatible. */
+  actions?: IncomingAIAction[];
+  /** Top-level actionType (e.g. 'SYSTEM_UPDATE_BRANDING') — used to disambiguate
+   *  APPLY_VIBE vs UPDATE_THEME_COLORS when deriving from payload. */
+  actionType?: string;
 }
+
+/**
+ * Discriminated union for the structural action array extracted from the
+ * AI agent's processed command payload. Consumed by the UI's action dispatcher
+ * to drive layout variables in real-time.
+ *
+ * NOTE: This type lives next to the hook so the API contract is colocated
+ * with the code that extracts it. The frontend mirrors it in
+ * `ClientBrandingStudio.tsx`.
+ */
+export type IncomingAIAction =
+  | { type: 'TOGGLE_INSIGHTS';      payload: { enabled: boolean } }
+  | { type: 'TOGGLE_DESIGN_MIRROR'; payload: { enabled: boolean } }
+  | { type: 'SET_CUSTOM_CSS';       payload: { enabled: boolean } }
+  | { type: 'APPLY_VIBE';           payload: { theme: Record<string, unknown> } }
+  | { type: 'UPDATE_THEME_COLORS';  payload: { theme: Record<string, unknown> } }
+  | { type: 'APPLY_BRAND_VIBE';     payload: { vibeText?: string } }
+  | { type: 'SAVE_STUDIO_CONFIG';   payload?: Record<string, never> }
+  | { type: 'TRIGGER_AI_MAGIC';     payload?: Record<string, never> };
 
 interface SttResponse {
   text: string;
@@ -80,6 +108,12 @@ interface VoiceCommandOptions {
   /** Fires when the MAX_RECORDING_DURATION_MS cap is hit and the recorder is auto-stopped.
    *  Use this to surface UX feedback (e.g. speak "Processing your command..."). */
   onMaxDuration?: () => void;
+  /** NEW: Fires when the AI's structural action array is extracted/derived from the
+   *  processed command payload. Use this to drive UI layout variables in real-time
+   *  (e.g. toggle the AI Insight Badge, apply theme colors). The array is sourced
+   *  from `parsedResponse.actions` if the server returns it, otherwise derived from
+   *  `parsedResponse.payload` for backward compatibility. */
+  onActionsReceived?: (actions: IncomingAIAction[]) => void;
 }
 
 /** Default idle timeout in milliseconds before the mic auto-deactivates */
@@ -105,6 +139,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     explicitActivation = false,
     onAutoDeactivate,
     onMaxDuration,
+    onActionsReceived,
   } = options;
 
   // ─── Refs for dynamic options ────────────────────────────────────────
@@ -128,8 +163,12 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   // ─── NEW (PTT): Push-to-Talk state machine ───────────────────────────────
   /** Whether the mic button is currently being held down. */
   const [isRecording, setIsRecording] = useState(false);
-  /** Wall-clock start time of the current press (used by the 200ms tap guard). */
+  /** Wall-clock start time of the current press (used by the 500ms tap guard). */
   const recordingStartedAtRef = useRef<number | null>(null);
+  /** Wall-clock duration of the most recent completed press. Captured in
+   *  stopRecording and consumed in processAudioPipeline for diagnostic
+   *  correlation with the server's `Received file` log. */
+  const lastRecordingDurationMsRef = useRef<number | null>(null);
   /** Mirror of `isRecording` for synchronous access in event handlers / abort paths. */
   const isRecordingRef = useRef(false);
   useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
@@ -176,6 +215,11 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
 
   const onMaxDurationRef = useRef(onMaxDuration);
   useEffect(() => { onMaxDurationRef.current = onMaxDuration; }, [onMaxDuration]);
+
+  // ─── NEW: Action dispatcher ref (prevents stale-closure in processAudioPipeline) ────
+  // Synced via useEffect to keep the ref current without recreating the pipeline callback.
+  const onActionsReceivedRef = useRef(onActionsReceived);
+  useEffect(() => { onActionsReceivedRef.current = onActionsReceived; }, [onActionsReceived]);
 
   const getAudioContextConstructor = useCallback((): typeof AudioContext => {
     if (typeof AudioContext !== 'undefined') return AudioContext;
@@ -321,13 +365,59 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   }, [stopListening]);
 
   /**
-   * Derives a file extension from a MIME type string.
-   * Returns '.webm' for audio/webm, '.mp4' for everything else (audio/mp4, etc.).
+   * Pure helper: derives an `IncomingAIAction[]` from the AI response payload.
+   * Backward-compatible: the server may return the new shape (`payload.actions`)
+   * OR the legacy shape (`payload.theme`, `payload.ui`). When the server eventually
+   * returns explicit actions, this derivation becomes a no-op fallback.
+   *
+   * Mapping:
+   *   payload.ui.aiInsightBadge  → TOGGLE_INSIGHTS
+   *   payload.ui.aiDesignMirror  → TOGGLE_DESIGN_MIRROR
+   *   payload.ui.customCss       → SET_CUSTOM_CSS
+   *   payload.theme.*            → APPLY_VIBE (when actionType === 'SYSTEM_UPDATE_BRANDING')
+   *                                UPDATE_THEME_COLORS (otherwise)
    */
-  const mimeTypeToExtension = useCallback((mimeType: string): string => {
-    if (mimeType.includes('webm')) return '.webm';
-    return '.mp4';
-  }, []);
+  const deriveActionsFromPayload = useCallback(
+    (payload: unknown, actionType?: string): IncomingAIAction[] => {
+      const actions: IncomingAIAction[] = [];
+      if (!payload || typeof payload !== 'object') return actions;
+
+      const p = payload as {
+        ui?: Record<string, unknown>;
+        theme?: Record<string, unknown>;
+      };
+
+      if (p.ui && typeof p.ui === 'object') {
+        if (typeof p.ui.aiInsightBadge === 'boolean') {
+          actions.push({
+            type: 'TOGGLE_INSIGHTS',
+            payload: { enabled: p.ui.aiInsightBadge },
+          });
+        }
+        if (typeof p.ui.aiDesignMirror === 'boolean') {
+          actions.push({
+            type: 'TOGGLE_DESIGN_MIRROR',
+            payload: { enabled: p.ui.aiDesignMirror },
+          });
+        }
+        if (typeof p.ui.customCss === 'boolean') {
+          actions.push({
+            type: 'SET_CUSTOM_CSS',
+            payload: { enabled: p.ui.customCss },
+          });
+        }
+      }
+
+      if (p.theme && typeof p.theme === 'object' && Object.keys(p.theme).length > 0) {
+        const type: 'APPLY_VIBE' | 'UPDATE_THEME_COLORS' =
+          actionType === 'SYSTEM_UPDATE_BRANDING' ? 'APPLY_VIBE' : 'UPDATE_THEME_COLORS';
+        actions.push({ type, payload: { theme: p.theme } });
+      }
+
+      return actions;
+    },
+    []
+  );
 
   // Process audio through pipeline
   const processAudioPipeline = useCallback(async (audioBlob: Blob) => {
@@ -348,16 +438,29 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     }
 
     try {
+      // ── Production Excellence: Transcode webm/opus → 16kHz mono WAV ──
+      // MediaRecorder's raw webm/opus output is rejected by Groq's Whisper
+      // decoder as "invalid media" because the live-stream container lacks
+      // the index/duration header Whisper requires. We decode the blob
+      // through the browser's native AudioContext and re-encode as a
+      // canonical RIFF/WAVE (16kHz, mono, 16-bit PCM) — the format
+      // Whisper ingests reliably.
+      const sourceMimeType = mediaMimeTypeRef.current;
+      const wavBlob = await transcodeBlobToWav(audioBlob);
+      const audioFile = new File([wavBlob], 'command.wav', { type: 'audio/wav' });
+
       // Step 1: Speech-to-Text (Whisper)
       const sttFormData = new FormData();
-      const mimeType = mediaMimeTypeRef.current;
-      const extension = mimeTypeToExtension(mimeType);
-      const audioFile = new File([audioBlob], `command${extension}`, { type: mimeType });
 
       // ── Diagnostic: confirm what we're sending ────────────────────────
+      // Includes wall-clock recording duration so the next STT failure can
+      // be directly correlated with the server's `Received file` log to
+      // distinguish codec issues from truncation/silence issues.
       console.log('[VoiceCommand] STT dispatch:', {
-        blobSize: audioBlob.size,
-        mimeType,
+        sourceBlobSize: audioBlob.size,
+        sourceMimeType,
+        wavSize: wavBlob.size,
+        recordingDurationMs: lastRecordingDurationMsRef.current,
         fileName: audioFile.name,
         fileSize: audioFile.size,
         fileType: audioFile.type,
@@ -373,13 +476,49 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       });
 
       if (!sttResponse.ok) {
-        const errorData = await sttResponse.json().catch(() => ({}));
-        console.error('[STT] Server response:', {
-          status: sttResponse.status,
-          statusText: sttResponse.statusText,
+        const status = sttResponse?.status;
+        const statusText = sttResponse?.statusText ?? 'Unknown';
+        let errorData: Record<string, unknown> = {};
+
+        // Clone the stream immediately so we have a pristine backup for text extraction
+        const responseClone = sttResponse.clone();
+
+        try {
+          errorData = (await sttResponse.json()) as Record<string, unknown>;
+        } catch {
+          // Original stream is disturbed, but our clone is perfectly intact
+          try {
+            const rawText = await responseClone.text();
+            if (rawText) {
+              errorData = { raw: rawText.slice(0, 500) };
+            }
+          } catch {
+            // Fallback if the cloned stream is somehow completely inaccessible
+          }
+        }
+
+        const errorPayload = {
+          url: '/api/ai/stt',
+          method: 'POST',
+          status: status ?? 'unknown',
+          statusText,
           body: errorData,
-        });
-        throw new Error(`STT failed: ${sttResponse.status} - ${errorData.error ?? sttResponse.statusText}`);
+          headers: Object.fromEntries(sttResponse.headers.entries()),
+        };
+
+        console.error(`[STT] Server Response Error:\n${JSON.stringify(errorPayload, null, 2)}`);
+
+        // Map known Whisper validation failures to actionable, user-friendly
+        // messages. The raw error from extractGroqError() is the clean
+        // message; we pattern-match on its content.
+        const rawServerError = (errorData.error as string | undefined) ?? statusText;
+        const friendlyError = rawServerError.includes('could not process file')
+          ? 'Recording too short or no speech detected. Please hold the button longer and speak clearly.'
+          : rawServerError;
+
+        throw new Error(
+          `STT failed: ${status ?? 'unknown'} - ${friendlyError}`
+        );
       }
 
       const { text } = await sttResponse.json() as SttResponse;
@@ -419,6 +558,26 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       }
       setAiResponse(aiText);
       onAIResponse?.(aiText, parsedResponse?.payload);
+
+      // ── NEW: Extract/derive the structural action array and dispatch to UI ──
+      // Runs inside the try block but before TTS playback so the UI updates
+      // feel real-time. Wrapped in its own try/catch so a malformed action
+      // payload cannot crash the pipeline (the TTS playback must continue).
+      try {
+        const explicit = Array.isArray(parsedResponse?.actions)
+          ? (parsedResponse!.actions as IncomingAIAction[])
+          : null;
+        const actions = explicit ?? deriveActionsFromPayload(
+          parsedResponse?.payload,
+          parsedResponse?.actionType
+        );
+        if (actions.length > 0) {
+          onActionsReceivedRef.current?.(actions);
+        }
+      } catch (actionErr) {
+        // Production Excellence: never let action-dispatcher errors break the pipeline
+        console.warn('[VoiceCommand] ⚠️ onActionsReceived threw — action dispatcher error:', actionErr);
+      }
 
       // Step 3: Text-to-Speech (Orpheus) — read fresh context from refs
       const currentTtsContext = tenantContextRef.current || {};
@@ -495,7 +654,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       setIsProcessing(false);
       isLockedRef.current = false;
     }
-  }, [onTranscript, onAIResponse, onError, skipAIPipeline, _currentConfig, mimeTypeToExtension]);
+  }, [onTranscript, onAIResponse, onError, skipAIPipeline, _currentConfig, deriveActionsFromPayload]);
 
   // Start listening — safety gate: block all triggers while locked
   const startListening = useCallback(async () => {
@@ -559,8 +718,11 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
         // 3. Clear chunks regardless of outcome to prevent stale data on next session
         audioChunksRef.current = [];
 
-        // 4. Size guard — sub-1024-byte blobs are not valid media containers
-        if (audioBlob.size < 1024) {
+        // 4. Size guard — 4KB sweet spot. Sub-4KB blobs are almost always
+        // truncated or uninitialized webm headers (broken containers).
+        // At Opus 64-128 kbps, 500ms of valid audio comfortably clears this
+        // threshold; ultra-fast short commands still pass.
+        if (audioBlob.size < 4096) {
           console.warn('[VoiceCommand] Blob too small to be a valid media file (%d bytes), skipping pipeline', audioBlob.size);
           cleanup();
           return;
@@ -652,7 +814,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   }, [startListening]);
 
   // ─── NEW (PTT): stopRecording — mouseup / touchend handler ───────────────
-  // Finalizes the audio chunk. Applies the 200ms tap guard: if the press
+  // Finalizes the audio chunk. Applies the 500ms tap guard: if the press
   // was shorter than MIN_RECORDING_DURATION_MS, abort instead of triggering
   // the pipeline. Strictly deterministic: same input timing → same outcome.
   const stopRecording = useCallback(() => {
@@ -662,6 +824,11 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     setIsRecording(false);
 
     const elapsed = startedAt !== null ? Date.now() - startedAt : Infinity;
+    // Always capture the duration — even aborted presses are useful for
+    // understanding what the user actually did. Consumed by the next
+    // processAudioPipeline call to enrich the STT dispatch log.
+    lastRecordingDurationMsRef.current = elapsed;
+
     if (elapsed < MIN_RECORDING_DURATION_MS) {
       console.log(`[VoiceCommand] ⏱ Tap too short (${elapsed}ms < ${MIN_RECORDING_DURATION_MS}ms) — aborting`);
       cleanup();

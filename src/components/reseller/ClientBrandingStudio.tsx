@@ -72,7 +72,7 @@ type StudioActionPayload = {
 };
 
 interface StudioAction {
-  type: 'SET_COLOR' | 'APPLY_VIBE' | 'TOGGLE_ADDON';
+  type: 'SET_COLOR' | 'APPLY_VIBE' | 'TOGGLE_ADDON' | 'APPLY_BRAND_VIBE' | 'SAVE_STUDIO_CONFIG' | 'TRIGGER_AI_MAGIC';
   payload: StudioActionPayload;
 }
 
@@ -1658,3 +1658,5 @@ export function ClientBrandingStudio({
     </div>
   );
 }
+
+

@@ -42,6 +42,21 @@ export const STUDIO_CAPABILITIES: StudioCapabilitiesMap = {
     description: 'Toggle AI features like the Insight Badge, Design Mirror, or Custom CSS.',
     examples: ['Enable the insight badge', 'Turn off design mirror'],
   },
+  applyBrandVibe: {
+    key: 'applyBrandVibe',
+    description: 'Apply an aesthetic vibe by name to the entire branding palette.',
+    examples: ['Apply a cyberpunk neon vibe', 'Make it minimalist luxury'],
+  },
+  saveStudioConfig: {
+    key: 'saveStudioConfig',
+    description: 'Commit and persist all current branding settings to the client record.',
+    examples: ['Save my changes', 'Commit the branding config'],
+  },
+  triggerAIMagic: {
+    key: 'triggerAIMagic',
+    description: 'Run a full automated designer optimization pass on the active layout.',
+    examples: ['Run AI magic', 'Optimize my design'],
+  },
 };
 
 /**

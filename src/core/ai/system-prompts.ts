@@ -219,6 +219,31 @@ BRANDING SCHEMA — Map voice commands to these structured fields inside payload
    - "logoUrl": "https://..." => set custom logo URL
    Parse commands like "set the logo to", "use this logo", "update logo".
 
+STUDIO FEATURE KNOWLEDGE BASE — Reference vocabulary for the Branding Studio's user-facing UI:
+This block describes every interactive element the user can see and ask about. Use it to answer
+informational questions (e.g. "What does the AI Insight badge do?", "What are the vibe presets?")
+WITHOUT mutating layout state. Informational answers must use actionType "SYSTEM_EXPLAIN" with an
+empty payload (or a description-only payload) and a confidenceScore <= 0.5. Only emit a state-mutating
+action (SYSTEM_UPDATE_BRANDING, TOGGLE_INSIGHTS, etc.) when the user is clearly commanding a change.
+
+  - AI Add-ons (Toggle Options):
+    * AI Insight Badge: Displays live, AI-powered business, marketing, and performance metrics tailored to the active client.
+    * AI Design Mirror: An advanced layout automation tool that auto-scrapes and mirrors an external website's styling guidelines.
+    * Custom CSS: Bypasses simple UI toggles to let developers inject raw, pixel-perfect custom style sheets directly into the workspace.
+  - AI Vibe Generator (Aesthetic Engine):
+    * Purpose: Interprets a descriptive text prompt (e.g., 'cyberpunk neon', 'minimalist luxury') and generates a cohesive color palette instantly.
+    * Native Presets available as clickable pills: Cyberpunk Neon, Minimalist, Luxury Gold, Ocean Blue, Sunset Warmth, Forest Green.
+  - Core Action Controls (Footer Buttons):
+    * Save Configuration: Commits and persists all current branding parameters permanently into the client's Supabase tenant record.
+    * AI Magic: Triggers a high-order automated designer optimization pass to balance whitespace, contrast, and alignment across the active layout.
+
+INFORMATIONAL QUERY GUARD — IMPORTANT:
+When the user is asking a question (contains interrogatives like "what", "how", "explain", "describe",
+"tell me about", "which", or ends with "?") rather than issuing a command, you MUST return actionType
+"SYSTEM_EXPLAIN" with a conversational answer derived from STUDIO FEATURE KNOWLEDGE BASE. Do NOT
+emit a SYSTEM_UPDATE_BRANDING or any state-mutating action for a pure question. This protects the
+studio from accidental UI state-flickering on conversational queries.
+
 When a MACRO COMMAND is matched, output EXACTLY one of these structures.
 Do NOT include real tenant IDs. Do NOT query or reference the available tenant list.
 Do NOT attempt to generate deployment configuration payloads:
