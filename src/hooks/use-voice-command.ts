@@ -74,6 +74,19 @@ interface ProcessResponse {
  * NOTE: This type lives next to the hook so the API contract is colocated
  * with the code that extracts it. The frontend mirrors it in
  * `ClientBrandingStudio.tsx`.
+ *
+ * ── Widget Sub-scope (`payload.widget`) ─────────────────────────────────
+ * The `widget` block is a `Record<string, unknown>` that carries
+ * component-specific properties for the chat body / message window.
+ * Supported keys:
+ *   - `bodyOpacity`: number (0.0 to 1.0) — Chat body transparency.
+ *     When < 1.0, the live preview applies `backdrop-filter: blur(12px)`
+ *     (glassmorphism) automatically for contrast safety.
+ *   - `bodyBackground`: string — Hex, rgb, or rgba color string for the
+ *     chat body background.
+ *   - `opacity`: number (legacy) — Widget-level opacity mapped to header
+ *     and footer.
+ *   - `background`: string (legacy) — Widget-level background color.
  */
 export type IncomingAIAction =
   | { type: 'TOGGLE_INSIGHTS';      payload: { enabled: boolean } }

@@ -34,8 +34,18 @@ export const STUDIO_CAPABILITIES: StudioCapabilitiesMap = {
   },
   widget: {
     key: 'widget',
-    description: 'Change the widget container background, opacity, or overall visual properties.',
-    examples: ['Set widget opacity to 50%', 'Make widget background transparent'],
+    description: 'Change the widget container background, opacity, chat window body transparency (bodyOpacity), chat body background color (bodyBackground), or overall visual properties. When bodyOpacity drops below 1.0, glassmorphism blur is automatically applied to the live preview canvas.',
+    examples: [
+      'Set widget opacity to 50%',
+      'Make widget background transparent',
+      'Set the chat window to semi-transparent white',
+      'Make the message panel transparent',
+      'Set widget body background to white with 30% opacity',
+      'Make the text window see-through',
+      'Apply a glassmorphic chat box effect',
+      'Clear the message box background completely',
+      'Set body opacity to 0.4 with a dark background',
+    ],
   },
   vibe: {
     key: 'vibe',

@@ -234,7 +234,23 @@ BRANDING SCHEMA — Map voice commands to these structured fields inside payload
    - "logoUrl": "https://..." => set custom logo URL
    Parse commands like "set the logo to", "use this logo", "update logo".
 
-5. NUMERICAL PROPERTY SYNTHESIS — Opacity & Sizing (CRITICAL):
+5. WIDGET BODY PROPERTIES (payload.widget):
+   - "bodyOpacity": number (0.0-1.0) => Main chat window / message panel transparency
+   - "bodyBackground": string (hex, rgb, or rgba color) => Custom background color for the chat body container
+   - "opacity": number (0.0-1.0) => Legacy widget-level opacity (maps to header/footer)
+   - "background": string => Legacy widget background color
+   When the user says "make the chat window transparent", "set message panel opacity",
+   "make the text window semi-transparent white", etc., map to widget.bodyOpacity and widget.bodyBackground.
+   CHAT BODY transparency triggers glassmorphism blur in the Live Preview canvas.
+   When bodyOpacity < 1.0, the preview automatically applies backdrop-filter: blur(12px) for contrast safety.
+   
+   OPACITY NORMALIZATION CONTRACT (STRICT, same as theme.opacity):
+   - If user says a percentage value (e.g. "40%", "40 percent"), divide by 100 -> bodyOpacity = X/100
+   - If user says a decimal value (e.g. "0.4", "point four"), use it directly
+   - If no value is specified (e.g. "make it transparent"), default to 0.5
+   - "semi-transparent white chat window" => bodyOpacity: 0.5, bodyBackground: "rgba(255,255,255,0.5)"
+
+7. NUMERICAL PROPERTY SYNTHESIS — Opacity & Sizing (CRITICAL):
    When the user specifies a numerical property shift for a UI component, you MUST
    map it to a SYSTEM_UPDATE_BRANDING action. Do NOT fall back to SYSTEM_NOTE.
 
@@ -260,7 +276,7 @@ BRANDING SCHEMA — Map voice commands to these structured fields inside payload
    - "set [component] padding to [X]" → payload.theme.borderRadius or payload.theme.padding (mapped to nearest BrandingConfig)
    - "set [component] size to [small|medium|large]" → payload.theme.backgroundType (solid=compact, gradient=medium) 
 
-6. SKEPTICISM OVERRIDE — COMPONENT + ATTRIBUTE RULE (HIGHEST PRIORITY):
+8. SKEPTICISM OVERRIDE — COMPONENT + ATTRIBUTE RULE (HIGHEST PRIORITY):
    If the user mentions a SPECIFIC UI COMPONENT (Header, Footer, Button, Card, Widget, Chat, Badge, Mirror)
    AND a SPECIFIC VISUAL ATTRIBUTE (Color, Opacity, Padding, Size, Background, Gradient, Image, Logo, Vibe, Style, Theme),
    you are FORBIDDEN from using actionType "SYSTEM_NOTE". You MUST attempt a SYSTEM_UPDATE_BRANDING action

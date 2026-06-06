@@ -51,6 +51,10 @@ export interface BrandingConfig {
   aiInsightBadge: boolean;
   aiDesignMirror: boolean;
   customCss: boolean;
+  /** Chat body (message window) transparency — 0.0 (fully transparent) to 1.0 (opaque) */
+  widgetBodyOpacity: number;
+  /** Chat body (message window) background — hex, rgb, or rgba color string */
+  widgetBodyBackground: string;
 }
 
 type StudioAction = IncomingAIAction;
@@ -120,6 +124,8 @@ export function ClientBrandingStudio({
     aiInsightBadge: initialConfig?.features?.aiInsightBadge ?? true,
     aiDesignMirror: initialConfig?.features?.aiDesignMirror ?? false,
     customCss: initialConfig?.features?.customCss ?? false,
+    widgetBodyOpacity: 1.0,
+    widgetBodyBackground: 'rgba(31, 41, 55, 1.0)',
   });
 
   const [isSaving, setIsSaving] = useState(false);
@@ -415,15 +421,71 @@ export function ClientBrandingStudio({
   /** Shared theme-palette merge engine — used by both SET_COLOR and UPDATE_THEME_COLORS / APPLY_VIBE actions.
    *  Also accepts optional component-scoped blocks (header, footer, widget) that carry
    *  component-specific properties which override the generic theme values. */
+  /** Compute a luminance value (0-255) from a hex or rgba color string.
+   *  Used to switch text color for contrast safety over dynamic backgrounds.
+   *  Returns a value between 0 (dark) and 255 (light). */
+  const getLuminance = useCallback((color: string): number => {
+    // Extract RGB components from hex (#fff, #ffffff) or rgba/rgb
+    let r = 0, g = 0, b = 0;
+    const hexMatch = color.match(/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
+    if (hexMatch) {
+      r = parseInt(hexMatch[1], 16);
+      g = parseInt(hexMatch[2], 16);
+      b = parseInt(hexMatch[3], 16);
+    } else {
+      const shortHexMatch = color.match(/^#?([a-f\d])([a-f\d])([a-f\d])$/i);
+      if (shortHexMatch) {
+        r = parseInt(shortHexMatch[1] + shortHexMatch[1], 16);
+        g = parseInt(shortHexMatch[2] + shortHexMatch[2], 16);
+        b = parseInt(shortHexMatch[3] + shortHexMatch[3], 16);
+      } else {
+        const rgbaMatch = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+        if (rgbaMatch) {
+          r = parseInt(rgbaMatch[1], 10);
+          g = parseInt(rgbaMatch[2], 10);
+          b = parseInt(rgbaMatch[3], 10);
+        }
+      }
+    }
+    // Relative luminance using WCAG weights
+    return 0.299 * r + 0.587 * g + 0.114 * b;
+  }, []);
+
+  /** Determines whether text on the chat body should be light or dark for contrast safety.
+   *  When widgetBodyOpacity < 1.0 (transparent/glassmorphic), we check the background color's
+   *  luminance and the transparency level to choose the optimal text color. */
+  const chatBodyTextColor = useMemo<string>(() => {
+    const bg = config.widgetBodyBackground || 'rgba(31, 41, 55, 1.0)';
+    const opacity = config.widgetBodyOpacity ?? 1.0;
+    // When fully opaque or very close, use default white-on-dark text
+    if (opacity >= 0.85) return 'text-white';
+    // When semi-transparent, check luminance for contrast safety
+    const lum = getLuminance(bg);
+    // If the underlying color is light (high luminance) use dark text, otherwise white
+    return lum > 128 ? 'text-gray-900' : 'text-white';
+  }, [config.widgetBodyBackground, config.widgetBodyOpacity, getLuminance]);
+
+  /** Memoized style object for the chat body / message window container.
+   *  When widgetBodyOpacity < 1.0, applies glassmorphic backdrop-filter blur(12px)
+   *  for contrast safety over potentially dynamic backgrounds. */
+  const chatBodyStyle = useMemo<React.CSSProperties>(() => ({
+    backgroundColor: config.widgetBodyBackground || `rgba(31, 41, 55, ${config.widgetBodyOpacity ?? 1})`,
+    backdropFilter: (config.widgetBodyOpacity !== undefined && config.widgetBodyOpacity < 1) ? 'blur(12px)' : 'none',
+    WebkitBackdropFilter: (config.widgetBodyOpacity !== undefined && config.widgetBodyOpacity < 1) ? 'blur(12px)' : 'none',
+  }), [config.widgetBodyBackground, config.widgetBodyOpacity]);
+
   const handleThemeUpdateEngine = useCallback((theme: Record<string, unknown>) => {
     setConfig(prev => {
       // No-op check to prevent jarring flicker when backend confirmation arrives
+      // Include widgetBodyOpacity and widgetBodyBackground so changes clear the gateway
       if (
         (theme.primary === undefined || prev.headerBackground === theme.primary) &&
         (theme.secondary === undefined || prev.footerBackground === theme.secondary) &&
         (theme.logoUrl === undefined || prev.logoUrl === theme.logoUrl) &&
         (theme.headerOpacity === undefined || prev.headerOpacity === theme.headerOpacity) &&
-        (theme.footerOpacity === undefined || prev.footerOpacity === theme.footerOpacity)
+        (theme.footerOpacity === undefined || prev.footerOpacity === theme.footerOpacity) &&
+        (theme.widgetBodyOpacity === undefined || prev.widgetBodyOpacity === theme.widgetBodyOpacity) &&
+        (theme.widgetBodyBackground === undefined || prev.widgetBodyBackground === theme.widgetBodyBackground)
       ) {
         return prev;
       }
@@ -456,6 +518,9 @@ export function ClientBrandingStudio({
         ...(theme.footerGradientEnd !== undefined && { footerGradientEnd: theme.footerGradientEnd as string }),
         ...(theme.footerOpacity !== undefined && { footerOpacity: theme.footerOpacity as number }),
         ...(theme.widgetOpacity !== undefined && { headerOpacity: theme.widgetOpacity as number, footerOpacity: theme.widgetOpacity as number }),
+        // ── Chat Body (Widget) Transparency & Background ────────────────
+        ...(theme.widgetBodyOpacity !== undefined && { widgetBodyOpacity: theme.widgetBodyOpacity as number }),
+        ...(theme.widgetBodyBackground !== undefined && { widgetBodyBackground: theme.widgetBodyBackground as string }),
       };
     });
   }, []);
@@ -568,6 +633,8 @@ export function ClientBrandingStudio({
           const w = action.payload.widget as Record<string, unknown>;
           if (w.opacity !== undefined) componentOverrides.widgetOpacity = w.opacity;
           if (w.background !== undefined) componentOverrides.widgetBackground = w.background;
+          if (w.bodyOpacity !== undefined) componentOverrides.widgetBodyOpacity = w.bodyOpacity;
+          if (w.bodyBackground !== undefined) componentOverrides.widgetBodyBackground = w.bodyBackground;
         }
 
         // Blend theme-level properties, raw text payload properties, and
@@ -809,6 +876,9 @@ export function ClientBrandingStudio({
         aiInsightBadge: (features.aiInsightBadge ?? prev.aiInsightBadge) as boolean,
         aiDesignMirror: (features.aiDesignMirror ?? prev.aiDesignMirror) as boolean,
         customCss: (features.customCss ?? prev.customCss) as boolean,
+        // ── Widget Body (Chat Window) Re-hydration ─────────────────────────
+        widgetBodyOpacity: (branding.widgetBodyOpacity ?? prev.widgetBodyOpacity) as number,
+        widgetBodyBackground: (branding.widgetBodyBackground || prev.widgetBodyBackground) as string,
       }));
 
       // NOTE: DO NOT call tts() here for AI response text.
@@ -1468,6 +1538,58 @@ export function ClientBrandingStudio({
             )}
           </div>
 
+          {/* ── WIDGET BACKGROUND CARD ─────────────────────────────── */}
+          {/* Positioned between Footer Background and Logo to mirror the
+              stacked-card hierarchy of Header/Footer/Widget/Logo. */}
+          <div className="space-y-4 mb-6">
+            <h3 className="text-sm font-semibold text-white/80 uppercase tracking-wider">Widget Background</h3>
+            {/* Color Picker */}
+            <div className="flex items-center gap-3">
+              <ColorPicker
+                label="Widget Color"
+                value={config.widgetBodyBackground}
+                onChange={(color) =>
+                  handleThemeUpdateEngine({
+                    widgetBodyBackground: color,
+                    widgetBodyOpacity: config.widgetBodyOpacity,
+                  })
+                }
+              />
+              <input
+                type="text"
+                value={config.widgetBodyBackground}
+                onChange={(e) =>
+                  handleThemeUpdateEngine({
+                    widgetBodyBackground: e.target.value,
+                    widgetBodyOpacity: config.widgetBodyOpacity,
+                  })
+                }
+                className="flex-1 bg-black/40 text-slate-100 font-medium text-xs px-3 py-2 rounded border border-white/5 focus:border-white/20 outline-none transition-colors"
+                placeholder="rgba(31, 41, 55, 1.0)"
+              />
+            </div>
+            {/* Opacity Slider — 0 to 100 maps to 0.0 to 1.0 float */}
+            <div className="space-y-2">
+              <label className="text-xs text-white/60 uppercase tracking-wider">Window Opacity</label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={Math.round(config.widgetBodyOpacity * 100)}
+                  onChange={(e) =>
+                    handleThemeUpdateEngine({
+                      widgetBodyOpacity: parseInt(e.target.value) / 100,
+                      widgetBodyBackground: config.widgetBodyBackground,
+                    })
+                  }
+                  className="flex-1 h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-[#0097b2]"
+                />
+                <span className="text-xs text-white/80 w-12 text-right">{Math.round(config.widgetBodyOpacity * 100)}%</span>
+              </div>
+            </div>
+          </div>
+
           {/* Logo Upload */}
           <div className="space-y-4">
             <h3 className="text-sm font-semibold text-white/80 uppercase tracking-wider">Logo</h3>
@@ -1805,8 +1927,14 @@ export function ClientBrandingStudio({
               </div>
             </div>
 
-            {/* Content */}
-            <div className="flex-1 overflow-y-auto backdrop-blur-lg bg-opacity-40 bg-black/30 p-4">
+            {/* Content — Chat Body / Message Window */}
+            {/* Glassmorphic rendering: When widgetBodyOpacity < 1.0, applies
+                backdrop-filter blur(12px) and uses luminance-aware text color
+                for contrast safety over dynamic backgrounds. */}
+            <div
+              className={`flex-1 overflow-y-auto p-4 ${chatBodyTextColor}`}
+              style={chatBodyStyle}
+            >
               <div className="space-y-3">
                 <div className="flex justify-end">
                   <div className="bg-[#0097b2] text-white px-4 py-2 rounded-lg max-w-[80%] text-sm">
@@ -1859,7 +1987,7 @@ export function ClientBrandingStudio({
                 <div>
                   <h3 className="text-xl font-bold text-white mb-2">AI Branding Suggestion</h3>
                   <p className="text-white/80 text-sm">
-                    I&apos;ve prepared a professional branding theme for your client. Would you like to apply it?
+                     I&apos;ve prepared a professional branding theme for your client. Would you like to apply it?
                   </p>
                 </div>
                 <div className="flex gap-3">
@@ -1966,5 +2094,3 @@ export function ClientBrandingStudio({
     </div>
   );
 }
-
-
