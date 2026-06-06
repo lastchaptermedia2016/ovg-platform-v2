@@ -79,8 +79,8 @@ export type IncomingAIAction =
   | { type: 'TOGGLE_INSIGHTS';      payload: { enabled: boolean } }
   | { type: 'TOGGLE_DESIGN_MIRROR'; payload: { enabled: boolean } }
   | { type: 'SET_CUSTOM_CSS';       payload: { enabled: boolean } }
-  | { type: 'APPLY_VIBE';           payload: { theme: Record<string, unknown> } }
-  | { type: 'UPDATE_THEME_COLORS';  payload: { theme: Record<string, unknown> } }
+  | { type: 'APPLY_VIBE';           payload: { theme: Record<string, unknown>; header?: Record<string, unknown>; footer?: Record<string, unknown>; widget?: Record<string, unknown> } }
+  | { type: 'UPDATE_THEME_COLORS';  payload: { theme: Record<string, unknown>; header?: Record<string, unknown>; footer?: Record<string, unknown>; widget?: Record<string, unknown> } }
   | { type: 'APPLY_BRAND_VIBE';     payload: { vibeText?: string } }
   | { type: 'SAVE_STUDIO_CONFIG';   payload?: Record<string, never> }
   | { type: 'TRIGGER_AI_MAGIC';     payload?: Record<string, never> };
@@ -385,6 +385,9 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       const p = payload as {
         ui?: Record<string, unknown>;
         theme?: Record<string, unknown>;
+        header?: Record<string, unknown>;
+        footer?: Record<string, unknown>;
+        widget?: Record<string, unknown>;
       };
 
       if (p.ui && typeof p.ui === 'object') {
@@ -412,6 +415,44 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
         const type: 'APPLY_VIBE' | 'UPDATE_THEME_COLORS' =
           actionType === 'SYSTEM_UPDATE_BRANDING' ? 'APPLY_VIBE' : 'UPDATE_THEME_COLORS';
         actions.push({ type, payload: { theme: p.theme } });
+      }
+
+      // ── Component-Scoped Layout Properties ─────────────────────────────
+      // Extract explicit header/footer/widget blocks from the single-root
+      // payload so they are preserved alongside the theme layout. These
+      // carry component-specific properties (e.g. header.opacity) that
+      // should NOT be merged into the generic theme object, but instead
+      // applied directly to their corresponding state slice.
+      if (p.header || p.footer || p.widget) {
+        const type: 'APPLY_VIBE' | 'UPDATE_THEME_COLORS' =
+          actionType === 'SYSTEM_UPDATE_BRANDING' ? 'APPLY_VIBE' : 'UPDATE_THEME_COLORS';
+
+        // Merge with existing theme action if one was already pushed,
+        // or create a standalone action with the component blocks.
+        const existingThemeAction = actions.find(
+          (a): a is typeof a & { payload: { theme: Record<string, unknown>; header?: Record<string, unknown>; footer?: Record<string, unknown>; widget?: Record<string, unknown> } } =>
+          (a.type === 'APPLY_VIBE' || a.type === 'UPDATE_THEME_COLORS') && 'theme' in a.payload
+        );
+
+        if (existingThemeAction) {
+          // Augment the existing theme action with component blocks
+          if (p.header && typeof p.header === 'object') {
+            (existingThemeAction.payload as Record<string, unknown>).header = p.header;
+          }
+          if (p.footer && typeof p.footer === 'object') {
+            (existingThemeAction.payload as Record<string, unknown>).footer = p.footer;
+          }
+          if (p.widget && typeof p.widget === 'object') {
+            (existingThemeAction.payload as Record<string, unknown>).widget = p.widget;
+          }
+        } else {
+          // Push a standalone action for component blocks (no theme present)
+          const actionPayload: Record<string, unknown> = { theme: {} };
+          if (p.header && typeof p.header === 'object') actionPayload.header = p.header;
+          if (p.footer && typeof p.footer === 'object') actionPayload.footer = p.footer;
+          if (p.widget && typeof p.widget === 'object') actionPayload.widget = p.widget;
+          actions.push({ type, payload: actionPayload } as unknown as IncomingAIAction);
+        }
       }
 
       return actions;

@@ -64,6 +64,10 @@ const STUDIO_CAPABILITIES = {
     description: 'Change the footer background color, gradient, image, or opacity.',
     examples: ['Make the footer dark', 'Set footer opacity to 80%'],
   },
+  widget: {
+    description: 'Change the widget container background, opacity, or overall visual properties.',
+    examples: ['Set widget opacity to 50%', 'Make widget background transparent'],
+  },
   vibe: {
     description: 'Apply an aesthetic vibe to the entire branding palette.',
     examples: ['Make it cyberpunk neon', 'Apply a minimalist style'],
@@ -158,6 +162,18 @@ export function ClientBrandingStudio({
   const rawSlug = (resellerSlug || params?.resellerSlug || '') as string;
   const effectiveResellerSlug = rawSlug ? decodeURIComponent(rawSlug) : '';
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // Slug Ref (Context Hygiene for TTS)
+  // Decouples the async TTS engine from React's rapid hydration/shift cycles.
+  // The `tts` callback reads from this ref instead of the closure-captured
+  // `effectiveResellerSlug`, ensuring Hannah never attempts a synthesis call
+  // with an undefined or stale reseller identity.
+  // ═══════════════════════════════════════════════════════════════════════
+  const resellerSlugRef = useRef(effectiveResellerSlug);
+  useEffect(() => {
+    resellerSlugRef.current = effectiveResellerSlug || resellerSlug;
+  }, [effectiveResellerSlug, resellerSlug]);
+
   // Initialize the Branding Studio Hook
   const studio = useBrandingStudio(effectiveResellerSlug);
 
@@ -221,15 +237,24 @@ export function ClientBrandingStudio({
   // Self-contained TTS for ambient/greeting speech.
   // Independent of the mic pipeline's AudioContext — creates a fresh one per call
   // so page-load greetings work even before the user clicks the mic.
-  const tts = useCallback(async (text: string) => {
+  // KEY: Uses resellerSlugRef.current instead of closure-captured effectiveResellerSlug
+  // so that async TTS calls always have the latest resolved slug, even if the
+  // component re-renders or hydration occurs mid-execution.
+  const tts = useCallback(async (text: string, overrideSlug?: string) => {
     if (!isSpeakerEnabled) return;
     if (!isHannahAwake && !text.includes('going to sleep') && !text.includes('awake')) return;
     if (!text) return;
+    // Strict fallback chain: override > ref > closure-captured value
+    const activeSlug = overrideSlug || resellerSlugRef.current || effectiveResellerSlug;
+    if (!activeSlug) {
+      console.warn('[TTS] Skipping synthesis — resellerSlug not yet resolved');
+      return;
+    }
     try {
       const response = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice: 'hannah', resellerSlug: effectiveResellerSlug }),
+        body: JSON.stringify({ text, voice: 'hannah', resellerSlug: activeSlug }),
       });
       if (!response.ok) return;
       const arrayBuffer = await response.arrayBuffer();
@@ -387,14 +412,18 @@ export function ClientBrandingStudio({
 
   // --- END MOVED UP ---
 
-  /** Shared theme-palette merge engine — used by both SET_COLOR and UPDATE_THEME_COLORS / APPLY_VIBE actions. */
+  /** Shared theme-palette merge engine — used by both SET_COLOR and UPDATE_THEME_COLORS / APPLY_VIBE actions.
+   *  Also accepts optional component-scoped blocks (header, footer, widget) that carry
+   *  component-specific properties which override the generic theme values. */
   const handleThemeUpdateEngine = useCallback((theme: Record<string, unknown>) => {
     setConfig(prev => {
       // No-op check to prevent jarring flicker when backend confirmation arrives
       if (
         (theme.primary === undefined || prev.headerBackground === theme.primary) &&
         (theme.secondary === undefined || prev.footerBackground === theme.secondary) &&
-        (theme.logoUrl === undefined || prev.logoUrl === theme.logoUrl)
+        (theme.logoUrl === undefined || prev.logoUrl === theme.logoUrl) &&
+        (theme.headerOpacity === undefined || prev.headerOpacity === theme.headerOpacity) &&
+        (theme.footerOpacity === undefined || prev.footerOpacity === theme.footerOpacity)
       ) {
         return prev;
       }
@@ -412,6 +441,21 @@ export function ClientBrandingStudio({
         ...(theme.secondaryGradientEnd !== undefined && { footerGradientEnd: theme.secondaryGradientEnd as string }),
         ...(theme.opacity !== undefined && { headerOpacity: theme.opacity as number, footerOpacity: theme.opacity as number }),
         ...(theme.logoUrl !== undefined && { logoUrl: theme.logoUrl as string }),
+        // ── Component-Scoped Overrides ─────────────────────────────────
+        // These handle explicit header/footer/widget blocks returned by the AI
+        // payload. Each block carries component-specific properties that override
+        // the generic theme values above (e.g. header.opacity != footer.opacity).
+        ...(theme.headerBackground !== undefined && { headerBackground: theme.headerBackground as string }),
+        ...(theme.headerBackgroundType !== undefined && { headerBackgroundType: theme.headerBackgroundType as 'solid' | 'gradient' | 'image' }),
+        ...(theme.headerGradientStart !== undefined && { headerGradientStart: theme.headerGradientStart as string }),
+        ...(theme.headerGradientEnd !== undefined && { headerGradientEnd: theme.headerGradientEnd as string }),
+        ...(theme.headerOpacity !== undefined && { headerOpacity: theme.headerOpacity as number }),
+        ...(theme.footerBackground !== undefined && { footerBackground: theme.footerBackground as string }),
+        ...(theme.footerBackgroundType !== undefined && { footerBackgroundType: theme.footerBackgroundType as 'solid' | 'gradient' | 'image' }),
+        ...(theme.footerGradientStart !== undefined && { footerGradientStart: theme.footerGradientStart as string }),
+        ...(theme.footerGradientEnd !== undefined && { footerGradientEnd: theme.footerGradientEnd as string }),
+        ...(theme.footerOpacity !== undefined && { footerOpacity: theme.footerOpacity as number }),
+        ...(theme.widgetOpacity !== undefined && { headerOpacity: theme.widgetOpacity as number, footerOpacity: theme.widgetOpacity as number }),
       };
     });
   }, []);
@@ -497,8 +541,61 @@ export function ClientBrandingStudio({
 
       case 'UPDATE_THEME_COLORS':
       case 'APPLY_VIBE': {
-        if (action.payload?.theme) {
-          handleThemeUpdateEngine(action.payload.theme);
+        // Build an explicit, flat override map for component layout states.
+        // Intercept nested component keys (header, footer, widget) and map
+        // their nested properties to the flat schema keys that
+        // handleThemeUpdateEngine expects (e.g. header.opacity -> headerOpacity)
+        // instead of naively spreading nested blocks as root-level keys.
+        const componentOverrides: Record<string, unknown> = {};
+
+        if (action.payload?.header && typeof action.payload.header === 'object') {
+          const h = action.payload.header as Record<string, unknown>;
+          if (h.opacity !== undefined) componentOverrides.headerOpacity = h.opacity;
+          if (h.background !== undefined) componentOverrides.headerBackground = h.background;
+          if (h.backgroundType !== undefined) componentOverrides.headerBackgroundType = h.backgroundType;
+          if (h.gradientStart !== undefined) componentOverrides.headerGradientStart = h.gradientStart;
+          if (h.gradientEnd !== undefined) componentOverrides.headerGradientEnd = h.gradientEnd;
+        }
+        if (action.payload?.footer && typeof action.payload.footer === 'object') {
+          const f = action.payload.footer as Record<string, unknown>;
+          if (f.opacity !== undefined) componentOverrides.footerOpacity = f.opacity;
+          if (f.background !== undefined) componentOverrides.footerBackground = f.background;
+          if (f.backgroundType !== undefined) componentOverrides.footerBackgroundType = f.backgroundType;
+          if (f.gradientStart !== undefined) componentOverrides.footerGradientStart = f.gradientStart;
+          if (f.gradientEnd !== undefined) componentOverrides.footerGradientEnd = f.gradientEnd;
+        }
+        if (action.payload?.widget && typeof action.payload.widget === 'object') {
+          const w = action.payload.widget as Record<string, unknown>;
+          if (w.opacity !== undefined) componentOverrides.widgetOpacity = w.opacity;
+          if (w.background !== undefined) componentOverrides.widgetBackground = w.background;
+        }
+
+        // Blend theme-level properties, raw text payload properties, and
+        // the explicitly flattened component overrides into a single
+        // unified theme layout object before forwarding to the engine.
+        const mergedTheme: Record<string, unknown> = {
+          ...(action.payload?.theme || {}),
+          ...componentOverrides,
+        };
+
+        // Defensive catch-all for LLM token drift where opacity is attached directly to the theme root
+        if (mergedTheme.opacity !== undefined) {
+          // If headerOpacity wasn't already explicitly set by a nested block, map the root property to the header
+          if (mergedTheme.headerOpacity === undefined) {
+            mergedTheme.headerOpacity = mergedTheme.opacity;
+          }
+          // Clean up the structural orphan so it doesn't pollute the state tree
+          delete mergedTheme.opacity;
+        }
+
+        // Double check the action payload root as well for absolute structural safety
+        const payloadAsRecord = action.payload as Record<string, unknown> | undefined;
+        if (payloadAsRecord?.opacity !== undefined && mergedTheme.headerOpacity === undefined) {
+          mergedTheme.headerOpacity = payloadAsRecord.opacity;
+        }
+
+        if (Object.keys(mergedTheme).length > 0) {
+          handleThemeUpdateEngine(mergedTheme);
         }
         break;
       }
@@ -531,6 +628,9 @@ export function ClientBrandingStudio({
   /** System Command Console: dispatch typed text through the same /api/ai/process-command
    *  pipeline the voice path uses, ensuring identical action derivation and UI state updates. */
   const handleTextCommand = useCallback(async (text: string) => {
+    // IMMUTABLE CONTEXT SNAP: freeze the slug at invocation so async gaps
+    // can't corrupt the downstream TTS call with a stale/undefined value.
+    const contextualSlug = resellerSlug;
     console.log('[SST Console] Execution Triggered with Text:', text);
     console.log('[SST Console] isProcessingText at trigger:', isProcessingText);
     const normalized = normalizeAcousticCommand(text);
@@ -560,18 +660,68 @@ export function ClientBrandingStudio({
       console.log('[SST Console] Fetch response status:', res.status, res.statusText);
       if (!res.ok) throw new Error(`Process failed: ${res.status}`);
       const data = await res.json() as { actions?: IncomingAIAction[]; payload?: unknown; actionType?: string; summary?: string };
+      console.log('[SST Console] Raw response payload structure:', JSON.stringify(data.payload));
       console.log('[SST Console] Success: parsed response', { actionType: data?.actionType, summary: data?.summary, hasPayload: !!data?.payload });
-      const actions: IncomingAIAction[] = Array.isArray(data?.actions)
-        ? data.actions
-        : [];
-      if (actions.length === 0 && data?.payload) {
-        const p = data.payload as Record<string, unknown>;
-        if (p.theme && typeof p.theme === 'object' && Object.keys(p.theme as Record<string, unknown>).length > 0) {
-          const type: 'APPLY_VIBE' | 'UPDATE_THEME_COLORS' = data.actionType === 'SYSTEM_UPDATE_BRANDING' ? 'APPLY_VIBE' : 'UPDATE_THEME_COLORS';
-          actions.push({ type, payload: { theme: p.theme as Record<string, unknown> } });
+
+      // ── Uni-filed Action Normalization ─────────────────────────────────
+      // Normalizes both payload shapes (new explicit actions[] and legacy
+      // singl-root actionType+payload) into a standardized IncomingAIAction[]
+      // This mirrors deriveActionsFromPayload() in useVoiceCommand for 1:1
+      // behavioral parity between voice and text pipelines.
+      let actions: IncomingAIAction[] = [];
+      if (Array.isArray(data?.actions)) {
+        // ── Bidirectional Action Field Normalization ────────────────
+        // Forces every element through an explicit mapping block:
+        //   1. Unifies `actionType` -> `type` regardless of backend variant
+        //   2. Translates `SYSTEM_UPDATE_BRANDING` -> `APPLY_VIBE`
+        // This guarantees the frontend reducer receives a uniform contract
+        // from both the voice pipeline and the typing text console.
+        // Cast through `unknown` because IncomingAIAction is a discriminated
+        // union — the map lambda's inferred union is broader than the exact
+        // variant type, but the normalization guarantees runtime safety.
+        actions = (data.actions as Array<Record<string, unknown>>).map(act => {
+          const rawType = ((act.type as string | undefined) || (act.actionType as string | undefined) || '') as string;
+          const normalizedType = rawType === 'SYSTEM_UPDATE_BRANDING' ? 'APPLY_VIBE' : rawType;
+          return { type: normalizedType, payload: (act.payload || {}) as Record<string, unknown> };
+        }) as IncomingAIAction[];
+      } else {
+        const payload = data?.payload as Record<string, unknown> | undefined;
+        const actionType = data?.actionType as string | undefined;
+        if (payload && typeof payload === 'object') {
+          // Extract UI toggle actions (mirrors deriveActionsFromPayload)
+          const uiPayload = payload.ui as Record<string, unknown> | undefined;
+          if (uiPayload && typeof uiPayload === 'object') {
+            if (typeof uiPayload.aiInsightBadge === 'boolean') {
+              actions.push({ type: 'TOGGLE_INSIGHTS', payload: { enabled: uiPayload.aiInsightBadge as boolean } });
+            }
+            if (typeof uiPayload.aiDesignMirror === 'boolean') {
+              actions.push({ type: 'TOGGLE_DESIGN_MIRROR', payload: { enabled: uiPayload.aiDesignMirror as boolean } });
+            }
+            if (typeof uiPayload.customCss === 'boolean') {
+              actions.push({ type: 'SET_CUSTOM_CSS', payload: { enabled: uiPayload.customCss as boolean } });
+            }
+          }
+          // ── Component-Scoped Layout Properties ────────────────────────
+          // Ensure header/footer/widget blocks are extracted alongside the
+          // theme layout so component-specific overrides reach the reducer.
+          // This mirrors deriveActionsFromPayload() in useVoiceCommand for
+          // 1:1 behavioral parity between voice and text pipelines.
+          if (payload.header || payload.footer || payload.widget || payload.theme) {
+            const type: 'APPLY_VIBE' | 'UPDATE_THEME_COLORS' =
+              actionType === 'SYSTEM_UPDATE_BRANDING' ? 'APPLY_VIBE' : 'UPDATE_THEME_COLORS';
+            actions.push({
+              type,
+              payload: {
+                theme: (payload.theme || {}) as Record<string, unknown>,
+                header: payload.header as Record<string, unknown> | undefined,
+                footer: payload.footer as Record<string, unknown> | undefined,
+                widget: payload.widget as Record<string, unknown> | undefined,
+              },
+            });
+          }
         }
       }
-      console.log('[SST Console] Dispatching actions to studio:', actions.length);
+      console.log('[SST Console] Normalized actions for dispatch:', actions.length);
       for (const action of actions) {
         await dispatchStudioAction(action);
       }
@@ -579,7 +729,8 @@ export function ClientBrandingStudio({
       // the input clearing, the isProcessingText reset, or any UI state.
       // Audio errors are caught by the local .catch and never cascade.
       if (data?.summary && isSpeakerEnabled && isHannahAwake) {
-        void tts(data.summary).catch((ttsErr) => {
+        // Thread the immutable context snap to prevent slug drift during async TTS
+        void tts(data.summary, contextualSlug).catch((ttsErr) => {
           console.error('[SST Console] TTS read-back failed (non-fatal):', ttsErr);
         });
       }
@@ -602,7 +753,7 @@ export function ClientBrandingStudio({
       setIsProcessingText(false);
       console.log('[SST Console] isProcessingText reset in finally');
     }
-  }, [clientId, config, effectiveResellerSlug, dispatchStudioAction, isProcessingText, isSpeakerEnabled, isHannahAwake, tts]);
+  }, [clientId, config, effectiveResellerSlug, dispatchStudioAction, isProcessingText, isSpeakerEnabled, isHannahAwake, resellerSlug, tts]);
 
   // Stream live STT transcript into the console input while the user hasn't started typing manually
   useEffect(() => {

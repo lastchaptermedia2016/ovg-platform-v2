@@ -32,6 +32,11 @@ export const STUDIO_CAPABILITIES: StudioCapabilitiesMap = {
     description: 'Change the footer background color, gradient, image, or opacity.',
     examples: ['Make the footer dark', 'Set footer opacity to 80%'],
   },
+  widget: {
+    key: 'widget',
+    description: 'Change the widget container background, opacity, or overall visual properties.',
+    examples: ['Set widget opacity to 50%', 'Make widget background transparent'],
+  },
   vibe: {
     key: 'vibe',
     description: 'Apply an aesthetic vibe to the entire branding palette.',

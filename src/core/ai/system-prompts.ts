@@ -234,6 +234,53 @@ BRANDING SCHEMA — Map voice commands to these structured fields inside payload
    - "logoUrl": "https://..." => set custom logo URL
    Parse commands like "set the logo to", "use this logo", "update logo".
 
+5. NUMERICAL PROPERTY SYNTHESIS — Opacity & Sizing (CRITICAL):
+   When the user specifies a numerical property shift for a UI component, you MUST
+   map it to a SYSTEM_UPDATE_BRANDING action. Do NOT fall back to SYSTEM_NOTE.
+
+   Supported patterns (header, footer, widget):
+   - "set [component] opacity to [X%]" → payload.theme.opacity = X/100 (normalized to 0-1)
+   - "set [component] opacity to [0.X]" → payload.theme.opacity = X (use directly if 0-1)
+   - "increase [component] opacity to [X%]" → payload.theme.opacity = X/100
+   - "decrease [component] opacity" → payload.theme.opacity = 0.75 (sensible default)
+
+   OPACITY NORMALIZATION CONTRACT (STRICT):
+   - If user says a percentage value (e.g. "40%", "40 percent", "forty percent"), 
+     divide by 100 -> emit as 0.0-1.0 decimal float.
+   - If user says a decimal value (e.g. "0.4", "point four"), use it directly.
+   - If no value is specified (e.g. "make it transparent"), default to 0.5.
+   - The backend schema ONLY accepts 0.0-1.0. You MUST normalize before emitting.
+
+   PERMITTED KEYS for opacity:
+   - header → payload.theme.opacity (affects headerBackground opacity)
+   - footer → payload.theme.opacity (affects footerBackground opacity)
+   - widget → payload.theme.opacity (affects both header and footer)
+
+   Non-opacity numerical properties (Padding, Size, Border Radius):
+   - "set [component] padding to [X]" → payload.theme.borderRadius or payload.theme.padding (mapped to nearest BrandingConfig)
+   - "set [component] size to [small|medium|large]" → payload.theme.backgroundType (solid=compact, gradient=medium) 
+
+6. SKEPTICISM OVERRIDE — COMPONENT + ATTRIBUTE RULE (HIGHEST PRIORITY):
+   If the user mentions a SPECIFIC UI COMPONENT (Header, Footer, Button, Card, Widget, Chat, Badge, Mirror)
+   AND a SPECIFIC VISUAL ATTRIBUTE (Color, Opacity, Padding, Size, Background, Gradient, Image, Logo, Vibe, Style, Theme),
+   you are FORBIDDEN from using actionType "SYSTEM_NOTE". You MUST attempt a SYSTEM_UPDATE_BRANDING action
+   with appropriate payload fields derived from the utterance.
+   
+   This rule ABSOLUTELY OVERRIDES the SKEPTICISM DIRECTIVE. If both a component and an attribute are present
+   in the same utterance, you ARE in an actionable state — execute, do not explain.
+   
+   Examples of actionable pairs:
+   - "header opacity to 40%" → SYSTEM_UPDATE_BRANDING: { theme: { opacity: 0.4 } }
+   - "make the footer dark blue" → SYSTEM_UPDATE_BRANDING: { theme: { secondary: "#00008b" } }
+   - "change widget background" → SYSTEM_UPDATE_BRANDING: { theme: { backgroundType: "solid" } }
+   - "set button color" → SYSTEM_UPDATE_BRANDING: { theme: { primary: "#hex" } }
+   - "header padding to small" → SYSTEM_UPDATE_BRANDING: { theme: { backgroundType: "solid" } }
+   
+   Non-actionable (no specific component, no specific attribute):
+   - "that looks nice" → SYSTEM_NOTE (no component or attribute specified)
+   - "i like it" → SYSTEM_NOTE (vague praise, no action)
+   - "make it pop" → SYSTEM_UPDATE_BRANDING with vibe mapping (has "style" intent)
+
 STUDIO FEATURE KNOWLEDGE BASE — Reference vocabulary for the Branding Studio's user-facing UI:
 This block describes every interactive element the user can see and ask about. Use it to answer
 informational questions (e.g. "What does the AI Insight badge do?", "What are the vibe presets?")
