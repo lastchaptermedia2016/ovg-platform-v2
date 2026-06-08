@@ -57,15 +57,39 @@ export default function ClientBrandingPage() {
     router.push(`/reseller/${resellerSlug}/clients/${newClientId}/branding`);
   };
 
+  // Extract features and branding from the tenant's widget_config for toggle hydration.
+  // This ensures that both functional flags and design tokens are cleanly bound
+  // into the initialization context from persistent server records — eliminating
+  // hardcoded UI drift on browser refresh.
+  //
+  // widget_config.branding contains the canonical visual profile (primaryColor,
+  // accentColor, logoUrl, widgetBodyOpacity, widgetBodyBackground) written by the
+  // sync_tenant_config RPC.
+  // widget_config.features contains the functional flag matrix (aiInsightBadge,
+  // aiDesignMirror, customCss).
   const initialBrandingConfig = clientData
-    ? {
-        branding: {
-          headerBackground: clientData.branding_colors?.primary || '#0097b2',
-          footerBackground: clientData.branding_colors?.secondary || '#050a14',
-          headerImage: clientData.custom_assets?.header_url || '',
-          footerImage: clientData.custom_assets?.footer_url || '',
-        },
-      }
+    ? (() => {
+        const widgetConfig = (clientData as Record<string, unknown>).widget_config as Record<string, unknown> | undefined;
+        const branding = (widgetConfig?.branding || {}) as Record<string, unknown>;
+        const features = (widgetConfig?.features || {}) as Record<string, unknown> | undefined;
+
+        return {
+          branding: {
+            headerBackground: (branding.primaryColor as string) || clientData.branding_colors?.primary || '#0097b2',
+            footerBackground: (branding.accentColor as string) || clientData.branding_colors?.secondary || '#050a14',
+            headerImage: clientData.custom_assets?.header_url || '',
+            footerImage: clientData.custom_assets?.footer_url || '',
+            logoUrl: (branding.logoUrl as string) || '',
+            widgetBodyOpacity: (branding.widgetBodyOpacity as number) ?? 1.0,
+            widgetBodyBackground: (branding.widgetBodyBackground as string) || 'rgba(31, 41, 55, 1.0)',
+          },
+          features: features as {
+            aiInsightBadge?: boolean;
+            aiDesignMirror?: boolean;
+            customCss?: boolean;
+          } | undefined,
+        };
+      })()
     : {};
 
   if (isLoading) {

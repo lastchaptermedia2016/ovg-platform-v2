@@ -2,15 +2,29 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { z } from 'zod';
 
-// Request validation schema
+// Request validation schema — expanded to enforce the atomic consolidated payload.
+// This contract mirrors the sync_tenant_config RPC parameter signature.
+// branding_colors is a flat text string in the tenants table; the RPC extracts
+// via p_branding->>'primaryColor'.
 const UpdateConfigSchema = z.object({
   tenantId: z.string().uuid(),
-  configPatch: z.record(z.unknown()),
+  branding: z.object({
+    primaryColor: z.string(),
+    accentColor: z.string(),
+    logoUrl: z.string(),
+    widgetBodyOpacity: z.number().min(0).max(1),
+    widgetBodyBackground: z.string(),
+  }).optional(),
+  features: z.object({
+    aiInsightBadge: z.boolean().optional(),
+    aiDesignMirror: z.boolean().optional(),
+    customCss: z.boolean().optional(),
+  }).optional(),
 });
 
 export async function POST(request: NextRequest) {
   try {
-    // Parse and validate request body
+    // Parse and validate request body against the consolidated schema
     const body = await request.json();
     const validationResult = UpdateConfigSchema.safeParse(body);
 
@@ -21,179 +35,80 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { tenantId, configPatch } = validationResult.data;
+    const { tenantId, branding, features } = validationResult.data;
 
     // Transaction Logging
-    console.log('=== UPDATE CONFIG REQUEST ===');
+    console.log('=== ATOMIC UPDATE CONFIG REQUEST ===');
     console.log('tenantId:', tenantId);
-    console.log('configPatch:', JSON.stringify(configPatch, null, 2));
+    console.log('branding:', JSON.stringify(branding, null, 2));
+    console.log('features:', JSON.stringify(features, null, 2));
     console.log('timestamp:', new Date().toISOString());
 
     // Initialize Supabase client
     const supabase = await createClient();
 
-    // Update tenant configuration
-    // Merge with existing widget_config
-    const { data: existingTenant, error: fetchError } = await supabase
-      .from('tenants')
-      .select('widget_config')
-      .eq('id', tenantId)
-      .single();
+    // ================================================================
+    // ATOMIC COMMIT via sync_tenant_config RPC
+    //
+    // The RPC wraps both the branding_colors/custom_assets column updates
+    // AND the widget_config->features merge inside a single PostgreSQL
+    // transaction block. If either write fails, the entire transaction
+    // rolls back instantly — no partial-save state.
+    //
+    // IMPORTANT: branding_colors is a FLAT TEXT STRING in the tenants
+    // table (not JSONB). The RPC extracts via:
+    //   p_branding->>'primaryColor' -> branding_colors
+    //   p_branding->>'accentColor'  -> branding_colors
+    //
+    // widget_config is JSONB and receives both the 'branding' sub-tree
+    // and the merged 'features' sub-tree.
+    // ================================================================
+    const { data, error: rpcError } = await supabase.rpc('sync_tenant_config', {
+      p_tenant_id: tenantId,
+      p_branding: branding ?? null,
+      p_features: features ?? null,
+    });
 
-    if (fetchError) {
-      console.error('=== FETCH TENANT ERROR ===');
-      console.error('Error object:', JSON.stringify(fetchError, null, 2));
-      console.error('Error code:', fetchError.code);
-      console.error('Error message:', fetchError.message);
-      console.error('Error details:', fetchError.details);
-      
-      // Check for column not found error (42703)
-      if (fetchError.message?.includes('widget_config')) {
-        console.error('=== SCHEMA MISMATCH DETECTED ===');
-        console.error('Column widget_config may not exist. Check tenants table schema.');
-      }
-      
-      // Check if it's a "not found" error
-      if (fetchError.code === 'PGRST116') {
-        return NextResponse.json(
-          { 
-            success: false, 
-            error: 'Tenant record not found in database.', 
-            code: 'NOT_FOUND', 
-            details: null 
-          },
-          { status: 404 }
-        );
-      }
-      
+    if (rpcError) {
+      console.error('=== RPC ERROR ===');
+      console.error('Error object:', JSON.stringify(rpcError, null, 2));
+      console.error('Error code:', rpcError.code);
+      console.error('Error message:', rpcError.message);
+      console.error('Error details:', rpcError.details);
+
       return NextResponse.json(
-        { 
-          success: false, 
-          error: 'Failed to fetch tenant configuration', 
-          code: fetchError.code, 
-          details: fetchError.message 
+        {
+          success: false,
+          error: 'Database commit failed',
+          code: rpcError.code,
+          details: rpcError.message,
         },
         { status: 500 }
       );
     }
 
-    // Safety Check: Verify tenant exists
-    if (!existingTenant) {
-      console.error('=== TENANT NOT FOUND ===');
-      console.error('No tenant returned for tenantId:', tenantId);
-      return NextResponse.json(
-        { success: false, error: 'Tenant record not found in database.', code: 'NOT_FOUND' },
-        { status: 404 }
-      );
-    }
-
-    console.log('=== EXISTING TENANT FETCHED ===');
-    console.log('Existing widget_config:', JSON.stringify(existingTenant.widget_config, null, 2));
-
-    // Merge existing config with new patch
-    const mergedConfig = {
-      ...(existingTenant?.widget_config || {}),
-      ...configPatch,
-      // Deep merge for nested objects like theme, behavior, ui
-      theme: {
-        ...(existingTenant?.widget_config?.theme || {}),
-        ...(configPatch.theme || {}),
-      },
-      behavior: {
-        ...(existingTenant?.widget_config?.behavior || {}),
-        ...(configPatch.behavior || {}),
-      },
-      ui: {
-        ...(existingTenant?.widget_config?.ui || {}),
-        ...(configPatch.ui || {}),
-      },
-      updatedAt: new Date().toISOString(),
-      updatedBy: 'ai-intelligence',
+    // The RPC returns { success: boolean, widget_config: JSONB }
+    const result = (data as unknown) as {
+      success: boolean;
+      widget_config?: Record<string, unknown>;
     };
 
-    // Apply the update
-    console.log('=== APPLYING UPDATE ===');
-    console.log('Merged config:', JSON.stringify(mergedConfig, null, 2));
-
-    const updatePayload = {
-      widget_config: mergedConfig,
-      updated_at: new Date().toISOString(),
-    };
-
-    const { data: updateData, error: updateError } = await supabase
-      .from('tenants')
-      .update(updatePayload)
-      .eq('id', tenantId)
-      .select('id');
-
-    if (updateError) {
-      console.error('=== UPDATE ERROR ===');
-      console.error('Error object:', JSON.stringify(updateError, null, 2));
-      console.error('Error code:', updateError.code);
-      console.error('Error message:', updateError.message);
-      console.error('Error details:', updateError.details);
-      console.error('Error hint:', updateError.hint);
-      
-      // Check for column not found error (42703)
-      if (updateError.code === '42703' || updateError.message?.includes('widget_config')) {
-        console.error('=== SCHEMA MISMATCH DETECTED ===');
-        console.error('Attempted to update column: widget_config');
-        console.error('Available columns in tenants table may differ.');
-        console.error('Full error:', updateError);
-        
-        return NextResponse.json(
-          { 
-            success: false,
-            error: 'Database schema mismatch: widget_config column not found', 
-            code: 'SCHEMA_ERROR',
-            details: updateError.message,
-            attemptedColumn: 'widget_config'
-          },
-          { status: 500 }
-        );
-      }
-      
-      // Determine appropriate status code
-      let statusCode = 500;
-      if (updateError.code === 'PGRST116') {
-        statusCode = 404; // Not found
-      } else if (updateError.code?.includes('auth') || updateError.code?.includes('JWT')) {
-        statusCode = 401; // Unauthorized
-      }
-      
+    if (!result?.success) {
+      console.error('=== RPC REPORTED FAILURE ===');
+      console.error('RPC result:', JSON.stringify(result, null, 2));
       return NextResponse.json(
-        { 
-          success: false,
-          error: 'Failed to apply configuration update', 
-          code: updateError.code,
-          details: updateError.message 
-        },
-        { status: statusCode }
+        { success: false, error: 'Atomic configuration sync failed' },
+        { status: 500 }
       );
     }
 
-    // Check if any rows were affected
-    if (!updateData || updateData.length === 0) {
-      console.error('=== NO ROWS UPDATED ===');
-      console.error('Update returned 0 rows affected for tenantId:', tenantId);
-      return NextResponse.json(
-        { success: false, error: 'Tenant record not found in database.', code: 'NOT_FOUND' },
-        { status: 404 }
-      );
-    }
-
-    console.log('=== UPDATE SUCCESS ===');
-    console.log('Rows updated:', updateData.length);
-    console.log('Updated data:', JSON.stringify(updateData, null, 2));
+    console.log('=== ATOMIC UPDATE SUCCESS ===');
+    console.log('widget_config:', JSON.stringify(result.widget_config, null, 2));
 
     return NextResponse.json({
       success: true,
-      message: 'Configuration updated successfully',
-      data: {
-        tenantId,
-        appliedAt: new Date().toISOString(),
-        rowsAffected: updateData.length,
-      }
+      widget_config: result.widget_config ?? null,
+      appliedAt: new Date().toISOString(),
     });
 
   } catch (error) {

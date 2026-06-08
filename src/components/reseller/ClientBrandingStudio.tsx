@@ -51,6 +51,7 @@ export interface BrandingConfig {
   aiInsightBadge: boolean;
   aiDesignMirror: boolean;
   customCss: boolean;
+  customCssCode: string;
   /** Chat body (message window) transparency — 0.0 (fully transparent) to 1.0 (opaque) */
   widgetBodyOpacity: number;
   /** Chat body (message window) background — hex, rgb, or rgba color string */
@@ -124,6 +125,7 @@ export function ClientBrandingStudio({
     aiInsightBadge: initialConfig?.features?.aiInsightBadge ?? true,
     aiDesignMirror: initialConfig?.features?.aiDesignMirror ?? false,
     customCss: initialConfig?.features?.customCss ?? false,
+    customCssCode: initialConfig?.branding?.customCssCode || '',
     widgetBodyOpacity: 1.0,
     widgetBodyBackground: 'rgba(31, 41, 55, 1.0)',
   });
@@ -525,28 +527,59 @@ export function ClientBrandingStudio({
     });
   }, []);
 
-  /** Central Commit Wrapper: Bridges UI state to the hook's persistence logic */
+  /** Central Commit Wrapper: Bridges UI state to the tenant's persistent config
+   *  in a single atomic transaction via the atomic update-config API.
+   *
+   *  ATOMIC SINGLE-WRITE PIPELINE (Production Safety):
+   *   Aggregates the entire visual profile (branding) and functional feature
+   *   matrix (features) into one consolidated payload. Sends it to the
+   *   sync_tenant_config RPC which wraps both writes in a single PostgreSQL
+   *   transaction block. If either write fails, the entire transaction rolls
+   *   back instantly — no partial-save state.
+   *
+   *  This replaces the old dual-write pipeline that called studio.commit()
+   *  (reseller table) independently from the features API (tenants table),
+   *  which created split-brain save risks. */
   const handleCommit = useCallback(async (): Promise<boolean> => {
-    // Extract persisted fields from UI config
-    studio.stageBulk({
-      primaryColor: config.headerBackground,
-      accentColor: config.footerBackground,
-      logoUrl: config.logoUrl,
-    });
+    // Build the consolidated atomic payload matching the Zod schema
+    // on the server side (UpdateConfigSchema).
+    const consolidatedPayload = {
+      tenantId: clientId,
+      branding: {
+        primaryColor: config.headerBackground,
+        accentColor: config.footerBackground,
+        logoUrl: config.logoUrl,
+        widgetBodyOpacity: config.widgetBodyOpacity,
+        widgetBodyBackground: config.widgetBodyBackground,
+        customCssCode: config.customCssCode,
+      },
+      features: {
+        aiInsightBadge: config.aiInsightBadge,
+        aiDesignMirror: config.aiDesignMirror,
+        customCss: config.customCss,
+      },
+    };
 
-    const result = await studio.commit();
+    try {
+      const response = await fetch('/api/tenants/update-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(consolidatedPayload),
+      });
 
-    if (!result.success) {
-      if (result.conflict) {
-        setSaveMessage('⚠️ Branding conflict: another session modified branding. Rollback initiated.');
-        studio.rollback();
-      } else {
-        setSaveMessage(`Error: ${result.error || 'Commit failed'}`);
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => ({}));
+        throw new Error((errorBody as Record<string, unknown>).error as string || 'Atomic commit failed');
       }
+
+      return true;
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      console.error('[ClientBrandingStudio] Atomic commit error:', err);
+      setSaveMessage(`Error: ${errorMessage}`);
       return false;
     }
-    return true;
-  }, [config, studio]);
+  }, [config, clientId]);
 
   // Handle save — uses atomic commit pipeline with version_stamp optimistic locking
   const handleSave = useCallback(async () => {
@@ -1693,6 +1726,20 @@ export function ClientBrandingStudio({
                 />
               </button>
             </div>
+            {config.customCss && (
+              <div className="animate-in fade-in slide-in-from-top-2 duration-200 mt-3">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-cyan-400 block mb-1.5 font-mono">
+                  CSS Sandbox Overrides
+                </label>
+                <textarea
+                  value={config.customCssCode || ''}
+                  onChange={(e) => updateConfig('customCssCode', e.target.value)}
+                  placeholder={`.widget-container {\n  border-radius: 16px;\n  backdrop-filter: blur(12px);\n}`}
+                  className="w-full h-32 font-mono text-xs bg-slate-950/90 text-emerald-400 rounded-md p-3 border border-white/10 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none resize-none"
+                  spellCheck={false}
+                />
+              </div>
+            )}
           </div>
 
           {isFeatureLocked('standard') && (
@@ -1969,6 +2016,9 @@ export function ClientBrandingStudio({
                 Powered by OVG Engage
               </div>
             </div>
+            {config.customCss && config.customCssCode && (
+              <style dangerouslySetInnerHTML={{ __html: config.customCssCode }} />
+            )}
           </div>
         </div>
 

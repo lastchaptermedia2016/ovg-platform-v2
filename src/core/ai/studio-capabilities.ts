@@ -72,6 +72,28 @@ export const STUDIO_CAPABILITIES: StudioCapabilitiesMap = {
     description: 'Run a full automated designer optimization pass on the active layout.',
     examples: ['Run AI magic', 'Optimize my design'],
   },
+  customCssSandbox: {
+    key: 'customCssSandbox',
+    description: 'A sandboxed code terminal beneath the Custom CSS toggle where users can inject raw CSS style overrides targeting the widget preview. The primary CSS selector is `.widget-container`. Supports glassmorphism effects like `backdrop-filter: blur(12px)`, alpha-channel backgrounds like `rgba(255,255,255,0.05)`, custom border-radius, and any standard CSS property.',
+    examples: [
+      'Add glassmorphism to the widget',
+      'Set the chat panel border-radius to 16px',
+      'Make the widget background semi-transparent white',
+      'Apply a blur effect to the container',
+      'How do I add custom CSS to my widget?',
+    ],
+  },
+  logoManagement: {
+    key: 'logoManagement',
+    description: 'Handles white-label corporate asset injection. Allows tenants to upload custom logos to a secure storage container, generating a public HTTPS URL that updates the widget header. Manages branding configurations associated with payload.branding.logoUrl.',
+    examples: [
+      'Change my widget logo',
+      'How do I upload a new brand image?',
+      'Update the logo URL path',
+      'Remove the custom logo from the header',
+      'Replace the default branding icon',
+    ],
+  },
 };
 
 /**
