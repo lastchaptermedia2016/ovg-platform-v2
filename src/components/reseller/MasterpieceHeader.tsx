@@ -250,7 +250,7 @@ export function MasterpieceHeader({
           <SignOutButton />
           <div className="h-3 w-[1px] bg-white/20" />
           <span className="text-white/80 text-[10px] font-medium tracking-wider uppercase">
-            OVG-Engage
+            ZEEDER AI
           </span>
           <div className="h-3 w-[1px] bg-white/20" />
           <span className="text-cyan-400 text-[10px] font-bold tracking-wider uppercase">

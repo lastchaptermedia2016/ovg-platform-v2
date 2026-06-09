@@ -111,9 +111,47 @@ export async function POST(req: Request) {
     size: file?.size,
   });
 
-  if (!file || file.size === 0) {
-    console.error('[STT] ❌ No file or empty file received');
+  if (!file) {
+    // ── HTTP 400: Malformed Structure ────────────────────────────────
+    // The request was syntactically invalid — the FormData payload did not
+    // include a `file` field at all. This is a client-side bug or a corrupted
+    // multipart boundary, not a user behavior issue.
+    console.error('[STT] ❌ No file received in form payload');
     return jsonResponse({ error: 'No audio file received' }, 400);
+  }
+
+  /**
+   * Production Excellence Guardrail: Micro-Recording Protection
+   * Audio files under ~12KB lack enough audio frame packets for Groq's
+   * Whisper decoder to produce reliable output. They typically result from
+   * accidental mic double-clicks or a user letting go of the push-to-talk
+   * button before the MediaRecorder has captured a usable chunk.
+   *
+   * Intercepting these BEFORE the Groq API call avoids:
+   *   1. Wasting billable tokens on undecodable audio
+   *   2. Returning garbled "thank you" / "bye" / "" transcripts to the UI
+   *   3. Cascading downstream errors in extract-client-info and
+   *      process-command when a near-empty transcript is fed to the LLM
+   *
+   * HTTP 422 Unprocessable Content is the correct status: the request was
+   * syntactically valid (we got a file with a real size) but semantically
+   * unprocessable by the downstream STT engine.
+   */
+  if (file.size < 12000) {
+    // console.warn (yellow) — not console.error — because this is expected
+    // user behavior, not a system fault. Keeps log aggregators clean.
+    console.warn('[STT] ⚠️ Micro-recording rejected:', {
+      name: file.name,
+      type: file.type,
+      size: file.size,
+    });
+    return jsonResponse(
+      {
+        error: 'Recording too short',
+        message: 'Audio chunk contains no decodable voice data. Please hold the button down to speak your command.',
+      },
+      422
+    );
   }
 
   try {
@@ -132,15 +170,31 @@ export async function POST(req: Request) {
 
     const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-    // SST Vocabulary Boosting: Common brand names and phrases to improve transcription accuracy
+    // STT Vocabulary Boosting: Domain-specific brand anchors + phonetic-deflection
+    // hints. Groq's Whisper API exposes the `prompt` field as its sole biasing
+    // surface (no `language` or `keywords` parameter is supported), so the
+    // canonical brand spellings and explicit mishearing→brand mapping lines
+    // are embedded directly into the prompt. This shifts Whisper's next-token
+    // attention weights toward our real brand ecosystem and away from generic
+    // en-US dictionary defaults that warp "Xneelio" → "Xnelia" and
+    // "Zeeder" → "Zeta"/"Cedar"/"Zita".
+    //
+    // The prompt stays well under Groq's 224-token ceiling to avoid silent
+    // truncation that would invalidate the bias.
     const vocabularyBoost = [
-      "BellaCorp",
-      "WhiteChapter",
       "OVG",
       "Last Chapter Media",
-      "Acme Corp",
-      "TechStart",
-      "InnovateLab"
+      "BellaCorp",
+      "WhiteChapter",
+      "Xneelio",
+      "Xneelo",
+      "Zeeder",
+      // Phonetic-deflection lines — Whisper uses these as in-context priors
+      // for the acoustic-to-text decoder, so an "Xnelia" acoustic match
+      // gets re-anchored to "Xneelio" at decode time.
+      "Xnelia is a misspelling of the brand Xneelio.",
+      "Zeta, Cedar, or Zita in a client-name context refers to the brand Zeeder.",
+      "OVG platform: tenants, clients, resellers, dashboard, branding studio."
     ].join(", ");
 
     const transcription = await groq.audio.transcriptions.create({

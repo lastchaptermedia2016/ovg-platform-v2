@@ -56,6 +56,8 @@ export function SystemHelpTooltip({ children, isVisible: externalVisible }: Syst
     { label: 'Delete', description: 'Remove a client by name' },
     { label: 'Filter', description: 'Filter grid by industry or sector' },
     { label: 'Deploy', description: 'Apply config updates to clients' },
+    { label: 'Custom CSS', description: 'Inject raw CSS overrides for glassmorphism and layout' },
+    { label: 'Logo', description: 'Upload or change the widget header brand logo' },
     { label: 'Help', description: 'List all available voice commands' },
   ];
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Image from 'next/image';
 import { useParams, useRouter } from 'next/navigation';
 import { isInvalidSlug } from '@/lib/utils/guard';
 import { ClientBrandingStudio, BrandingConfig } from '@/components/reseller/ClientBrandingStudio';
@@ -134,9 +135,24 @@ export default function ResellerBrandingPage() {
   return (
     <div className="min-h-screen p-6">
       <div className="max-w-7xl mx-auto">
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold text-white mb-2">Branding Studio</h1>
-          <p className="text-white/60">Customize widget appearance for your clients</p>
+        <div className="relative overflow-hidden rounded-xl mb-8 min-h-[120px]">
+          {/* Background Image */}
+          <Image
+            src="/reseller-bg.jpg"
+            alt=""
+            aria-hidden="true"
+            fill
+            priority
+            sizes="100vw"
+            className="object-cover"
+          />
+          {/* High-Performance Contrast Shield Layer */}
+          <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-950/60 to-transparent pointer-events-none" />
+          {/* Foreground Typography */}
+          <div className="relative z-10 p-6">
+            <h1 className="text-2xl font-bold text-white mb-2">Branding Studio</h1>
+            <p className="text-white/90">Customize widget appearance for your clients</p>
+          </div>
         </div>
 
         {selectedClientId ? (

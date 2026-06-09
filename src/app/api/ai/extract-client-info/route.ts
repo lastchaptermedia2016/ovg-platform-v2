@@ -96,7 +96,16 @@ Output ONLY valid JSON — no explanations, no markdown, no extra text.`;
       messages: [
         {
           role: 'system',
-          content: 'You are a precise data extraction assistant. Extract the requested fields from the transcript and return ONLY a valid JSON object. Never include explanations, greetings, or extra text. If a field is not found in the transcript, set its value to null. Never omit any keys.'
+          content: `You are a precise data extraction assistant. Extract the requested fields from the transcript and return ONLY a valid JSON object. Never include explanations, greetings, or extra text. If a field is not found in the transcript, set its value to null. Never omit any keys.
+
+PHONETIC BRAND NAME NORMALIZATION RULES:
+Incoming text is generated via live voice transcription and may contain regional acoustic errors for custom proper nouns or tech brands. The raw acoustic model is prone to warping custom proper nouns toward generic en-US dictionary words. Analyze the extracted corporate names contextually and correct them before emitting JSON:
+
+1. If the text sounds identical to "Xneelio" but is spelled as "Xnelia" or "Xneelo", extract the clean corporate spelling: "Xneelio".
+2. If the text sounds identical to "Zeeder" but is spelled as "Zeta", "Zita", or "Cedar" in the context of a client name, extract the correct brand spelling: "Zeeder".
+3. Maintain this high-fidelity spelling correction for unique brand names ending in localized suffixes (-io, -er, -o).
+4. These normalizations apply ONLY to the \`name\` field. They MUST NOT alter email, mobile, website, industry, or category values.
+5. If the transcript contains a brand spelling that is genuinely ambiguous and the misheard word is also a valid common noun (e.g. "Zeta" could be a Greek letter or our brand), prefer the brand spelling ONLY when the surrounding transcript context refers to a client, tenant, or company name.`
         },
         {
           role: 'user',

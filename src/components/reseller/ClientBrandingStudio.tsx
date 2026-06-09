@@ -81,6 +81,22 @@ const STUDIO_CAPABILITIES = {
     description: 'Toggle AI features like the Insight Badge, Design Mirror, or Custom CSS.',
     examples: ['Enable the insight badge', 'Turn off design mirror'],
   },
+  customCssSandbox: {
+    description: 'A sandboxed code terminal beneath the Custom CSS toggle where users can inject raw CSS style overrides targeting the widget preview.',
+    examples: [
+      'Add glassmorphism to the widget',
+      'Set the chat panel border-radius to 16px',
+      'How do I add custom CSS to my widget?',
+    ],
+  },
+  logoManagement: {
+    description: 'Handles white-label corporate asset injection — upload custom logos to update the widget header.',
+    examples: [
+      'Change my widget logo',
+      'How do I upload a new brand image?',
+      'Replace the default branding icon',
+    ],
+  },
 } as const;
 
 // ── Acoustic Normalizer ────────────────────────────────────────────────
@@ -2013,7 +2029,7 @@ export function ClientBrandingStudio({
                 />
               )}
               <div className="relative z-10 text-white/60 text-xs text-center drop-shadow-md">
-                Powered by OVG Engage
+                Powered by ZEEDER AI
               </div>
             </div>
             {config.customCss && config.customCssCode && (

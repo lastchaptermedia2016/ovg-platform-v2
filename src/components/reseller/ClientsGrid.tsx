@@ -864,10 +864,10 @@ export function ClientsGridInternal({
         if (visibleClients.length === 0) {
           return (
             <div className="backdrop-blur-xl bg-white/[0.02] border border-white/10 rounded-lg p-12 text-center">
-              {/* OVG Engage Branding */}
+              {/* ZEEDER AI Branding */}
               <div className="mb-6">
                 <div className="px-8 py-3 bg-gradient-to-br from-cyan-400 to-blue-600 rounded-full mx-auto flex items-center justify-center shadow-lg shadow-cyan-400/50 max-w-xs">
-                  <span className="text-white font-bold tracking-widest text-sm">OVG ENGAGE</span>
+                  <span className="text-white font-bold tracking-widest text-sm">ZEEDER AI</span>
                 </div>
               </div>
               
@@ -901,7 +901,7 @@ export function ClientsGridInternal({
               
               {/* Subtle hint */}
               <div className="mt-6 text-xs text-white/10 tracking-[0.15em] uppercase">
-                Powered by OVG Engage Intelligence
+                Powered by ZEEDER AI Intelligence
               </div>
             </div>
           );

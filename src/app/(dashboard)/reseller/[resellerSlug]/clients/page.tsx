@@ -37,6 +37,7 @@ const useCategoryMap = () => useMemo(() => ({
   RETAIL: 'RETAIL',
   HEALTHCARE: 'HEALTHCARE',
   INSURANCE: 'INSURANCE',
+  AI_AUTOMATION: 'AI AUTOMATION',
   OFFLINE_ONLY: 'OFFLINE'
 }), []);
 

@@ -8,10 +8,10 @@ import { motion } from 'framer-motion';
 
 // Production Excellence: Stable Neural Link Messages
 const NEURAL_MESSAGES = [
-  "OVG Engage: Neural Link establishing secure connection...",
-  "Hannah: Preparing your OVG Engage workspace...",
-  "AI Core: Optimizing OVG Engage platform...",
-  "System Ready: OVG Engage reseller platform awaits..."
+  "ZEEDER AI: Neural Link establishing secure connection...",
+  "Hannah: Preparing your ZEEDER AI workspace...",
+  "AI Core: Optimizing ZEEDER AI platform...",
+  "System Ready: ZEEDER AI reseller platform awaits..."
 ];
 
 export default function AuthPage() {
@@ -272,10 +272,10 @@ export default function AuthPage() {
             </motion.span>
           </div>
 
-          {/* Right Branding: OVG-Engage RESELLER */}
+          {/* Right Branding: ZEEDER AI RESELLER */}
           <div className="flex items-center space-x-4">
             <span className="text-white/80 text-[10px] font-medium tracking-wider uppercase">
-              OVG-Engage
+              ZEEDER AI
             </span>
             <div className="w-px h-3 bg-white/20" />
             <span className="text-cyan-400 text-[10px] font-bold tracking-wider uppercase">
@@ -291,7 +291,7 @@ export default function AuthPage() {
           <div className="p-8 text-center">
             <div className="mb-6">
               <div className="px-12 py-4 bg-gradient-to-br from-cyan-400 to-blue-600 rounded-full mx-auto flex items-center justify-center shadow-lg shadow-cyan-400/50">
-                <span className="text-white font-bold tracking-widest">OVG ENGAGE</span>
+                <span className="text-white font-bold tracking-widest">ZEEDER AI</span>
               </div>
             </div>
             <motion.div

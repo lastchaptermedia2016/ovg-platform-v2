@@ -14,6 +14,7 @@ const INDUSTRY_CATEGORY_MAP: Record<string, string[]> = {
   RETAIL: ['ECOMMERCE', 'BRICK_AND_MORTAR'],
   HEALTHCARE: ['CLINICAL', 'WELLNESS'],
   INSURANCE: ['CLAIMS', 'UNDERWRITING'],
+  'AI AUTOMATION': ['AGENTIC_AI', 'WORKFLOW_AUTOMATION', 'CHATBOT'],
   'GENERAL BUSINESS': ['GENERAL', 'CONSULTING', 'SERVICES'],
 };
 
@@ -157,6 +158,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
       'RETAIL',
       'HEALTHCARE',
       'INSURANCE',
+      'AI AUTOMATION',
       'GENERAL BUSINESS',
     ] as const;
     const upperIndustry = industry.toUpperCase().trim();
@@ -181,6 +183,9 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
       'MEDICAL': 'HEALTHCARE',
       'HEALTHCARE': 'HEALTHCARE',
       'HEALTH CARE': 'HEALTHCARE',
+      'AI': 'AI AUTOMATION',
+      'AUTOMATION': 'AI AUTOMATION',
+      'AI AUTOMATION': 'AI AUTOMATION',
       'GENERAL': 'GENERAL BUSINESS',
       'BUSINESS': 'GENERAL BUSINESS',
       'GENERAL BUSINESS': 'GENERAL BUSINESS',
@@ -1287,7 +1292,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                     }}
                     className="text-xs text-white bg-black/30 border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
                   >
-                    {['AUTOMOTIVE', 'RETAIL', 'HEALTHCARE', 'INSURANCE', 'GENERAL BUSINESS'].map(i => (
+                    {['AUTOMOTIVE', 'RETAIL', 'HEALTHCARE', 'INSURANCE', 'AI AUTOMATION', 'GENERAL BUSINESS'].map(i => (
                       <option key={i} value={i}>{i.charAt(0) + i.slice(1).toLowerCase()}</option>
                     ))}
                   </select>
@@ -1396,7 +1401,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                     onChange={(e) => setReviewData({ ...reviewData, industry: e.target.value, category: '' })}
                     className="text-xs text-white bg-black/30 border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
                   >
-                    {['AUTOMOTIVE', 'RETAIL', 'HEALTHCARE', 'INSURANCE', 'GENERAL BUSINESS'].map(i => (
+                    {['AUTOMOTIVE', 'RETAIL', 'HEALTHCARE', 'INSURANCE', 'AI AUTOMATION', 'GENERAL BUSINESS'].map(i => (
                       <option key={i} value={i}>{i.charAt(0) + i.slice(1).toLowerCase()}</option>
                     ))}
                   </select>

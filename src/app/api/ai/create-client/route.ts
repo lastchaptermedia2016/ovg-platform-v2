@@ -14,7 +14,8 @@ const ALLOWED_INDUSTRIES = [
   'RETAIL',
   'HEALTHCARE',
   'INSURANCE',
-  'GENERAL BUSINESS'
+  'AI AUTOMATION',
+  'GENERAL BUSINESS',
 ] as const;
 
 // Zod schema for request validation
@@ -29,7 +30,7 @@ const CreateClientRequestSchema = z.object({
   clientData: z.object({
     name: z.string().min(1),
     industry: z.enum(ALLOWED_INDUSTRIES, {
-      errorMap: () => ({ message: 'Industry must be one of: AUTOMOTIVE, RETAIL, HEALTHCARE, INSURANCE, GENERAL BUSINESS' })
+      errorMap: () => ({ message: 'Industry must be one of: AUTOMOTIVE, RETAIL, HEALTHCARE, INSURANCE, AI AUTOMATION, GENERAL BUSINESS' })
     }),
     category: z.string().optional(),
     email: z.string().email().nullable().optional().transform((val) => {
@@ -124,13 +125,14 @@ SPECIAL INSTRUCTIONS FOR EMAIL:
 - If the normalized value looks like a website URL instead of an email, set email to null.
 
 INDUSTRY ENUM VALUES (exact only, must be UPPERCASE):
-AUTOMOTIVE, RETAIL, HEALTHCARE, INSURANCE, GENERAL BUSINESS
+AUTOMOTIVE, RETAIL, HEALTHCARE, INSURANCE, AI AUTOMATION, GENERAL BUSINESS
 
 CATEGORY MAPPING (use exact enum values):
   AUTOMOTIVE → VIN_DECODE, LOGISTICS, RETAIL_SALES
   RETAIL → ECOMMERCE, BRICK_AND_MORTAR
   HEALTHCARE → CLINICAL, WELLNESS
   INSURANCE → CLAIMS, UNDERWRITING
+  AI AUTOMATION → AGENTIC_AI, WORKFLOW_AUTOMATION, CHATBOT
   GENERAL BUSINESS → GENERAL, CONSULTING, SERVICES
 
 LITERAL EXTRACTION PRIORITY:
