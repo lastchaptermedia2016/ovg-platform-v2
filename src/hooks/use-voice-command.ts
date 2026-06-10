@@ -41,6 +41,10 @@ interface UseVoiceCommandReturn {
    *  Releases the pipeline lock AND the processing flag, then halts any
    *  in-flight audio capture so the hook returns to a clean idle state. */
   resetPipeline: () => void;
+  /** NEW: True while the internal TTS AudioContext is actively playing back
+   *  audio. UI consumers should gate mic re-arming on !ttsPlaying to
+   *  prevent acoustic loop / Hannah hearing her own speaker output. */
+  ttsPlaying: boolean;
 }
 
 /** Minimum press duration (ms) before stopRecording finalises the pipeline.
@@ -173,6 +177,18 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   /** NEW: Higher-level activation state for Push-to-Talk */
   const [voiceActive, setVoiceActive] = useState(false);
 
+  /** NEW: Mirrors ttsPlaybackActiveRef for React consumers (UI gating). */
+  const [ttsPlaying, setTtsPlaying] = useState(false);
+
+  /** NEW: True while a network round-trip is in flight. Suspends the
+   *  client-side 10s idle timeout so Vercel cold-starts don't tear the
+   *  mic down mid-pipeline. */
+  const networkInFlightRef = useRef(false);
+
+  /** NEW: Latched true while TTS audio is playing. Blocks MediaRecorder
+   *  start to prevent acoustic loop / Hannah hearing herself. */
+  const ttsPlaybackActiveRef = useRef(false);
+
   // ─── NEW (PTT): Push-to-Talk state machine ───────────────────────────────
   /** Whether the mic button is currently being held down. */
   const [isRecording, setIsRecording] = useState(false);
@@ -245,11 +261,14 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   // ─── NEW: Start/reset the 10s idle timeout ──────────────────────────────
   const resetVoiceActiveTimeout = useCallback(() => {
     if (!explicitActivation) return;
+    // Network-in-flight guard: never arm while network is active
+    if (networkInFlightRef.current) return;
     if (voiceActiveTimeoutRef.current) {
       clearTimeout(voiceActiveTimeoutRef.current);
     }
     voiceActiveTimeoutRef.current = setTimeout(() => {
-      console.log('[VoiceCommand] ⏰ 10s idle timeout reached — auto-deactivating mic');
+      // Self-defending: bail if request started between schedule and fire
+      if (networkInFlightRef.current) return;
       onAutoDeactivateRef.current?.();
       deactivateVoiceRef.current();
     }, IDLE_TIMEOUT_MS);
@@ -262,6 +281,49 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       voiceActiveTimeoutRef.current = null;
     }
   }, []);
+
+  // NEW: Network-aware idle-timeout suspension — call suspendIdleTimeout()
+  // before any async network round-trip and resumeIdleTimeout() when done.
+  // This prevents Vercel cold-starts (12-25s) from triggering the 10s idle timer.
+  const suspendIdleTimeout = useCallback(() => {
+    networkInFlightRef.current = true;
+    clearVoiceActiveTimeout();
+  }, [clearVoiceActiveTimeout]);
+
+  const resumeIdleTimeout = useCallback(() => {
+    networkInFlightRef.current = false;
+    if (explicitActivation && voiceActive) {
+      resetVoiceActiveTimeout();
+    }
+  }, [explicitActivation, voiceActive, resetVoiceActiveTimeout]);
+
+  // NEW: Validate audio response before decoding — guards decodeAudioData
+  // from crashing on non-audio payloads (e.g. Vercel 502 HTML error pages).
+  const validateAudioResponse = useCallback(
+    async (response: Response, source: string):
+      Promise<{ ok: true; arrayBuffer: ArrayBuffer } | { ok: false; errorMessage: string }> => {
+      if (!response.ok) {
+        const status = response.status;
+        let msg = `${source} failed: ${status}`;
+        try {
+          const err = await response.clone().json() as Record<string, unknown>;
+          if (typeof err?.error === 'string') msg = err.error;
+        } catch { /* ignore */ }
+        return { ok: false, errorMessage: msg };
+      }
+      const ct = response.headers.get('content-type') ?? '';
+      if (!ct.includes('audio/')) {
+        let msg = `${source} returned non-audio response (${ct})`;
+        try {
+          const err = await response.clone().json() as Record<string, unknown>;
+          if (typeof err?.error === 'string') msg = err.error;
+        } catch { /* ignore */ }
+        return { ok: false, errorMessage: msg };
+      }
+      return { ok: true, arrayBuffer: await response.arrayBuffer() };
+    },
+    []
+  );
 
   // Cleanup function
   const cleanup = useCallback(() => {
@@ -492,6 +554,9 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     }
 
     try {
+      // Suspend idle timer while network is in flight
+      suspendIdleTimeout();
+
       // ── Production Excellence: Transcode webm/opus → 16kHz mono WAV ──
       // MediaRecorder's raw webm/opus output is rejected by Groq's Whisper
       // decoder as "invalid media" because the live-stream container lacks
@@ -580,6 +645,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       onTranscript?.(text);
 
       if (skipAIPipeline) {
+        resumeIdleTimeout();
         return;
       }
 
@@ -608,6 +674,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       const aiText = parsedResponse?.response || parsedResponse?.summary;
       if (!aiText || !aiText.trim()) {
         console.warn('[VoiceHook] Aborting internal TTS: No text or fallback summary available.');
+        resumeIdleTimeout();
         return;
       }
       setAiResponse(aiText);
@@ -651,12 +718,19 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
         signal,
       });
 
-      if (!ttsResponse.ok) {
-        throw new Error(`TTS failed: ${ttsResponse.status}`);
+      // Validate audio response before decoding — guards against Vercel 502 HTML
+      const validated = await validateAudioResponse(ttsResponse, 'TTS');
+      if (!validated.ok) {
+        setIsSpeaking(false);
+        setTtsPlaying(false);
+        resumeIdleTimeout();
+        throw new Error(validated.errorMessage);
       }
 
       // ── Stripped-down TTS playback ──────────────
       setIsSpeaking(true);
+      ttsPlaybackActiveRef.current = true;
+      setTtsPlaying(true);
 
       const ttsCtx = ttsAudioContextRef.current;
       if (!ttsCtx) throw new Error('TTS AudioContext not initialized');
@@ -667,8 +741,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
         ttsAudioSourceRef.current = null;
       }
 
-      const arrayBuffer = await ttsResponse.arrayBuffer();
-      const audioBuffer = await ttsCtx.decodeAudioData(arrayBuffer);
+      const audioBuffer = await ttsCtx.decodeAudioData(validated.arrayBuffer);
 
       const source = ttsCtx.createBufferSource();
       source.buffer = audioBuffer;
@@ -686,17 +759,21 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       // Single cleanup timeout — fires after audio should be done
       const playbackMs = Math.ceil(audioBuffer.duration * 1000) + 500;
       setTimeout(() => {
-        console.log('[TTS] Cleanup timeout fired');
+        ttsPlaybackActiveRef.current = false;
+        setTtsPlaying(false);
         setIsSpeaking(false);
         ttsAudioSourceRef.current = null;
+        resumeIdleTimeout();
       }, playbackMs);
       // ── End inner try/catch ─────────────────────────────────────────
 
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') {
+        resumeIdleTimeout();
         console.log('Voice command aborted');
         return;
       }
+      resumeIdleTimeout();
       const errorMsg = err instanceof Error ? err.message : 'Voice command failed';
       setError(errorMsg);
       onError?.(errorMsg);
@@ -708,10 +785,15 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       setIsProcessing(false);
       isLockedRef.current = false;
     }
-  }, [onTranscript, onAIResponse, onError, skipAIPipeline, _currentConfig, deriveActionsFromPayload]);
+  }, [onTranscript, onAIResponse, onError, skipAIPipeline, _currentConfig, deriveActionsFromPayload, suspendIdleTimeout, resumeIdleTimeout, validateAudioResponse]);
 
   // Start listening — safety gate: block all triggers while locked
   const startListening = useCallback(async () => {
+    // Acoustic loop guard: block mic while TTS plays
+    if (ttsPlaybackActiveRef.current) {
+      console.warn('[VoiceCommand] TTS active — blocking mic start');
+      return;
+    }
     if (isLockedRef.current) {
       console.log('[VoiceCommand] 🔒 Pipeline locked: ignoring trigger');
       return;
@@ -985,5 +1067,6 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     deactivateVoice,
     resetPipelineLock,
     resetPipeline,
+    ttsPlaying,
   };
 }

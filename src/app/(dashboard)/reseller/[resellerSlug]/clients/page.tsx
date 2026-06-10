@@ -86,6 +86,7 @@ export default function ClientsPage() {
   const [inputFlash, setInputFlash] = useState(false);
   const [bulkConfirmation, setBulkConfirmation] = useState<BulkConfirmation | null>(null);
   const [successRipple, setSuccessRipple] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
   const [isAwaitingVoiceConfirm, setIsAwaitingVoiceConfirm] = useState(false);
   const confirmationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const commandInputRef = useRef<HTMLInputElement>(null);
@@ -97,6 +98,7 @@ export default function ClientsPage() {
   const activateVoiceRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const deactivateVoiceRef = useRef<() => void>(() => {});
   const voiceActiveRef = useRef(false);
+  const voiceHookTtsPlayingRef = useRef(false);
   // Stable ref for handleFilterChange to avoid temporal dead zone in transcript callback
   const handleFilterChangeRef = useRef<(newFilter: string) => void>(() => {});
   // SYSTEM_HELP popover state — when non-null, renders the command discovery overlay
@@ -183,6 +185,7 @@ export default function ClientsPage() {
       if (hasProcessedRef.current) return;
       if (!text || text.trim().length < 3) return;
       stopListeningRef.current();
+      setVoiceError(null);
 
       setCommandInput(text);
       hasProcessedRef.current = true;
@@ -416,6 +419,7 @@ export default function ClientsPage() {
     isListening,
     isProcessing,
     transcript: voiceTranscript,
+    ttsPlaying,
     voiceActive,
     activateVoice,
     deactivateVoice,
@@ -429,7 +433,11 @@ export default function ClientsPage() {
     skipAIPipeline: true,
     explicitActivation: true,
     onTranscript: handleTranscript,
-    onError: (err) => console.error('Voice command error:', err),
+    onError: (err) => {
+      console.error('Voice command error:', err);
+      setVoiceError(err);
+      speakVoiceRef.current("I didn't catch that. Please try again.");
+    },
     onAutoDeactivate: () => {
       resetPipelineLock();
       setIsAwaitingVoiceConfirm(false);
@@ -449,6 +457,8 @@ export default function ClientsPage() {
   useEffect(() => { activateVoiceRef.current = activateVoice; }, [activateVoice]);
   useEffect(() => { deactivateVoiceRef.current = deactivateVoice; }, [deactivateVoice]);
   useEffect(() => { voiceActiveRef.current = voiceActive; }, [voiceActive]);
+  useEffect(() => { voiceHookTtsPlayingRef.current = ttsPlaying; }, [ttsPlaying]);
+
 
   // ─── NEW: Global click-to-dismiss ──────────────────────────────────────────
   // When voiceActive is true and the user clicks outside the mic area,
@@ -869,6 +879,11 @@ export default function ClientsPage() {
                       <span className="text-[10px] font-bold text-red-300 tracking-[0.2em] uppercase">
                         EXECUTING DELETION...
                       </span>
+                    </span>
+                  ) : voiceError ? (
+                    <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/10 backdrop-blur-md border-t border-white/20 border-b border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.3)] transition-all duration-300">
+                      <span className="text-[10px] font-black text-red-400 tracking-tighter animate-pulse">ERR</span>
+                      <span className="text-[10px] font-bold text-red-300 tracking-[0.2em] uppercase">TAP MIC TO RETRY</span>
                     </span>
                   ) : selectedTenantId && voiceActive ? (
                     <>

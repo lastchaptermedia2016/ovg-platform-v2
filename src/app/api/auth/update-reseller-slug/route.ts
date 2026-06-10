@@ -40,6 +40,21 @@ export async function POST(request: Request) {
       );
     }
 
+    // Verify that the user is linked to the target reseller slug
+    const { data: userResellerData, error: userResellerError } = await supabase
+      .from('user_resellers')
+      .select('user_id')
+      .eq('user_id', user.id)
+      .eq('reseller_slug', newSlug)
+      .single();
+
+    if (userResellerError || !userResellerData) {
+      return NextResponse.json(
+        { error: "Unauthorized: User not linked to target reseller slug" },
+        { status: 403 }
+      );
+    }
+
     // Create admin client with service role for metadata update
     // supabaseAdmin is imported from @/lib/supabase/admin
 

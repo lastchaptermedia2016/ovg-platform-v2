@@ -1,0 +1,1 @@
+"/\r\n  resetPipelineLock: () => void;\r\n  /** NEW: Comprehensive quiescent-state reset for navigation exit-paths.\r\n   *  Release"

@@ -1,0 +1,361 @@
+const fs = require('fs');
+
+// Phase 1: use-voice-command.ts
+let hook = fs.readFileSync('src/hooks/use-voice-command.ts', 'utf8');
+
+// Fix 1: Add ttsPlaying to interface
+hook = hook.replace(
+  '  resetPipeline: () => void;\n}\n\n/** Minimum press duration',
+  '  resetPipeline: () => void;\n  /** NEW: True while the internal TTS AudioContext is actively playing back\n   *  audio. UI consumers should gate mic re-arming on !ttsPlaying to\n   *  prevent acoustic loop / Hannah hearing her own speaker output. */\n  ttsPlaying: boolean;\n}\n\n/** Minimum press duration'
+);
+
+// Fix 2: Add ttsPlaying, networkInFlightRef, ttsPlaybackActiveRef states
+hook = hook.replace(
+  "  const [voiceActive, setVoiceActive] = useState(false);\n\n  // --- NEW (PTT): Push-to-Talk state machine",
+  "  const [voiceActive, setVoiceActive] = useState(false);\n\n  /** NEW: Mirrors ttsPlaybackActiveRef for React consumers. */\n  const [ttsPlaying, setTtsPlaying] = useState(false);\n\n  /** NEW: True while network round-trip is in flight. Suspends idle timeout. */\n  const networkInFlightRef = useRef(false);\n\n  /** NEW: True while TTS audio plays. Blocks mic start for acoustic loop. */\n  const ttsPlaybackActiveRef = useRef(false);\n\n  // --- NEW (PTT): Push-to-Talk state machine"
+);
+
+// Fix 3: Add MICRO_TAP_DIAGNOSTIC_BYTES
+hook = hook.replace(
+  'const MAX_RECORDING_DURATION_MS = 5_000;\n\nexport function',
+  'const MAX_RECORDING_DURATION_MS = 5_000;\n\n/** Diagnostic threshold for micro-tap detection */\nconst MICRO_TAP_DIAGNOSTIC_BYTES = 12_000;\n\nexport function'
+);
+
+// Fix 4: Replace resetVoiceActiveTimeout with gated version
+const oldReset = `  const resetVoiceActiveTimeout = useCallback(() => {
+    if (!explicitActivation) return;
+    if (voiceActiveTimeoutRef.current) {
+      clearTimeout(voiceActiveTimeoutRef.current);
+    }
+    voiceActiveTimeoutRef.current = setTimeout(() => {
+      console.log('[VoiceCommand] \\u23f0 10s idle timeout reached \\u2014 auto-deactivating mic');
+      onAutoDeactivateRef.current?.();
+      deactivateVoiceRef.current();
+    }, IDLE_TIMEOUT_MS);
+  }, [explicitActivation]);`;
+
+const newReset = `  const resetVoiceActiveTimeout = useCallback(() => {
+    if (!explicitActivation) return;
+    // Network-in-flight guard: never arm while network is active
+    if (networkInFlightRef.current) return;
+    if (voiceActiveTimeoutRef.current) {
+      clearTimeout(voiceActiveTimeoutRef.current);
+    }
+    voiceActiveTimeoutRef.current = setTimeout(() => {
+      // Self-defending: bail if request started between schedule and fire
+      if (networkInFlightRef.current) return;
+      onAutoDeactivateRef.current?.();
+      deactivateVoiceRef.current();
+    }, IDLE_TIMEOUT_MS);
+  }, [explicitActivation]);`;
+
+hook = hook.replace(oldReset, newReset);
+
+// Fix 5: Add suspendIdleTimeout and resumeIdleTimeout
+const oldClear = `  // Cleanup the idle timeout
+  const clearVoiceActiveTimeout = useCallback(() => {
+    if (voiceActiveTimeoutRef.current) {
+      clearTimeout(voiceActiveTimeoutRef.current);
+      voiceActiveTimeoutRef.current = null;
+    }
+  }, []);
+
+  // Cleanup function`;
+
+const newClear = `  // Cleanup the idle timeout
+  const clearVoiceActiveTimeout = useCallback(() => {
+    if (voiceActiveTimeoutRef.current) {
+      clearTimeout(voiceActiveTimeoutRef.current);
+      voiceActiveTimeoutRef.current = null;
+    }
+  }, []);
+
+  // NEW: Network-aware idle-timeout suspension
+  const suspendIdleTimeout = useCallback(() => {
+    networkInFlightRef.current = true;
+    clearVoiceActiveTimeout();
+  }, [clearVoiceActiveTimeout]);
+
+  const resumeIdleTimeout = useCallback(() => {
+    networkInFlightRef.current = false;
+    if (explicitActivation && voiceActive) {
+      resetVoiceActiveTimeout();
+    }
+  }, [explicitActivation, voiceActive, resetVoiceActiveTimeout]);
+
+  // Cleanup function`;
+
+hook = hook.replace(oldClear, newClear);
+
+// Fix 6: Add validateAudioResponse
+const afterResume = `  const resumeIdleTimeout = useCallback(() => {
+    networkInFlightRef.current = false;
+    if (explicitActivation && voiceActive) {
+      resetVoiceActiveTimeout();
+    }
+  }, [explicitActivation, voiceActive, resetVoiceActiveTimeout]);
+
+  // Cleanup function`;
+
+const withValidate = `  const resumeIdleTimeout = useCallback(() => {
+    networkInFlightRef.current = false;
+    if (explicitActivation && voiceActive) {
+      resetVoiceActiveTimeout();
+    }
+  }, [explicitActivation, voiceActive, resetVoiceActiveTimeout]);
+
+  // NEW: Validate audio response before decoding
+  const validateAudioResponse = useCallback(
+    async (response: Response, source: string):
+      Promise<{ ok: true; arrayBuffer: ArrayBuffer } | { ok: false; errorMessage: string }> => {
+      if (!response.ok) {
+        const status = response.status;
+        let msg = source + ' failed: ' + status;
+        try {
+          const err = await response.clone().json() as Record<string, unknown>;
+          if (typeof err?.error === 'string') msg = err.error;
+        } catch {}
+        return { ok: false, errorMessage: msg };
+      }
+      const ct = response.headers.get('content-type') ?? '';
+      if (!ct.includes('audio/')) {
+        let msg = source + ' returned non-audio response (' + ct + ')';
+        try {
+          const err = await response.clone().json() as Record<string, unknown>;
+          if (typeof err?.error === 'string') msg = err.error;
+        } catch {}
+        return { ok: false, errorMessage: msg };
+      }
+      return { ok: true, arrayBuffer: await response.arrayBuffer() };
+    },
+    []
+  );
+
+  // Cleanup function`;
+
+hook = hook.replace(afterResume, withValidate);
+
+// Fix 7: Add suspendIdleTimeout after try {
+hook = hook.replace(
+  "    try {\n      // --- Production Excellence: Transcode webm/opus to 16kHz mono WAV ---",
+  "    try {\n      // Suspend idle timer while network is in flight\n      suspendIdleTimeout();\n\n      // --- Production Excellence: Transcode webm/opus to 16kHz mono WAV ---"
+);
+
+// Fix 8: Add resumeIdleTimeout before skipAIPipeline return
+hook = hook.replace(
+  "      if (skipAIPipeline) {\n        return;\n      }",
+  "      if (skipAIPipeline) {\n        resumeIdleTimeout();\n        return;\n      }"
+);
+
+// Fix 9: Add resumeIdleTimeout before 'No text' return
+hook = hook.replace(
+  "        console.warn('[VoiceHook] Aborting internal TTS: No text or fallback summary available.');\n        return;",
+  "        console.warn('[VoiceHook] Aborting internal TTS: No text or fallback summary available.');\n        resumeIdleTimeout();\n        return;"
+);
+
+// Fix 10: Replace TTS section
+const oldTts = `      const ttsResponse = await fetch('/api/ai/speech', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: aiText.trim(),
+          voice: 'hannah',
+          model: 'orpheus-v1',
+          metadata: {
+            resellerSlug: currentResellerId.trim(),
+            tenantId: currentTtsContext.tenantId,
+            category: currentTtsContext.category,
+          },
+        }),
+        signal,
+      });
+
+      if (!ttsResponse.ok) {
+        throw new Error(\`TTS failed: \${ttsResponse.status}\`);
+      }
+
+      // --- Stripped-down TTS playback -------------
+      setIsSpeaking(true);
+
+      const ttsCtx = ttsAudioContextRef.current;
+      if (!ttsCtx) throw new Error('TTS AudioContext not initialized');
+
+      // Stop any currently playing TTS
+      if (ttsAudioSourceRef.current) {
+        try { ttsAudioSourceRef.current.stop(); } catch {}
+        ttsAudioSourceRef.current = null;
+      }
+
+      const arrayBuffer = await ttsResponse.arrayBuffer();
+      const audioBuffer = await ttsCtx.decodeAudioData(arrayBuffer);
+
+      const source = ttsCtx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(ttsCtx.destination);
+
+      if (ttsCtx.state === 'suspended') {
+        await ttsCtx.resume();
+      }
+
+      console.log('[TTS] Playing, duration:', audioBuffer.duration, 'ctx state:', ttsCtx.state);
+
+      source.start(0);
+      ttsAudioSourceRef.current = source;
+
+      // Single cleanup timeout --- fires after audio should be done
+      const playbackMs = Math.ceil(audioBuffer.duration * 1000) + 500;
+      setTimeout(() => {
+        console.log('[TTS] Cleanup timeout fired');
+        setIsSpeaking(false);
+        ttsAudioSourceRef.current = null;
+      }, playbackMs);
+      // --- End inner try/catch --------------------------------`;
+
+const newTts = `      const ttsResponse = await fetch('/api/ai/speech', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: aiText.trim(),
+          voice: 'hannah',
+          model: 'orpheus-v1',
+          metadata: {
+            resellerSlug: currentResellerId.trim(),
+            tenantId: currentTtsContext.tenantId,
+            category: currentTtsContext.category,
+          },
+        }),
+        signal,
+      });
+
+      // Validate audio response before decoding
+      const validated = await validateAudioResponse(ttsResponse, 'TTS');
+      if (!validated.ok) {
+        setIsSpeaking(false);
+        setTtsPlaying(false);
+        resumeIdleTimeout();
+        throw new Error(validated.errorMessage);
+      }
+
+      // --- Stripped-down TTS playback -------------
+      setIsSpeaking(true);
+      ttsPlaybackActiveRef.current = true;
+      setTtsPlaying(true);
+
+      const ttsCtx = ttsAudioContextRef.current;
+      if (!ttsCtx) throw new Error('TTS AudioContext not initialized');
+
+      // Stop any currently playing TTS
+      if (ttsAudioSourceRef.current) {
+        try { ttsAudioSourceRef.current.stop(); } catch {}
+        ttsAudioSourceRef.current = null;
+      }
+
+      const audioBuffer = await ttsCtx.decodeAudioData(validated.arrayBuffer);
+
+      const source = ttsCtx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(ttsCtx.destination);
+
+      if (ttsCtx.state === 'suspended') {
+        await ttsCtx.resume();
+      }
+
+      console.log('[TTS] Playing, duration:', audioBuffer.duration, 'ctx state:', ttsCtx.state);
+
+      source.start(0);
+      ttsAudioSourceRef.current = source;
+
+      // Single cleanup timeout --- fires after audio should be done
+      const playbackMs = Math.ceil(audioBuffer.duration * 1000) + 500;
+      setTimeout(() => {
+        ttsPlaybackActiveRef.current = false;
+        setTtsPlaying(false);
+        setIsSpeaking(false);
+        ttsAudioSourceRef.current = null;
+        resumeIdleTimeout();
+      }, playbackMs);`;
+
+hook = hook.replace(oldTts, newTts);
+
+// Fix 11: Add acoustic loop guard in startListening
+hook = hook.replace(
+  "  const startListening = useCallback(async () => {\n    if (isLockedRef.current) {",
+  "  const startListening = useCallback(async () => {\n    // Acoustic loop guard: block mic while TTS plays\n    if (ttsPlaybackActiveRef.current) {\n      console.warn('[VoiceCommand] TTS playback active - blocking mic start');\n      return;\n    }\n    if (isLockedRef.current) {"
+);
+
+// Fix 12: Add micro-tap diagnostic
+const oldGuard = `        if (audioBlob.size < 4096) {
+          console.warn('[VoiceCommand] Blob too small to be a valid media file (%d bytes), skipping pipeline', audioBlob.size);
+          cleanup();
+          return;
+        }`;
+
+const newGuard = `        if (audioBlob.size < 4096) {
+          console.warn('[VoiceCommand] Blob too small (%d bytes), skipping pipeline', audioBlob.size);
+          cleanup();
+          return;
+        }
+
+        if (audioBlob.size < MICRO_TAP_DIAGNOSTIC_BYTES) {
+          console.warn('[VoiceCommand] Micro-tap: %d bytes below %d threshold', audioBlob.size, MICRO_TAP_DIAGNOSTIC_BYTES);
+        }`;
+
+hook = hook.replace(oldGuard, newGuard);
+
+fs.writeFileSync('src/hooks/use-voice-command.ts', hook);
+console.log('Voice hook updated. Length:', hook.length);
+
+// Phase 2: clients/page.tsx
+let page = fs.readFileSync('src/app/(dashboard)/reseller/[resellerSlug]/clients/page.tsx', 'utf8');
+
+// PC-1: voiceError state
+page = page.replace(
+  '  const [successRipple, setSuccessRipple] = useState(false);',
+  '  const [successRipple, setSuccessRipple] = useState(false);\n  const [voiceError, setVoiceError] = useState<string | null>(null);'
+);
+
+// PC-2: voiceHookTtsPlayingRef
+page = page.replace(
+  '  const voiceActiveRef = useRef(false);',
+  '  const voiceActiveRef = useRef(false);\n  const voiceHookTtsPlayingRef = useRef(false);'
+);
+
+// PC-3: onError actionable
+page = page.replace(
+  "    onError: (err) => console.error('Voice command error:', err),",
+  "    onError: (err) => {\n      console.error('Voice command error:', err);\n      setVoiceError(err);\n      speakVoiceRef.current(\"I didn't catch that. Please try again.\");\n    },"
+);
+
+// PC-4: voiceError clear effect
+page = page.replace(
+  "  const {",
+  "  useEffect(() => { if (voiceTranscript) setVoiceError(null); }, [voiceTranscript]);\n\n  const {"
+);
+
+// PC-5: ttsPlaying destructure
+page = page.replace(
+  "    transcript: voiceTranscript,\n    voiceActive,",
+  "    transcript: voiceTranscript,\n    ttsPlaying,\n    voiceActive,"
+);
+
+// PC-6: Sync ref
+page = page.replace(
+  "  useEffect(() => { voiceActiveRef.current = voiceActive; }, [voiceActive]);",
+  "  useEffect(() => { voiceActiveRef.current = voiceActive; }, [voiceActive]);\n  useEffect(() => { voiceHookTtsPlayingRef.current = ttsPlaying; }, [ttsPlaying]);"
+);
+
+// PC-7: Gate recovery timer on TTS
+page = page.replace(
+  "                    if (isVoicePlayingRef.current) return;",
+  "                    if (isVoicePlayingRef.current) return;\n                    if (voiceHookTtsPlayingRef.current) return;"
+);
+
+// PC-8: ERR badge
+page = page.replace(
+  "                      : selectedTenantId ? (",
+  "                      : voiceError ? (\n                      <span className=\"inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/10 backdrop-blur-md border-t border-white/20 border-b border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.3)] transition-all duration-300\">\n                        <span className=\"text-[10px] font-black text-red-400 tracking-tighter animate-pulse\">ERR</span>\n                        <span className=\"text-[10px] font-bold text-red-300 tracking-[0.2em] uppercase\">TAP MIC TO RETRY</span>\n                      </span>\n                    ) : selectedTenantId ? ("
+);
+
+fs.writeFileSync('src/app/(dashboard)/reseller/[resellerSlug]/clients/page.tsx', page);
+console.log('Clients page updated. Length:', page.length);
+console.log('All changes applied.');
