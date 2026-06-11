@@ -247,6 +247,7 @@ export async function POST(request: NextRequest) {
         success: true,
         actionType: 'SYSTEM_HELP',
         targetIds: [],
+        hasAudio: false,
         payload: {
           availableCommands: allExamples,
           brandingCapabilities: typedCaps,
@@ -330,6 +331,7 @@ Output ONLY valid JSON.`;
         actionType: 'SYSTEM_NOTE',
         targetIds: [],
         payload: {},
+        hasAudio: false,
         summary: 'Input unclear. Did you mean to issue a command?',
         metadata: {
           processedAt: new Date().toISOString(),
@@ -397,6 +399,7 @@ Output ONLY valid JSON.`;
       return NextResponse.json({
         success: true,
         actionType: 'NO_MATCH',
+        hasAudio: false,
         summary,
         metadata: {
           processedAt: new Date().toISOString(),
@@ -417,6 +420,7 @@ Output ONLY valid JSON.`;
         actionType,
         targetIds: [],
         payload,
+        hasAudio: false,
         contextKey, // Pass through for SYSTEM_EXPLAIN; undefined for others
         summary,
         metadata: {

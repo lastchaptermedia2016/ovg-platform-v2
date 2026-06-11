@@ -67,8 +67,6 @@ export default function ClientsPage() {
   }, []);
 
   // CRITICAL: Use String() runtime coercion, not TypeScript's compile-time `as string`.
-  // useParams() can return a Proxy object during SSR/hydration that hasn't resolved
-  // to a primitive string yet. String() ensures a primitve is always passed downstream.
   const resellerSlug = String(params.resellerSlug ?? '');
   
   // 🔷 Production Excellence: Detect Next.js hydration issues with route params
@@ -91,14 +89,6 @@ export default function ClientsPage() {
   const confirmationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const commandInputRef = useRef<HTMLInputElement>(null);
   const hasProcessedRef = useRef(false);
-  // Stable refs for voice hook callbacks to avoid circular declaration dependency
-  const stopListeningRef = useRef<() => void>(() => {});
-  const startListeningRef = useRef<() => Promise<void>>(() => Promise.resolve());
-  // NEW: Refs for explicit activation (Push-to-Talk) methods
-  const activateVoiceRef = useRef<() => Promise<void>>(() => Promise.resolve());
-  const deactivateVoiceRef = useRef<() => void>(() => {});
-  const voiceActiveRef = useRef(false);
-  const voiceHookTtsPlayingRef = useRef(false);
   // Stable ref for handleFilterChange to avoid temporal dead zone in transcript callback
   const handleFilterChangeRef = useRef<(newFilter: string) => void>(() => {});
   // SYSTEM_HELP popover state — when non-null, renders the command discovery overlay
@@ -178,325 +168,206 @@ export default function ClientsPage() {
   }, []);
 
   // Stable transcript handler — must be useCallback to prevent useVoiceCommand
-  // from recreating processAudioPipeline on every parent render, which causes
-  // the ClientsGrid re-mount loop.
+  // from recreating processAudioPipeline on every parent render.
   const handleTranscript = useCallback((text: string) => {
-      // Guard must be first — before stopListening — to block Strict Mode double-invocation
-      if (hasProcessedRef.current) return;
-      if (!text || text.trim().length < 3) return;
-      stopListeningRef.current();
-      setVoiceError(null);
+    // Guard must be first — to block double-invocation
+    if (hasProcessedRef.current) return;
+    if (!text || text.trim().length < 3) return;
+    setVoiceError(null);
 
-      setCommandInput(text);
-      hasProcessedRef.current = true;
-      setTimeout(() => { hasProcessedRef.current = false; }, 3000);
-      const lowerText = text.toLowerCase().trim();
+    setCommandInput(text);
+    hasProcessedRef.current = true;
+    setTimeout(() => { hasProcessedRef.current = false; }, 3000);
+    const lowerText = text.toLowerCase().trim();
 
-      if (isAwaitingVoiceConfirm && bulkConfirmation?.show) {
-        if (confirmationTimeoutRef.current) {
-          clearTimeout(confirmationTimeoutRef.current);
-          confirmationTimeoutRef.current = null;
+    // ── STRICT PTT: No automatic mic re-opening after any action ──
+    // The user must explicitly press the mic button again to record.
+
+    if (isAwaitingVoiceConfirm && bulkConfirmation?.show) {
+      if (confirmationTimeoutRef.current) {
+        clearTimeout(confirmationTimeoutRef.current);
+        confirmationTimeoutRef.current = null;
+      }
+      const confirmWords = ['yes', 'confirm', 'do it', 'go ahead', 'proceed', 'ok', 'yeah', 'sure'];
+      const cancelWords = ['no', 'cancel', 'stop', 'abort', 'wait', 'hold on'];
+      const isConfirm = confirmWords.some(word => lowerText.includes(word));
+      const isCancel = cancelWords.some(word => lowerText.includes(word));
+      if (isConfirm) {
+        setIsAwaitingVoiceConfirm(false);
+        handleBulkConfirm();
+        return;
+      } else if (isCancel) {
+        setIsAwaitingVoiceConfirm(false);
+        handleBulkCancel();
+        return;
+      }
+    }
+
+    let activeSlug = resellerSlug;
+    if (!activeSlug || activeSlug.includes('[') || activeSlug.includes(']') || activeSlug.includes('%5B')) {
+      const segments = window.location.pathname.split('/');
+      const resellerIndex = segments.indexOf('reseller');
+      if (resellerIndex !== -1 && segments[resellerIndex + 1]) {
+        activeSlug = segments[resellerIndex + 1];
+        console.log('%c[Pierre] 🚀 Extracted slug from URL path:', 'color: #0097b2; font-weight: bold;', activeSlug);
+      }
+    }
+
+    console.log('%c[Pierre] 🚀 Submission triggered with resolved slug:', 'color: #0097b2; font-weight: bold;', activeSlug);
+
+    handleCommandSubmit(
+      text,
+      { theme: { primary: '#0097b2' }, behavior: { prompt: 'Default' } },
+      selectedTenantId ? { tenantId: selectedTenantId, category: activeFilter } : { category: activeFilter },
+      activeSlug,
+      (response: AICommandResponse | undefined) => {
+        // 🔷 NO_MATCH: Neutral command — speak correction only.
+        // The user must press the mic button again to retry.
+        if (response?.actionType === 'NO_MATCH') {
+          const correctionMsg = response.summary || "I didn't catch a valid command. Please try again.";
+          speakVoiceRef.current(correctionMsg);
+          return;
         }
-        const confirmWords = ['yes', 'confirm', 'do it', 'go ahead', 'proceed', 'ok', 'yeah', 'sure'];
-        const cancelWords = ['no', 'cancel', 'stop', 'abort', 'wait', 'hold on'];
-        const isConfirm = confirmWords.some(word => lowerText.includes(word));
-        const isCancel = cancelWords.some(word => lowerText.includes(word));
-        if (isConfirm) {
-          setIsAwaitingVoiceConfirm(false);
-          stopListeningRef.current();
+
+        // 🔷 SYSTEM_BULK_CONFIRM: User confirmed bulk action
+        if (response?.actionType === 'SYSTEM_BULK_CONFIRM') {
+          speakVoiceRef.current(response.summary || 'Confirmed. Applying bulk updates now.');
           handleBulkConfirm();
           return;
-        } else if (isCancel) {
-          setIsAwaitingVoiceConfirm(false);
-          stopListeningRef.current();
+        }
+
+        // 🔷 SYSTEM_BULK_CANCEL: User cancelled bulk action
+        if (response?.actionType === 'SYSTEM_BULK_CANCEL') {
+          speakVoiceRef.current(response.summary || 'Cancelled. No changes were made.');
           handleBulkCancel();
           return;
         }
-      }
 
-      let activeSlug = resellerSlug;
-      if (!activeSlug || activeSlug.includes('[') || activeSlug.includes(']') || activeSlug.includes('%5B')) {
-        const segments = window.location.pathname.split('/');
-        const resellerIndex = segments.indexOf('reseller');
-        if (resellerIndex !== -1 && segments[resellerIndex + 1]) {
-          activeSlug = segments[resellerIndex + 1];
-          console.log('%c[Pierre] 🚀 Extracted slug from URL path:', 'color: #0097b2; font-weight: bold;', activeSlug);
+        // 🔷 SYSTEM_FILTER_GRID: User wants to filter the client grid
+        if (response?.actionType === 'SYSTEM_FILTER_GRID' && response?.payload?.category_filter) {
+          const category = response.payload.category_filter as string;
+          console.log('%c[Pierre] 🎯 SYSTEM_FILTER_GRID: Applying category filter:', 'color: #0097b2; font-weight: bold;', category);
+          handleFilterChangeRef.current(category);
+          speakVoiceRef.current(response.summary || `Filtering grid to ${category} clients.`);
+          return;
+        }
+
+        // 🔷 SYSTEM_HELP: Show command popover
+        if (response?.actionType === 'SYSTEM_HELP') {
+          const commands = response?.payload?.availableCommands as string[] | undefined;
+          if (commands && commands.length > 0) {
+            setHelpCommands(commands);
+          }
+          speakVoiceRef.current('I am your system orchestrator. I can help you manage clients, filter the dashboard, or perform bulk updates. What would you like to do?');
+          return;
+        }
+
+        // 🔷 SYSTEM_EXPLAIN: Read-only capability explanation
+        if (response?.actionType === 'SYSTEM_EXPLAIN') {
+          const explanation = response.summary || 'Let me help you understand what I can do.';
+          speakVoiceRef.current(explanation);
+          const contextKey = (response as unknown as Record<string, unknown>)?.contextKey as string | undefined;
+          if (contextKey && SYSTEM_CAPABILITIES[contextKey]) {
+            const capability = SYSTEM_CAPABILITIES[contextKey];
+            if (!helpCommands) {
+              setHelpCommands([
+                capability.name,
+                ...capability.examples.map((ex: string) => `› ${ex}`),
+              ]);
+            }
+          } else {
+            if (!helpCommands) {
+              setHelpCommands(Object.keys(SYSTEM_CAPABILITIES));
+            }
+          }
+          return;
+        }
+
+        // 🔷 SYSTEM_NOTE: Conversational/ambiguous input
+        if (response?.actionType === 'SYSTEM_NOTE') {
+          speakVoiceRef.current(response.summary || 'I heard you. How can I help?');
+          return;
+        }
+
+        // 🔷 SYSTEM_DISARM: Reset staged state
+        if (response?.actionType === 'SYSTEM_DISARM') {
+          setSelectedTenantId(null);
+          setSelectedClientName('');
+          setHelpCommands(null);
+          setCommandInput('');
+          setBulkConfirmation(null);
+          setIsAwaitingVoiceConfirm(false);
+          speakVoiceRef.current(response.summary || 'System disarmed. Returning to standby.');
+          return;
+        }
+
+        // 🔷 BULK: Requires voice confirmation before execution
+        if (response?.actionType === 'BULK' && response?.targetIds && response.targetIds.length > 1) {
+          setBulkConfirmation({
+            show: true,
+            count: response.targetIds.length,
+            targetIds: response.targetIds,
+            payload: response.payload || {},
+          });
+          if (response.summary) {
+            speakVoiceRef.current(`I've identified ${response.targetIds.length} clients. Should I proceed with the update?`);
+          }
+          // ── STRICT PTT: No auto-re-listen. User must re-press the mic button to confirm. ──
+          // This is deliberate: it forces an explicit confirm/cancel gesture from the user.
+          return;
+        } else if (response?.success) {
+          setSuccessRipple(true);
+          setTimeout(() => setSuccessRipple(false), 1000);
+          speakVoiceRef.current('Update applied successfully.');
         }
       }
-
-      console.log('%c[Pierre] 🚀 Submission triggered with resolved slug:', 'color: #0097b2; font-weight: bold;', activeSlug);
-
-      handleCommandSubmit(
-        text,
-        { theme: { primary: '#0097b2' }, behavior: { prompt: 'Default' } },
-        selectedTenantId ? { tenantId: selectedTenantId, category: activeFilter } : { category: activeFilter },
-        activeSlug,
-        (response: AICommandResponse | undefined) => {
-          // 🔷 NO_MATCH: Neutral command — speak correction, re-enable mic after cooldown
-          if (response?.actionType === 'NO_MATCH') {
-            stopListeningRef.current();
-            const correctionMsg = response.summary || "I didn't catch a valid command. Please try again.";
-            speakVoiceRef.current(correctionMsg);
-            // After TTS completes, re-enable mic for the next attempt
-            const pollForTtsEnd = setInterval(() => {
-              if (!isVoicePlayingRef.current) {
-                clearInterval(pollForTtsEnd);
-                const recoveryTimer = setTimeout(() => {
-                  if (isVoicePlayingRef.current) return; // new utterance started during cooldown
-                  startListeningRef.current();
-                }, 500);
-                confirmationTimeoutRef.current = recoveryTimer as unknown as NodeJS.Timeout;
-              }
-            }, 250);
-            return;
-          }
-
-          // 🔷 SYSTEM_BULK_CONFIRM: User confirmed bulk action — execute deployment
-          if (response?.actionType === 'SYSTEM_BULK_CONFIRM') {
-            stopListeningRef.current();
-            speakVoiceRef.current(response.summary || 'Confirmed. Applying bulk updates now.');
-            handleBulkConfirm();
-            return;
-          }
-
-          // 🔷 SYSTEM_BULK_CANCEL: User cancelled bulk action — safe reset
-          if (response?.actionType === 'SYSTEM_BULK_CANCEL') {
-            stopListeningRef.current();
-            speakVoiceRef.current(response.summary || 'Cancelled. No changes were made.');
-            handleBulkCancel();
-            return;
-          }
-
-          // 🔷 SYSTEM_FILTER_GRID: User wants to filter the client grid by category
-          if (response?.actionType === 'SYSTEM_FILTER_GRID' && response?.payload?.category_filter) {
-            stopListeningRef.current();
-            const category = response.payload.category_filter as string;
-            console.log('%c[Pierre] 🎯 SYSTEM_FILTER_GRID: Applying category filter:', 'color: #0097b2; font-weight: bold;', category);
-            handleFilterChangeRef.current(category);
-            speakVoiceRef.current(response.summary || `Filtering grid to ${category} clients.`);
-            return;
-          }
-
-          // 🔷 SYSTEM_HELP: User is asking for available commands — show popover, do NOT refresh grid
-          if (response?.actionType === 'SYSTEM_HELP') {
-            stopListeningRef.current();
-            const commands = response?.payload?.availableCommands as string[] | undefined;
-            if (commands && commands.length > 0) {
-              setHelpCommands(commands);
-            }
-            speakVoiceRef.current('I am your system orchestrator. I can help you manage clients, filter the dashboard, or perform bulk updates. What would you like to do?');
-            return;
-          }
-
-          // 🔷 SYSTEM_EXPLAIN: User asked about a specific feature or capability
-          // Read-only macro — does not touch selectedTenantId, bulk state, or DB
-          if (response?.actionType === 'SYSTEM_EXPLAIN') {
-            stopListeningRef.current();
-            const explanation = response.summary || 'Let me help you understand what I can do.';
-            speakVoiceRef.current(explanation);
-            // Extract contextKey from response (may be on the API response but not in AICommandResponse type)
-            const contextKey = (response as unknown as Record<string, unknown>)?.contextKey as string | undefined;
-            if (contextKey && SYSTEM_CAPABILITIES[contextKey]) {
-              const capability = SYSTEM_CAPABILITIES[contextKey];
-              // If help modal is already open, keep it visible; otherwise open it
-              if (!helpCommands) {
-                setHelpCommands([
-                  capability.name,
-                  ...capability.examples.map((ex: string) => `› ${ex}`),
-                ]);
-              }
-            } else {
-              // Fallback: no matching contextKey — open command modal with general capabilities
-              if (!helpCommands) {
-                setHelpCommands(Object.keys(SYSTEM_CAPABILITIES));
-              }
-            }
-            // After TTS completes, re-enable mic for follow-up questions
-            const pollForTtsEnd = setInterval(() => {
-              if (!isVoicePlayingRef.current) {
-                clearInterval(pollForTtsEnd);
-                const recoveryTimer = setTimeout(() => {
-                  if (isVoicePlayingRef.current) return;
-                  startListeningRef.current();
-                }, 500);
-                confirmationTimeoutRef.current = recoveryTimer as unknown as NodeJS.Timeout;
-              }
-            }, 250);
-            return;
-          }
-
-          // 🔷 SYSTEM_NOTE: Conversational/ambiguous input — speak the note, stay in STANDBY
-          // No state changes, no grid refresh, no arming. The system remains in STANDBY.
-          if (response?.actionType === 'SYSTEM_NOTE') {
-            stopListeningRef.current();
-            speakVoiceRef.current(response.summary || 'I heard you. How can I help?');
-            // After TTS completes, re-enable mic for the next command
-            const pollForTtsEnd = setInterval(() => {
-              if (!isVoicePlayingRef.current) {
-                clearInterval(pollForTtsEnd);
-                const recoveryTimer = setTimeout(() => {
-                  if (isVoicePlayingRef.current) return;
-                  startListeningRef.current();
-                }, 500);
-                confirmationTimeoutRef.current = recoveryTimer as unknown as NodeJS.Timeout;
-              }
-            }, 250);
-            return;
-          }
-
-          // 🔷 SYSTEM_DISARM: User explicitly wants to reset — clear staged state, return to STANDBY
-          if (response?.actionType === 'SYSTEM_DISARM') {
-            stopListeningRef.current();
-            setSelectedTenantId(null);
-            setSelectedClientName('');
-            setHelpCommands(null);
-            setCommandInput('');
-            setBulkConfirmation(null);
-            setIsAwaitingVoiceConfirm(false);
-            speakVoiceRef.current(response.summary || 'System disarmed. Returning to standby.');
-            // After TTS completes, re-enable mic for the next command
-            const pollForTtsEnd = setInterval(() => {
-              if (!isVoicePlayingRef.current) {
-                clearInterval(pollForTtsEnd);
-                const recoveryTimer = setTimeout(() => {
-                  if (isVoicePlayingRef.current) return;
-                  startListeningRef.current();
-                }, 500);
-                confirmationTimeoutRef.current = recoveryTimer as unknown as NodeJS.Timeout;
-              }
-            }, 250);
-            return;
-          }
-
-          // 🔷 BULK: Requires voice confirmation before execution
-          if (response?.actionType === 'BULK' && response?.targetIds && response.targetIds.length > 1) {
-            setBulkConfirmation({
-              show: true,
-              count: response.targetIds.length,
-              targetIds: response.targetIds,
-              payload: response.payload || {},
-            });
-            if (response.summary) {
-              // ── Fix 1: Mute mic before TTS to prevent audio loop ──
-              stopListeningRef.current();
-              speakVoiceRef.current(`I've identified ${response.targetIds.length} clients. Should I proceed with the update?`);
-              // ── Fix 3 (hardened): Guard re-listen with 500ms acoustic cooldown & double-check ──
-              const pollForTtsComplete = setInterval(() => {
-                if (!isVoicePlayingRef.current) {
-                  clearInterval(pollForTtsComplete);
-                  // Cooldown: wait 500ms for audio tail to decay before reopening mic
-                  const cooldownTimer = setTimeout(() => {
-                    // Double-check: ensure TTS didn't queue a new utterance during cooldown
-                    if (isVoicePlayingRef.current) {
-                      // A new TTS utterance started — bail out; the flow will re-enter on next transcript
-                      return;
-                    }
-                    setIsAwaitingVoiceConfirm(true);
-                    startListeningRef.current();
-                    confirmationTimeoutRef.current = setTimeout(() => {
-                      setIsAwaitingVoiceConfirm(false);
-                      stopListeningRef.current();
-                    }, 3000);
-                  }, 500);
-                  confirmationTimeoutRef.current = cooldownTimer as unknown as NodeJS.Timeout;
-                }
-              }, 250);
-            }
-          } else if (response?.success) {
-            // ── Fix 1: Mute mic before TTS to prevent audio loop ──
-            stopListeningRef.current();
-            setSuccessRipple(true);
-            setTimeout(() => setSuccessRipple(false), 1000);
-            speakVoiceRef.current('Update applied successfully.');
-          }
-        }
-      );
+    );
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAwaitingVoiceConfirm, bulkConfirmation, resellerSlug, selectedTenantId, activeFilter, handleCommandSubmit]);
 
-  // Voice Command Integration — explicit activation (Push-to-Talk) mode
+  // ─── STRICT PTT: Voice Command Integration ─────────────────────────
+  // The mic is ONLY opened by an explicit user gesture (mousedown/touchstart
+  // on the mic button). No auto-restart, no silence detection, no idle timeout.
   const {
-    isListening,
+    isRecording,
     isProcessing,
     transcript: voiceTranscript,
-    ttsPlaying,
-    voiceActive,
-    activateVoice,
-    deactivateVoice,
-    startListening,
-    stopListening,
-    resetPipelineLock,
+    startRecording,
+    stopListeningAndProcess,
+    abortRecording,
   } = useVoiceCommand({
     resellerId: resellerSlug,
     tenantContext: selectedTenantId ? { tenantId: selectedTenantId, category: activeFilter } : { category: activeFilter },
     currentConfig: { theme: { primary: '#0097b2' }, behavior: { prompt: 'Default' } },
     skipAIPipeline: true,
-    explicitActivation: true,
     onTranscript: handleTranscript,
     onError: (err) => {
       console.error('Voice command error:', err);
       setVoiceError(err);
       speakVoiceRef.current("I didn't catch that. Please try again.");
     },
-    onAutoDeactivate: () => {
-      resetPipelineLock();
-      setIsAwaitingVoiceConfirm(false);
-      speakVoiceRef.current('Microphone auto-deactivated due to inactivity.');
-    },
-    onMaxDuration: () => {
-      speakVoiceRef.current('Processing your command.');
-    },
   });
 
-  // Keep voice action refs in sync so handleTranscript can call them without
-  // being listed as a dep (which would recreate the callback on every render)
-  useEffect(() => { stopListeningRef.current = stopListening; }, [stopListening]);
-  useEffect(() => { startListeningRef.current = startListening; }, [startListening]);
-
-  // Sync explicit activation refs for global access (click-to-dismiss, etc.)
-  useEffect(() => { activateVoiceRef.current = activateVoice; }, [activateVoice]);
-  useEffect(() => { deactivateVoiceRef.current = deactivateVoice; }, [deactivateVoice]);
-  useEffect(() => { voiceActiveRef.current = voiceActive; }, [voiceActive]);
-  useEffect(() => { voiceHookTtsPlayingRef.current = ttsPlaying; }, [ttsPlaying]);
-
-
-  // ─── NEW: Global click-to-dismiss ──────────────────────────────────────────
-  // When voiceActive is true and the user clicks outside the mic area,
-  // deactivate the mic and reset staged state back to STANDBY.
+  // Sync voice hook TTS playing state to isAwaitingVoiceConfirm timeout
   useEffect(() => {
-    if (!voiceActive) return;
-    const handleGlobalClick = (e: MouseEvent) => {
-      // Find the mic container (the nav wrapper inside MasterpieceHeader)
-      const micContainer = document.querySelector('nav[class*="rounded-2xl"]');
-      if (!micContainer) return;
-      // Check if the click target is inside the mic clickable area
-      const micButton = micContainer.querySelector('[class*="rounded-full"]');
-      if (micButton && micButton.contains(e.target as Node)) {
-        return; // Click is on the mic toggle — let the toggle handler manage it
-      }
-      // Click is outside the mic — deactivate
-      deactivateVoiceRef.current();
-      setSelectedTenantId(null);
-      setSelectedClientName('');
+    if (!isAwaitingVoiceConfirm) return;
+    if (confirmationTimeoutRef.current) {
+      clearTimeout(confirmationTimeoutRef.current);
+    }
+    confirmationTimeoutRef.current = setTimeout(() => {
       setIsAwaitingVoiceConfirm(false);
-      setHelpCommands(null);
-      speakVoiceRef.current('Microphone deactivated.');
-    };
-    // Delay adding listener slightly to avoid capturing the activation click itself
-    const timeoutId = setTimeout(() => {
-      document.addEventListener('mousedown', handleGlobalClick, { capture: true });
-    }, 100);
+    }, 3000);
     return () => {
-      clearTimeout(timeoutId);
-      document.removeEventListener('mousedown', handleGlobalClick, { capture: true });
+      if (confirmationTimeoutRef.current) {
+        clearTimeout(confirmationTimeoutRef.current);
+      }
     };
-  }, [voiceActive]);
+  }, [isAwaitingVoiceConfirm]);
 
   // 🔷 DELETE_CLIENT: Watch for successful deletion and trigger UI feedback
   useEffect(() => {
     if (!deleteResult?.success) return;
 
-    // Defer state updates to avoid violating set-state-in-effect rule
     const successTimeout = setTimeout(() => {
       setSuccessRipple(true);
     }, 0);
@@ -507,24 +378,9 @@ export default function ClientsPage() {
 
     speakVoiceRef.current(`${deleteResult.clientName || 'Client'} has been removed successfully.`);
 
-    // Re-enable mic after cooldown for the next command
-    const pollForTtsEnd = setInterval(() => {
-      if (!isVoicePlayingRef.current) {
-        clearInterval(pollForTtsEnd);
-        const recoveryTimer = setTimeout(() => {
-          if (isVoicePlayingRef.current) return;
-          startListeningRef.current();
-        }, 500);
-        confirmationTimeoutRef.current = recoveryTimer as unknown as NodeJS.Timeout;
-      }
-    }, 250);
-
     return () => {
       clearTimeout(successTimeout);
       clearTimeout(rippleClearTimeout);
-      if (confirmationTimeoutRef.current) {
-        clearTimeout(confirmationTimeoutRef.current);
-      }
     };
   }, [deleteResult]);
 
@@ -537,37 +393,20 @@ export default function ClientsPage() {
     };
   }, []);
 
-  // Unified system action handler — receives delegated triggers from ClientsGrid card actions
-  // This replaces the grid-level STT/TTS pipeline with centralized page orchestration.
+  // Unified system action handler
   const handleExecuteSystemAction = useCallback(async (clientId: string, actionType: 'ai' | 'sms' | 'vin' | 'signal') => {
-    if (actionType !== 'ai') return; // Only AI triggers need voice orchestration
+    if (actionType !== 'ai') return;
 
     console.log('%c[Pierre] 🎙️ Unified system action received:', 'color: #0097b2; font-weight: bold;', { clientId, actionType });
 
-    // 1. Halt any running ambient recording session
-    stopListeningRef.current();
-
-    // 2. Set selected tenant for UI
+    // 1. Set selected tenant for UI
     setSelectedTenantId(clientId);
 
-    // 3. Speak the canonical TTS announcement via resilient voice (Groq -> Browser -> Silent)
+    // 2. Speak the canonical TTS announcement
     const announcement = `AI control active. Use voice commands to manage this client.`;
     speakVoiceRef.current(announcement);
 
-    // 4. After TTS completes, re-enable listening with state guard
-    const pollForTtsEnd = setInterval(() => {
-      if (!isVoicePlayingRef.current) {
-        clearInterval(pollForTtsEnd);
-        // 5. Wait for audio tail decay, then re-enable mic
-        const cooldownTimer = setTimeout(() => {
-          if (isVoicePlayingRef.current) return; // new utterance started during cooldown
-          startListeningRef.current();
-        }, 500);
-        confirmationTimeoutRef.current = cooldownTimer as unknown as NodeJS.Timeout;
-      }
-    }, 250);
-
-    // 6. Trigger input flash for visual feedback
+    // 3. Trigger input flash for visual feedback
     setInputFlash(true);
     setTimeout(() => setInputFlash(false), 600);
     // Autofocus command input
@@ -575,29 +414,6 @@ export default function ClientsPage() {
       commandInputRef.current?.focus();
     }, 100);
   }, []);
-
-  // 🔷 Error Recovery (Fix 5): Auto-restart mic after 2s cooldown when API crashes
-  const errorRecoveryTimerRef = useRef<NodeJS.Timeout | null>(null);
-  useEffect(() => {
-    if (error && !isListening && !isAnalyzing) {
-      // Clear any existing recovery timer
-      if (errorRecoveryTimerRef.current) {
-        clearTimeout(errorRecoveryTimerRef.current);
-      }
-      // Wait 2 seconds for user to see the error, then auto-recover
-      errorRecoveryTimerRef.current = setTimeout(() => {
-        if (!isListening && !isAnalyzing) {
-          console.log('%c[Pierre] 🔄 Error recovery: Auto-restarting microphone...', 'color: #0097b2; font-weight: bold;');
-          startListeningRef.current();
-        }
-      }, 2000);
-    }
-    return () => {
-      if (errorRecoveryTimerRef.current) {
-        clearTimeout(errorRecoveryTimerRef.current);
-      }
-    };
-  }, [error, isListening, isAnalyzing]);
 
   // Ref to debounce the offline toggle
   const offlineToggleTimeout = useRef<NodeJS.Timeout | null>(null);
@@ -620,15 +436,13 @@ export default function ClientsPage() {
   }, [activeFilter, searchParams, router]);
 
   const toggleOfflineOnly = useCallback(() => {
-    // Clear any pending toggle
     if (offlineToggleTimeout.current) {
       clearTimeout(offlineToggleTimeout.current);
     }
 
-    // Debounce the toggle
     offlineToggleTimeout.current = setTimeout(() => {
       setShowOfflineOnly(prev => !prev);
-    }, 50); // Small debounce to prevent double clicks
+    }, 50);
   }, []);
 
   // Keep filter change ref in sync for SYSTEM_FILTER_GRID access from transcript callback
@@ -654,7 +468,6 @@ export default function ClientsPage() {
       console.error('No tenant selected or empty command');
       return;
     }
-    // 🔷 Production Excellence: URL Path-Extraction Fallback for hydration race condition
     let activeSlug = resellerSlug;
     if (!activeSlug || activeSlug.includes('[') || activeSlug.includes(']') || activeSlug.includes('%5B')) {
       const segments = window.location.pathname.split('/');
@@ -678,10 +491,10 @@ export default function ClientsPage() {
       {/* Production Excellence: Synchronized Global Header - Naked Wrapper */}
       <header className="sticky top-0 left-0 right-0 z-[50]">
         <MasterpieceHeader 
-          voiceActive={voiceActive}
-          onToggleVoice={voiceActive ? deactivateVoice : activateVoice}
-          isListening={isListening}
-          onMicClick={voiceActive ? deactivateVoice : activateVoice}
+          isRecording={isRecording}
+          onStartRecording={startRecording}
+          onStopListeningAndProcess={stopListeningAndProcess}
+          onAbortRecording={abortRecording}
           isProcessing={isProcessing}
           isAwaitingVoiceConfirm={isAwaitingVoiceConfirm}
           transcribedText={voiceTranscript}
@@ -694,7 +507,6 @@ export default function ClientsPage() {
           <div className="px-6">
             <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 py-2 mb-2">
               {(() => {
-                // 🔷 Production Excellence: Path-extraction for active state even before hydration
                 const pathSegments = typeof window !== 'undefined' ? window.location.pathname.split('/') : [];
                 const resellerIdx = pathSegments.indexOf('reseller');
                 const currentSlug = (resellerIdx !== -1 && pathSegments[resellerIdx + 1]) 
@@ -712,7 +524,6 @@ export default function ClientsPage() {
                     key={item.label}
                     onClick={() => {
                       if (!item.active && typeof window !== 'undefined') {
-                        // Show loading state if slug is still hydrating
                         if (currentSlug.includes('[') || currentSlug.includes('%5B')) {
                           console.log('%c[Pierre] ⏳ Navigation delayed - waiting for hydration...', 'color: #0097b2; font-weight: bold;');
                           return;
@@ -750,14 +561,12 @@ export default function ClientsPage() {
           <div className="px-6">
             <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 py-2">
               {(() => {
-                // 🔷 Production Excellence: Derive filter buttons from CATEGORY_MAP (single source of truth)
                 const FILTER_LABELS = Object.entries(CATEGORY_MAP)
                   .filter(([key]) => key !== 'ALL' && key !== 'OFFLINE_ONLY')
                   .map(([key]) => ({
                     label: key.charAt(0) + key.slice(1).toLowerCase(),
                     value: key,
                   }));
-                // Prepend the "All" option
                 return [{ label: 'All', value: 'ALL' }, ...FILTER_LABELS].map(({ label, value }) => (
                 <button
                   key={value}
@@ -800,10 +609,9 @@ export default function ClientsPage() {
         {/* Hero Spacer */}
         <div className="h-[40px] w-full" />
 
-        {/* Action Anchor: ExecuteBar - Centered with Neon Blue Glow */}
+        {/* Action Anchor: ExecuteBar */}
         <div className="w-full px-4 relative z-40">
           <div className="max-w-3xl mx-auto">
-            {/* Outer Glow Container - Neon Blue - Glass Box */}
             <div className="relative p-[1px] rounded-xl bg-gradient-to-r from-transparent via-[#0097b2]/50 to-transparent">
               <div className="absolute inset-0 rounded-xl bg-[#0097b2]/20 blur-xl -z-10" />
               <div className="relative bg-white/[0.05] backdrop-blur-xl rounded-xl p-4 md:p-6 border-t border-white/20 border-b border-[#0097b2]/40">
@@ -869,7 +677,7 @@ export default function ClientsPage() {
                   </button>
                 </div>
 
-                {/* Status Line - High-Tech Military Badge - Gemstone Glass Box */}
+                {/* Status Line */}
                 <div className="mt-3 flex items-center gap-3">
                   {isDeleting ? (
                     <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/10 backdrop-blur-md border-t border-white/20 border-b border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.3)] transition-all duration-300">
@@ -883,16 +691,16 @@ export default function ClientsPage() {
                   ) : voiceError ? (
                     <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/10 backdrop-blur-md border-t border-white/20 border-b border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.3)] transition-all duration-300">
                       <span className="text-[10px] font-black text-red-400 tracking-tighter animate-pulse">ERR</span>
-                      <span className="text-[10px] font-bold text-red-300 tracking-[0.2em] uppercase">TAP MIC TO RETRY</span>
+                      <span className="text-[10px] font-bold text-red-300 tracking-[0.2em] uppercase">HOLD MIC TO RETRY</span>
                     </span>
-                  ) : selectedTenantId && voiceActive ? (
+                  ) : selectedTenantId && isRecording ? (
                     <>
                       <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 backdrop-blur-md border-t border-white/20 border-b border-green-500/50 shadow-[0_0_15px_rgba(34,197,94,0.3)] transition-all duration-300 hover:-translate-y-0.5">
                         <span className="text-[10px] font-black text-green-500 tracking-tighter animate-pulse">
                           AI
                         </span>
                         <span className="text-[10px] font-bold text-slate-100 tracking-[0.2em] uppercase">
-                          SYSTEM ARMED
+                          RECORDING...
                         </span>
                       </span>
                       <span className="text-[10px] text-green-500/70 tracking-widest font-medium">
@@ -905,7 +713,7 @@ export default function ClientsPage() {
                         AI
                       </span>
                       <span className="text-[10px] font-bold text-cyan-300/80 tracking-[0.2em] uppercase">
-                        PUSH TO TALK
+                        HOLD TO TALK
                       </span>
                     </span>
                   ) : (
@@ -937,7 +745,6 @@ export default function ClientsPage() {
                   <span className="w-2.5 h-2.5 rounded-full bg-[#0097b2] animate-pulse shadow-[0_0_8px_#0097b2]" />
                   <span className="font-medium">{portfolioStats.totalClients} active clients</span>
                 </div>
-                {/* SYSTEM READY: Unique tenant count after deduplication */}
                 <div className="flex items-center gap-2 mt-2 px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/20">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_6px_rgba(52,211,153,0.6)]" />
                   <span className="text-[9px] font-bold tracking-widest text-emerald-300 uppercase drop-shadow-[0_0_4px_rgba(52,211,153,0.4)]">
@@ -1062,21 +869,17 @@ export default function ClientsPage() {
         </div>
       )}
 
-      {/* SYSTEM_HELP Popover — Glassmorphic command discovery overlay */}
+      {/* SYSTEM_HELP Popover */}
       {helpCommands && helpCommands.length > 0 && (
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center"
           onClick={dismissHelpPopover}
         >
-          {/* Backdrop */}
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
-
-          {/* Popover Card — Glassmorphic */}
           <div
             className="relative max-w-md w-full mx-4 rounded-xl bg-slate-900/80 backdrop-blur-xl border border-white/10 shadow-2xl shadow-black/50 overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Header */}
             <div className="px-5 py-4 border-b border-white/5 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-[#00e5ff] animate-pulse shadow-[0_0_8px_rgba(0,229,255,0.6)]" />
@@ -1092,29 +895,22 @@ export default function ClientsPage() {
                 ✕
               </button>
             </div>
-
-            {/* Command List */}
             <div className="px-4 py-4 space-y-2">
               {helpCommands.map((cmd, idx) => (
                 <div
                   key={idx}
                   className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-white/[0.03] border border-white/5 hover:bg-white/[0.06] hover:border-white/10 transition-all duration-200 group"
                 >
-                  {/* Command bullet */}
                   <span className="w-1.5 h-1.5 rounded-full bg-[#0097b2]/60 group-hover:bg-[#00e5ff] transition-colors duration-200 flex-shrink-0" />
-                  {/* Command text */}
                   <span className="text-[11px] font-medium text-white/80 group-hover:text-white tracking-wide">
                     {cmd}
                   </span>
-                  {/* Microphone hint */}
                   <span className="ml-auto text-[7px] text-white/20 tracking-wider uppercase flex-shrink-0">
                     Voice
                   </span>
                 </div>
               ))}
             </div>
-
-            {/* Footer — hint to dismiss */}
             <div className="px-5 py-3 border-t border-white/5 flex items-center justify-between">
               <span className="text-[8px] text-white/30 tracking-wider">
                 Click outside or press Esc to dismiss

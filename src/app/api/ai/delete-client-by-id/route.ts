@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { deleteResellerTenant } from '@/lib/db/reseller-clients';
 import { resolveResellerId } from '@/lib/supabase/resolve-reseller-id';
 
 export const dynamic = 'force-dynamic';
@@ -93,19 +94,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 6. Execute deletion
-    const { error: deleteError } = await supabase
-      .from('tenants')
-      .delete()
-      .eq('id', tenantId)
-      .eq('reseller_id', resolvedResellerId); // Safety: double-filter on reseller_id
-
-    if (deleteError) {
-      console.error('[DeleteClientById] Delete error:', deleteError);
-      return NextResponse.json(
-        { error: 'Failed to delete client' },
-        { status: 500 }
-      );
-    }
+    await deleteResellerTenant(resolvedResellerId, tenantId);
 
     // 7. Return success with the client name for TTS confirmation
     return NextResponse.json({

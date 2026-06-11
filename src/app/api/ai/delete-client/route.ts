@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Groq from 'groq-sdk';
 import { createClient } from '@/lib/supabase/server';
+import { deleteResellerClients } from '@/lib/db/reseller-clients';
 
 export const dynamic = 'force-dynamic';
 
@@ -92,14 +93,7 @@ export async function POST(request: NextRequest) {
 
     const tenantIds = tenants.map(t => t.id);
 
-    const { error: deleteError } = await supabase
-      .from('tenants')
-      .delete()
-      .in('id', tenantIds);
-
-    if (deleteError) {
-      return NextResponse.json({ error: 'Failed to delete client' }, { status: 500 });
-    }
+    await deleteResellerClients(userReseller.reseller_id, tenantIds);
 
     return NextResponse.json({
       success: true,

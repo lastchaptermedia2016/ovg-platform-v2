@@ -7,17 +7,19 @@ import { SignOutButton } from './SignOutButton';
 import { SystemHelpTooltip } from './SystemHelpTooltip';
 
 interface MasterpieceHeaderProps {
-  isListening?: boolean;
-  onMicClick?: () => void;
+  /** True while the mic is actively capturing audio. */
+  isRecording?: boolean;
+  /** Strict PTT: Begin audio capture on mousedown / touchstart. */
+  onStartRecording?: () => void;
+  /** Strict PTT: Finalize audio on mouseup / touchend. Triggers the pipeline. */
+  onStopListeningAndProcess?: () => void;
+  /** Strict PTT: Abort capture on mouseleave / touchcancel. Never triggers the pipeline. */
+  onAbortRecording?: () => void;
   isProcessing?: boolean;
   isAwaitingVoiceConfirm?: boolean;
   transcribedText?: string;
   isCommunicating?: boolean;
   playVoice?: (text: string) => Promise<void>;
-  /** NEW: Explicit activation (Push-to-Talk) state */
-  voiceActive?: boolean;
-  /** NEW: Toggle handler for Push-to-Talk */
-  onToggleVoice?: () => void;
 }
 
 /**
@@ -76,52 +78,50 @@ function playStandbyTone(): void {
 }
 
 export function MasterpieceHeader({
-  isListening = false,
-  onMicClick,
+  isRecording = false,
+  onStartRecording,
+  onStopListeningAndProcess,
+  onAbortRecording,
   isAwaitingVoiceConfirm = false,
   transcribedText,
   isCommunicating = false,
   playVoice: _playVoice,
-  voiceActive = false,
-  onToggleVoice,
 }: MasterpieceHeaderProps) {
-  // ── Fix 2: Eliminated Trigger C — automated playVoice on state transitions ──
-  // The old useEffect auto-triggered an unwanted "System control active" TTS
-  // every time isListening became true, causing duplicate audio (Trigger C).
-  // All TTS is now exclusively initiated by command response logic in page.tsx.
-  // The prop is retained in the interface for parent compatibility but unused here.
   void _playVoice;
-  // ────────────────────────────────────────────────────────────────────────────
 
-  // Track previous voiceActive value for transition detection
-  const prevVoiceActiveRef = useRef(voiceActive);
+  // Track previous isRecording value for sonic transition detection
+  const prevRecordingRef = useRef(isRecording);
 
-  // Sonic feedback on voice activation/deactivation transitions
+  // Sonic feedback on recording start/stop transitions
   useEffect(() => {
-    const prev = prevVoiceActiveRef.current;
-    if (voiceActive && !prev) {
-      // Transition: false → true (activation)
+    const prev = prevRecordingRef.current;
+    if (isRecording && !prev) {
       playReadyTone();
-    } else if (!voiceActive && prev) {
-      // Transition: true → false (deactivation)
+    } else if (!isRecording && prev) {
       playStandbyTone();
     }
-    prevVoiceActiveRef.current = voiceActive;
-  }, [voiceActive]);
+    prevRecordingRef.current = isRecording;
+  }, [isRecording]);
 
-  // Unified click handler — supports both legacy onMicClick and new onToggleVoice
-  const handleMicClick = useCallback(() => {
-    // Prefer new API, fall back to legacy
-    if (onToggleVoice) {
-      onToggleVoice();
-    } else {
-      onMicClick?.();
-    }
-  }, [onToggleVoice, onMicClick]);
+  // Strict PTT event handlers — no preventDefault here; gesture propagation
+  // is managed by the hook's startRecording to avoid synthetic event deadlocks.
+  const handleMicMouseDown = useCallback((_e: React.MouseEvent | React.TouchEvent) => {
+    console.log('[PTT] 🔥 Mic onMouseDown captured — dispatching startRecording');
+    onStartRecording?.();
+  }, [onStartRecording]);
+
+  const handleMicMouseUp = useCallback((_e: React.MouseEvent | React.TouchEvent) => {
+    console.log('[PTT] 🔥 Mic onMouseUp captured — dispatching stopListeningAndProcess');
+    onStopListeningAndProcess?.();
+  }, [onStopListeningAndProcess]);
+
+  const handleMicMouseLeave = useCallback((_e: React.MouseEvent | React.TouchEvent) => {
+    console.log('[PTT] 🔥 Mic onMouseLeave captured — dispatching abortRecording');
+    onAbortRecording?.();
+  }, [onAbortRecording]);
 
   // Determine if the mic should appear active
-  // In explicit activation mode, voiceActive is the primary signal
-  const isMicActive = voiceActive || isListening;
+  const isMicActive = isRecording;
 
   return (
     <>
@@ -172,10 +172,15 @@ export function MasterpieceHeader({
           </motion.span>
         </div>
 
-        {/* Center: Voice Status Indicator - Clickable Mic - Glass Box with Gemstone Effect */}
+        {/* Center: Voice Status Indicator - PTT Mic Button */}
         <SystemHelpTooltip>
           <div 
-            onClick={handleMicClick}
+            onMouseDown={handleMicMouseDown}
+            onMouseUp={handleMicMouseUp}
+            onMouseLeave={handleMicMouseLeave}
+            onTouchStart={handleMicMouseDown}
+            onTouchEnd={handleMicMouseUp}
+            onTouchCancel={handleMicMouseLeave}
             className={`relative flex items-center gap-2 px-3 py-1.5 rounded-full pointer-events-auto cursor-pointer active:scale-95 transition-all duration-300 ease-out overflow-hidden ${
               isAwaitingVoiceConfirm ? 'bg-emerald-500/10 border border-emerald-500/30' : ''
             } ${
@@ -193,25 +198,23 @@ export function MasterpieceHeader({
               </div>
             )}
             <div className="relative flex items-center justify-center">
-              {/* The Mic Icon — with explicit activation glow when voiceActive */}
+              {/* The Mic Icon — with recording glow when active */}
               <Mic 
                 className={`w-4 h-4 transition-colors duration-300 ${
                   isCommunicating
                     ? "text-[#0097b2]"
-                    : voiceActive
+                    : isRecording
                       ? "text-cyan-400 animate-pulse drop-shadow-[0_0_8px_rgba(0,229,255,0.8)]"
-                      : isListening 
-                        ? "text-[#0097b2]" 
-                        : isAwaitingVoiceConfirm 
-                          ? "text-emerald-400" 
-                          : "text-gray-400"
+                      : isAwaitingVoiceConfirm 
+                        ? "text-emerald-400" 
+                        : "text-gray-400"
                 }`} 
               />
               
-              {/* The Pulsing Ping Effect (Visible when listening or communicating) */}
+              {/* The Pulsing Ping Effect (Visible when recording or communicating) */}
               {(isMicActive || isCommunicating) && (
                 <span className={`absolute inline-flex h-full w-full rounded-full bg-[#0097b2] opacity-100 ${
-                  voiceActive ? 'animate-pulse-cyan' : 'animate-pulse'
+                  isRecording ? 'animate-pulse-cyan' : 'animate-pulse'
                 }`}></span>
               )}
             </div>
@@ -219,19 +222,15 @@ export function MasterpieceHeader({
             <span className={`text-[9px] md:text-[10px] font-bold tracking-widest animate-pulse ${
               isCommunicating 
                 ? "!text-[#00e5ff] drop-shadow-[0_0_8px_rgba(0,229,255,0.6)]" 
-                : voiceActive
+                : isRecording
                   ? "text-cyan-400 drop-shadow-[0_0_8px_rgba(0,229,255,0.6)]"
-                  : isListening 
-                    ? "text-[#0097b2]" 
-                    : "text-[#0097b2]/70"
+                  : "text-[#0097b2]/70"
             }`}>
               {isCommunicating 
                 ? 'PIERRE: SPEAKING...' 
-                : voiceActive
-                  ? 'LISTENING...'
-                  : isListening 
-                    ? 'LISTENING...' 
-                    : 'SYSTEM'}
+                : isRecording
+                  ? 'HOLD TO RECORD...' 
+                  : 'SYSTEM'}
             </span>
             
             {/* Pierre HUD: STT Command Feedback */}

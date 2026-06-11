@@ -989,15 +989,12 @@ export function ClientBrandingStudio({
 
   // Voice command hook for STT — Push-to-Talk (PTT) state machine
   const {
-    isListening,
+    isRecording,             // PTT: held down (replaces isListening)
     isProcessing,
-    isRecording,             // PTT: held down
     startRecording,          // PTT: mousedown / touchstart
-    stopRecording,           // PTT: mouseup / touchend
+    stopListeningAndProcess, // PTT: mouseup / touchend — finalizes + processes
     abortRecording,          // PTT: mouseleave / touchcancel
-    startListening: _legacyStartListening, // Deprecated PTT alias (for refs below)
-    stopListening: _legacyStopListening,   // Deprecated PTT alias (for refs below)
-    resetPipeline,           // Quiescent-state reset for navigation exit-paths
+    resetState,              // Quiescent-state reset for navigation exit-paths
   } = useVoiceCommand({
     ...voiceOptions,
     onTranscript: stableOnTranscript,
@@ -1010,11 +1007,11 @@ export function ClientBrandingStudio({
     }, [dispatchStudioAction]),
   });
 
-  // Sync refs for callbacks defined before useVoiceCommand
+  // Sync refs for callbacks using the current hook methods
   useEffect(() => {
-    startListeningRef.current = _legacyStartListening;
-    stopListeningRef.current = _legacyStopListening;
-  }, [_legacyStartListening, _legacyStopListening]);
+    startListeningRef.current = startRecording;
+    stopListeningRef.current = stopListeningAndProcess;
+  }, [startRecording, stopListeningAndProcess]);
 
   // ── Navigation Exit-Path ────────────────────────────────────────────────
   // Reset component-level state (greeting latch) and ask the voice-command
@@ -1024,9 +1021,9 @@ export function ClientBrandingStudio({
   const router = useRouter();
   const handleBackToClients = useCallback(() => {
     hasGreetedRef.current = null;
-    resetPipeline();
+    resetState();
     router.push('/reseller/lastchaptermedia2016/clients');
-  }, [resetPipeline, router]);
+  }, [resetState, router]);
 
   const updateConfig = (key: keyof BrandingConfig, value: string | number | boolean) => {
     setConfig((prev) => ({ ...prev, [key]: value }));
@@ -1261,13 +1258,13 @@ export function ClientBrandingStudio({
               {/* Voice Command Mic Button — Push-to-Talk */}
               <button
                 onMouseDown={() => startRecording()}
-                onMouseUp={() => stopRecording()}
+                onMouseUp={() => stopListeningAndProcess()}
                 onMouseLeave={() => {
                   // Guard: if the user drags off the button mid-press, abort instead of letting the press hang
                   if (isRecording) abortRecording();
                 }}
                 onTouchStart={(e) => { e.preventDefault(); startRecording(); }}
-                onTouchEnd={(e) => { e.preventDefault(); stopRecording(); }}
+                onTouchEnd={(e) => { e.preventDefault(); stopListeningAndProcess(); }}
                 onTouchCancel={() => abortRecording()}
                 className={`relative p-3 rounded-full transition-all select-none ${
                   isRecording
@@ -2131,10 +2128,10 @@ export function ClientBrandingStudio({
         </div>
 
         {/* Transcribing Overlay */}
-        {(isListening || isProcessing || voiceTranscript) && (
+        {(isRecording || isProcessing || voiceTranscript) && (
           <div className="absolute bottom-4 left-4 right-4 backdrop-blur-xl bg-black/60 border border-[#FFD700]/30 rounded-xl p-4 z-50">
             <div className="flex items-center gap-3">
-              {isListening && (
+              {isRecording && (
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
                   <span className="text-white/80 text-sm font-medium">

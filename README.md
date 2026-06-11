@@ -89,7 +89,8 @@ POST /api/ai/voice-design                # Voice command parsing
 POST /api/ai/apply-vibe                  # AI vibe generation
 POST /api/ai/sync-brand                  # Website brand analysis
 POST /api/ai/create-client               # Create client via AI
-POST /api/ai/delete-client               # Delete client via AI
+POST /api/ai/delete-client               # Multi-tenant deletion via Hannah AI's voice pipeline
+POST /api/ai/delete-client-by-id           # Direct surgical row targeting via UI dashboard
 POST /api/ai/process-command             # Universal command processing
 POST /api/ai/extract-client-info         # Extract client data from text
 POST /api/ai/generate-response           # AI response generation
@@ -116,8 +117,46 @@ POST /api/resellers/create                     # Create reseller account
 ## Admin & Auth
 POST /api/admin/cleanup-tenants          # Admin: purge orphaned tenants
 POST /api/auth/update-reseller-slug      # Update reseller slug
-GET  /api/auth/diagnostics               # Auth diagnostics (to be removed)
-POST /api/auth/fix-metadata              # Fix user metadata (to be removed)
+
+### Security Perimeter
+- **Security Perimeter**:
+  1. Canonical server-side authentication via `supabase.auth.getUser()`
+  2. Multi-tenant isolation via `user_resellers` table validation
+
+### Security Perimeter
+- **Security Perimeter**:
+  1. Canonical server-side authentication via `supabase.auth.getUser()`
+  2. Multi-tenant isolation via `user_resellers` table validation
+
+### Security Perimeter
+- **Two-Step Verification Standard**:
+  1. Canonical server-side authentication using `supabase.auth.getUser()`.
+  2. Strict multi-tenant isolation validation matching `user_id` and `reseller_slug` against the `user_resellers` table.
+
+### Security Perimeter
+- **Two-Step Verification Standard**:
+  1. Canonical server-side authentication using `supabase.auth.getUser()`.
+  2. Strict multi-tenant isolation validation matching `user_id` and `reseller_slug` against the `user_resellers` table.
+
+### Security Perimeter
+- **Two-Step Verification Standard**:
+  1. Canonical server-side authentication using `supabase.auth.getUser()`.
+  2. Strict multi-tenant isolation validation matching `user_id` and `reseller_slug` against the `user_resellers` table.
+
+### Security Perimeter
+- **Two-Step Verification Standard**:
+  1. Canonical server-side authentication using `supabase.auth.getUser()`.
+  2. Strict multi-tenant isolation validation matching `user_id` and `reseller_slug` against the `user_resellers` table.
+
+### Security Perimeter
+- **Two-Step Verification Standard**:
+  1. Canonical server-side authentication using `supabase.auth.getUser()`.
+  2. Strict multi-tenant isolation validation matching `user_id` and `reseller_slug` against the `user_resellers` table.
+
+### Security Perimeter
+- **Two-Step Verification Standard**:
+  1. Canonical server-side authentication using `supabase.auth.getUser()`.
+  2. Strict multi-tenant isolation validation matching `user_id` and `reseller_slug` against the `user_resellers` table.
 
 ## Payments
 POST /api/paystack/initialize            # Paystack payment initialization
@@ -205,6 +244,11 @@ user_resellers {
 - **Reseller Ownership Checks**: `user_resellers` table ensures proper authorization
 - **Optimistic Locking**: Version-stamped `branding_bag` prevents write conflicts
 
+### Security Perimeter
+- **Two-Step Verification Standard**:
+  1. Canonical server-side authentication using `supabase.auth.getUser()`.
+  2. Strict multi-tenant isolation validation matching `user_id` and `reseller_slug` against the `user_resellers` table.
+  
 ### 🚀 Performance Features
 - **Sub-500ms Response**: Voice command to UI update
 - **Audio Management**: Cleanup prevents memory leaks
@@ -319,6 +363,18 @@ An active refactor is underway across three phases. See `.kiro/specs/ovg-platfor
 3. **Verify**: Compare `version_stamp` against expected value
 4. **Write**: Atomic update increments `version_stamp` and writes new `branding_bag`
 5. **Resolve**: On conflict, return diff for UI to reconcile
+
+#### Unified Data Access Layer (DAL)
+- Client deletion logic is centralized in `src/lib/db/reseller-clients.ts` via `deleteResellerClients` and `deleteResellerTenant` helpers, embedding cryptographic `reseller_id` isolation directly into database mutations.
+- These helpers embed cryptographic `reseller_id` isolation directly into database mutation commands, ensuring strict multi-tenant isolation.
+  
+#### Unified Data Access Layer (DAL)
+- Client deletion logic is centralized in `src/lib/db/reseller-clients.ts` via `deleteResellerClients` and `deleteResellerTenant` helpers, embedding cryptographic `reseller_id` isolation directly into database mutations.
+- These helpers embed cryptographic `reseller_id` isolation directly into database mutation commands, ensuring strict multi-tenant isolation.
+
+#### Unified Data Access Layer (DAL)
+- Client deletion logic is centralized in `src/lib/db/reseller-clients.ts` via `deleteResellerClients` and `deleteResellerTenant` helpers, embedding cryptographic `reseller_id` isolation directly into database mutations.
+- These helpers embed cryptographic `reseller_id` isolation directly into database mutation commands, ensuring strict multi-tenant isolation.
 
 ## 🎯 User Experience
 

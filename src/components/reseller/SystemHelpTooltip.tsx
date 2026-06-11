@@ -64,7 +64,7 @@ export function SystemHelpTooltip({ children, isVisible: externalVisible }: Syst
   return (
     <div
       ref={containerRef}
-      className="relative inline-flex"
+      className="relative inline-flex pointer-events-auto"
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onFocus={handleFocus}
