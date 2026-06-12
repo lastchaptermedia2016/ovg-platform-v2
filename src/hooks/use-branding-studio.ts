@@ -167,6 +167,7 @@ export function useBrandingStudio(resellerSlug: string): UseBrandingStudioReturn
         setStaging(loaded);
         setCommitted(loaded);
         setVersion(data.version);
+        setIsLoading(false);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error('[useBrandingStudio] Load error:', msg);

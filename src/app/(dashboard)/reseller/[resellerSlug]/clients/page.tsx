@@ -118,6 +118,12 @@ export default function ClientsPage() {
     error,
   } = useAICommand();
 
+  // ✅ FIX: Stable ref prevents handleTranscript recreation on every render
+  const handleCommandSubmitRef = useRef(handleCommandSubmit);
+  useEffect(() => {
+    handleCommandSubmitRef.current = handleCommandSubmit;
+  }, [handleCommandSubmit]);
+
   // Resilient 4-phase Voice Integration — must be above handleTranscript
   const { isPlaying: isVoicePlaying, isSilentMode, captions, playVoice: speakVoice } = useResilientVoice();
   const speakVoiceRef = useRef(speakVoice);
@@ -215,7 +221,7 @@ export default function ClientsPage() {
 
     console.log('%c[Pierre] 🚀 Submission triggered with resolved slug:', 'color: #0097b2; font-weight: bold;', activeSlug);
 
-    handleCommandSubmit(
+    handleCommandSubmitRef.current(
       text,
       { theme: { primary: '#0097b2' }, behavior: { prompt: 'Default' } },
       selectedTenantId ? { tenantId: selectedTenantId, category: activeFilter } : { category: activeFilter },
@@ -323,7 +329,7 @@ export default function ClientsPage() {
       }
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAwaitingVoiceConfirm, bulkConfirmation, resellerSlug, selectedTenantId, activeFilter, handleCommandSubmit]);
+  }, [isAwaitingVoiceConfirm, bulkConfirmation, resellerSlug, selectedTenantId, activeFilter]);
 
   // ─── STRICT PTT: Voice Command Integration ─────────────────────────
   // The mic is ONLY opened by an explicit user gesture (mousedown/touchstart
@@ -477,14 +483,14 @@ export default function ClientsPage() {
         console.log('%c[Pierre] 🚀 Extracted slug from URL path (manual execute):', 'color: #0097b2; font-weight: bold;', activeSlug);
       }
     }
-    handleCommandSubmit(
+    handleCommandSubmitRef.current(
       commandInput,
       { theme: { primary: '#0097b2' }, behavior: { prompt: 'Default' } },
       { tenantId: selectedTenantId, category: activeFilter },
       activeSlug
     );
     setCommandInput('');
-  }, [selectedTenantId, commandInput, activeFilter, resellerSlug, handleCommandSubmit]);
+  }, [selectedTenantId, commandInput, activeFilter, resellerSlug]);
 
   return (
     <div className="w-full">

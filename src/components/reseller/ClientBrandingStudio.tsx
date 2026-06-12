@@ -775,7 +775,7 @@ export function ClientBrandingStudio({
       });
       console.log('[SST Console] Fetch response status:', res.status, res.statusText);
       if (!res.ok) throw new Error(`Process failed: ${res.status}`);
-      const data = await res.json() as { actions?: IncomingAIAction[]; payload?: unknown; actionType?: string; summary?: string };
+      const data = await res.json() as { actions?: IncomingAIAction[]; payload?: unknown; actionType?: string; summary?: string; response?: string };
       console.log('[SST Console] Raw response payload structure:', JSON.stringify(data.payload));
       console.log('[SST Console] Success: parsed response', { actionType: data?.actionType, summary: data?.summary, hasPayload: !!data?.payload });
 
@@ -841,10 +841,22 @@ export function ClientBrandingStudio({
       for (const action of actions) {
         await dispatchStudioAction(action);
       }
+      // ── SYSTEM_HELP TTS Fallback ─────────────────────────────────────────
+      // The voice pipeline intentionally skips automatic TTS for SYSTEM_ macros,
+      // so we must explicitly trigger the local synthesis engine for help content.
+      // This mirrors the fallback pattern used in ClientsGrid for feature parity.
+      if (data?.actionType === 'SYSTEM_HELP') {
+        const helpText = data.response || data.summary;
+        if (helpText && isSpeakerEnabled && isHannahAwake) {
+          void tts(helpText, contextualSlug).catch((ttsErr) => {
+            console.error('[SST Console] SYSTEM_HELP TTS failed (non-fatal):', ttsErr);
+          });
+        }
+      }
       // Vocal confirmation layer — fire-and-forget so it never blocks
       // the input clearing, the isProcessingText reset, or any UI state.
       // Audio errors are caught by the local .catch and never cascade.
-      if (data?.summary && isSpeakerEnabled && isHannahAwake) {
+      if (data?.summary && data?.actionType !== 'SYSTEM_HELP' && isSpeakerEnabled && isHannahAwake) {
         // Thread the immutable context snap to prevent slug drift during async TTS
         void tts(data.summary, contextualSlug).catch((ttsErr) => {
           console.error('[SST Console] TTS read-back failed (non-fatal):', ttsErr);

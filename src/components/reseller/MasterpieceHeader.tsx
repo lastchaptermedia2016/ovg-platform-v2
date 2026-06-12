@@ -3,6 +3,9 @@
 import { Mic } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useCallback, useEffect, useRef } from 'react';
+
+/** Windows 300 ms: synthetic mouse events trailing a real touch are dropped. */
+const TOUCH_DEDUP_MS = 300;
 import { SignOutButton } from './SignOutButton';
 import { SystemHelpTooltip } from './SystemHelpTooltip';
 
@@ -89,6 +92,9 @@ export function MasterpieceHeader({
 }: MasterpieceHeaderProps) {
   void _playVoice;
 
+  /** Timestamp anchor: when a real hardware touch event was last handled. */
+  const lastTouchEventRef = useRef<number>(0);
+
   // Track previous isRecording value for sonic transition detection
   const prevRecordingRef = useRef(isRecording);
 
@@ -103,20 +109,31 @@ export function MasterpieceHeader({
     prevRecordingRef.current = isRecording;
   }, [isRecording]);
 
-  // Strict PTT event handlers — no preventDefault here; gesture propagation
-  // is managed by the hook's startRecording to avoid synthetic event deadlocks.
-  const handleMicMouseDown = useCallback((_e: React.MouseEvent | React.TouchEvent) => {
-    console.log('[PTT] 🔥 Mic onMouseDown captured — dispatching startRecording');
+  // Strict PTT event handlers — touch/mouse deduplication.
+  // On touch devices, touchstart → touchend → synthetic mousedown → synthetic mouseup.
+  // We timestamp real touch events and suppress any synthetic mouse counterpart
+  // that arrives within the TOUCH_DEDUP_MS window.
+  const handleMicMouseDown = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    const isTouch = e.type.startsWith('touch');
+    if (!isTouch && Date.now() - lastTouchEventRef.current < TOUCH_DEDUP_MS) return;
+    if (isTouch) lastTouchEventRef.current = Date.now();
+    console.log('[PTT] 🔥 Mic %s captured — dispatching startRecording', e.type);
     onStartRecording?.();
   }, [onStartRecording]);
 
-  const handleMicMouseUp = useCallback((_e: React.MouseEvent | React.TouchEvent) => {
-    console.log('[PTT] 🔥 Mic onMouseUp captured — dispatching stopListeningAndProcess');
+  const handleMicMouseUp = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    const isTouch = e.type.startsWith('touch');
+    if (!isTouch && Date.now() - lastTouchEventRef.current < TOUCH_DEDUP_MS) return;
+    if (isTouch) lastTouchEventRef.current = Date.now();
+    console.log('[PTT] 🔥 Mic %s captured — dispatching stopListeningAndProcess', e.type);
     onStopListeningAndProcess?.();
   }, [onStopListeningAndProcess]);
 
-  const handleMicMouseLeave = useCallback((_e: React.MouseEvent | React.TouchEvent) => {
-    console.log('[PTT] 🔥 Mic onMouseLeave captured — dispatching abortRecording');
+  const handleMicMouseLeave = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    const isTouch = e.type.startsWith('touch');
+    if (!isTouch && Date.now() - lastTouchEventRef.current < TOUCH_DEDUP_MS) return;
+    if (isTouch) lastTouchEventRef.current = Date.now();
+    console.log('[PTT] 🔥 Mic %s captured — dispatching abortRecording', e.type);
     onAbortRecording?.();
   }, [onAbortRecording]);
 

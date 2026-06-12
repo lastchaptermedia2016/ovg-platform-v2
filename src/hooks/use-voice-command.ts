@@ -119,6 +119,8 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   const abortControllerRef = useRef<AbortController | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const isProcessingRef = useRef(false);
+  /** Timestamp of the last successful pipeline dispatch entry. */
+  const lastPipelineDispatchRef = useRef<number>(0);
   const ttsAudioContextRef = useRef<AudioContext | null>(null);
   const ttsAudioSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const ttsPlaybackActiveRef = useRef(false);
@@ -134,6 +136,12 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
    *  startRecording() entry and on every abort/stop. If getUserMedia
    *  resolves and the token no longer matches, the stream is a ghost. */
   const currentSessionIdRef = useRef<number>(0);
+
+  /** PTT race guard: set synchronously by stopListeningAndProcess when the user
+   *  releases the mic button but getUserMedia hasn't resolved yet. startRecording
+   *  checks this after the await to discard the late-resolving stream before
+   *  creating the MediaRecorder, preventing runaway chunk generation. */
+  const pendingStreamAbortedRef = useRef(false);
 
   const isRecordingRef = useRef(false);
   useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
@@ -306,9 +314,25 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   );
 
   const processAudioPipeline = useCallback(async (audioBlob: Blob) => {
-    console.log(`[VoiceCommand] 📡 processAudioPipeline — blob size: ${audioBlob.size} bytes, initiating STT`);
+    // ── Synchronous execution lock: reject if pipeline is already running ──
+    if (isProcessingRef.current) {
+      console.warn('[VoiceCommand] 🚫 processAudioPipeline — already processing, dropping duplicate');
+      return;
+    }
+
+    // ── Temporal guardian: reject re-entry within 1000 ms window ──
+    const now = Date.now();
+    if (now - lastPipelineDispatchRef.current < 1000) {
+      console.warn('[VoiceCommand] 🚫 processAudioPipeline — within 1000 ms window, dropping duplicate');
+      return;
+    }
+
+    // Lock immediately and synchronously before any await
     isProcessingRef.current = true;
+    lastPipelineDispatchRef.current = now;
     setIsProcessing(true);
+
+    console.log(`[VoiceCommand] 📡 processAudioPipeline — blob size: ${audioBlob.size} bytes, initiating STT`);
     abortControllerRef.current = new AbortController();
     const { signal } = abortControllerRef.current;
 
@@ -401,14 +425,20 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       }
 
       const SYSTEM_MACRO_NO_AUDIO = new Set([
-        'SYSTEM_NOTE', 'SYSTEM_HELP', 'SYSTEM_EXPLAIN',
         'SYSTEM_DISARM', 'SYSTEM_BULK_CONFIRM', 'SYSTEM_BULK_CANCEL',
         'SYSTEM_FILTER_GRID', 'NO_MATCH',
       ]);
 
+      // ── SYSTEM_HELP TTS Allowlist ───────────────────────────────────────────
+      // SYSTEM_HELP must NOT be gated by `hasAudio === false` — it carries
+      // meaningful help text that Hannah must read aloud. Without this carve-out,
+      // the voice pipeline's hasAudio gate silently swallows the TTS call,
+      // causing Hannah to remain silent when the user asks "what can you do?".
+      const VOICE_TTS_ALLOWLIST = new Set(['SYSTEM_HELP', 'SYSTEM_EXPLAIN', 'SYSTEM_NOTE']);
+
       if (
         parsedResponse?.actionType && SYSTEM_MACRO_NO_AUDIO.has(parsedResponse.actionType)
-        || parsedResponse?.hasAudio === false
+        || (parsedResponse?.hasAudio === false && !VOICE_TTS_ALLOWLIST.has(parsedResponse?.actionType ?? ''))
       ) {
         console.log('[VoiceCommand] 🔷 System macro — skipping TTS playback:', parsedResponse?.actionType);
         return;
@@ -506,11 +536,13 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       console.log('[VoiceCommand] 🎙️ getUserMedia requested — stream starting');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-      // Ghost stream guard: if the session was invalidated while getUserMedia
-      // was resolving, discard the stream immediately to prevent corrupt buffers.
-      if (currentSessionIdRef.current !== sessionId) {
+      // Ghost stream guard: if the session was invalidated or the user released
+      // the mic button while getUserMedia was resolving, discard the stream
+      // immediately to prevent runaway MediaRecorder chunk generation.
+      if (currentSessionIdRef.current !== sessionId || pendingStreamAbortedRef.current) {
+        pendingStreamAbortedRef.current = false;
         stream.getTracks().forEach(track => track.stop());
-        console.warn('[VoiceCommand] 🛑 Late-resolving stream discarded — session invalidated');
+        console.warn('[VoiceCommand] 🛑 Late-resolving stream discarded — session invalidated or button released early');
         return;
       }
 
@@ -608,6 +640,14 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     }
 
     stoppedByUserRef.current = true;
+    // ── PTT Race Guard ──────────────────────────────────────────────────
+    // If getUserMedia hasn't resolved yet (mediaRecorderRef is null), set
+    // the abort flag so the pending startRecording callback discards the
+    // late-resolving stream before creating a MediaRecorder.
+    if (!mediaRecorderRef.current) {
+      pendingStreamAbortedRef.current = true;
+      console.log('[VoiceCommand] ⏹️ stopListeningAndProcess — pending stream abort flagged (getUserMedia not yet resolved)');
+    }
     console.log(`[VoiceCommand] ⏹️ stopListeningAndProcess — elapsed ${elapsed}ms, calling mediaRecorder.stop()`);
     if (mediaRecorderRef.current?.state === 'recording') {
       mediaRecorderRef.current.requestData();
@@ -650,9 +690,66 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isRecording, isProcessing, isSpeaking, abort, resetState]);
 
+  // ── Ironclad Unmount Cleanup (HMR / Fast Refresh Safe) ─────────────
+  // HMR / Fast Refresh can leave the MediaRecorder in 'recording' state
+  // with live microphone tracks, causing runaway chunk generation loops.
+  // This effect must NOT depend on `cleanup` — the callback may hold stale
+  // refs after HMR. Instead, we capture all refs in the closure at mount
+  // time and destroy them aggressively on unmount.
   useEffect(() => {
-    return () => { cleanup(); };
-  }, [cleanup]);
+    return () => {
+      // ── Session Invalidation ────────────────────────────────────────
+      // Bump the session token so any late-resolving getUserMedia or
+      // onstop callback from a stale mount is rejected by the ghost
+      // stream guard in startRecording.
+      currentSessionIdRef.current += 1;
+      stoppedByUserRef.current = false;
+
+      // ── Force-kill Active MediaRecorder ──────────────────────────────
+      // Use try/catch around every destroy operation so a single failure
+      // never cascades and leaves the mic open.
+      if (mediaRecorderRef.current) {
+        try { mediaRecorderRef.current.stop(); } catch { /* ignore */ }
+        mediaRecorderRef.current = null;
+      }
+
+      // ── Force-kill All Media (Mic) Tracks ────────────────────────────
+      // Close the mic stream unconditionally so the browser releases the
+      // hardware resource immediately, preventing runaway chunk loops.
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => {
+          try { track.stop(); } catch { /* ignore */ }
+        });
+        streamRef.current = null;
+      }
+
+      // ── Terminate Audio Contexts (Both Mic & TTS) ────────────────────
+      [audioContextRef, ttsAudioContextRef].forEach(ctxRef => {
+        if (ctxRef.current && ctxRef.current.state !== 'closed') {
+          try { ctxRef.current.close(); } catch { /* ignore */ }
+        }
+        ctxRef.current = null;
+      });
+      ttsAudioSourceRef.current = null;
+      analyserRef.current = null;
+
+      // ── Reset PTT Race Guard ──────────────────────────────────────────
+      pendingStreamAbortedRef.current = false;
+
+      // ── Cancel Pending Frames & In-flight Requests ───────────────────
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
+      isProcessingRef.current = false;
+
+      // ── Clear Accumulated Audio Chunks & Reset UI State ──────────────
+      audioChunksRef.current = [];
+      setVolumeLevel(0);
+    };
+  }, []);
 
   return {
     isRecording,
