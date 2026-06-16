@@ -12,6 +12,7 @@ import { useResilientVoice } from '@/hooks/use-resilient-voice';
 import { CaptionsHUD } from '@/components/voice/CaptionsHUD';
 import { formatCurrency } from '@/utils/formatters';
 import { SYSTEM_CAPABILITIES } from '@/core/ai/system-capabilities';
+import { useHannah } from "@/contexts/HannahContext";
 
 // Type definitions
 interface BulkConfirmation {
@@ -33,18 +34,62 @@ interface AICommandResponse {
 const useCategoryMap = () => useMemo(() => ({
   ALL: 'ALL',
   AUTOMOTIVE: 'AUTOMOTIVE',
-  GENERAL: 'GENERAL BUSINESS',
+  GENERAL_BUSINESS: 'GENERAL BUSINESS',
   RETAIL: 'RETAIL',
   HEALTHCARE: 'HEALTHCARE',
   INSURANCE: 'INSURANCE',
-  AI_AUTOMATION: 'AI AUTOMATION',
+  SIGNAL_ANALYTICS: 'SIGNAL ANALYTICS', // Existing filter
+  AI_AUTOMATION: 'AI AUTOMATION', // New filter
   OFFLINE_ONLY: 'OFFLINE'
 }), []);
 
 export default function ClientsPage() {
+  // Consume Hannah state from global context — Must be first to establish scope
+  const { isHannahAwake, currentBriefing, setCurrentBriefing } = useHannah();
+
   const params = useParams();
   const searchParams = useSearchParams();
   const router = useRouter();
+
+  // CRITICAL: Use String() runtime coercion for route safety
+  const resellerSlug = String(params.resellerSlug ?? '');
+  
+  // 🔷 Production Excellence: Hydration Guard for route params
+  if (isInvalidSlug(resellerSlug)) {
+    console.error('%c[Pierre] ❌ Route parameter failed to resolve:', 'color: #0097b2; font-weight: bold;', { resellerSlug, params });
+  }
+  const categoryParam = (searchParams.get('category') || 'ALL').toUpperCase();
+  const CATEGORY_MAP = useCategoryMap();
+
+  // ── Initialization: State ──────────────────────────────────────────
+  const [activeFilter, setActiveFilter] = useState(categoryParam);
+  const [showOfflineOnly, setShowOfflineOnly] = useState(false);
+  const [selectedTenantId, setSelectedTenantId] = useState<string | null>(null);
+  const [selectedClientName, setSelectedClientName] = useState<string>('');
+  const [commandInput, setCommandInput] = useState('');
+  const [inputFlash, setInputFlash] = useState(false);
+  const [bulkConfirmation, setBulkConfirmation] = useState<BulkConfirmation | null>(null);
+  const [successRipple, setSuccessRipple] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [isAwaitingVoiceConfirm, setIsAwaitingVoiceConfirm] = useState(false);
+  const [helpCommands, setHelpCommands] = useState<string[] | null>(null);
+
+  // Portfolio Stats State (lifted from ClientsGrid for unified telemetry)
+  const [portfolioStats, setPortfolioStats] = useState({
+    totalClients: 0,
+    totalMRR: 0,
+    totalSignals: 0,
+    aiEfficiency: 0,
+    criticalAlerts: 0,
+    loading: true
+  });
+
+  // ── Initialization: Refs ───────────────────────────────────────────
+  const confirmationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const commandInputRef = useRef<HTMLInputElement>(null);
+  const hasProcessedRef = useRef(false);
+  // Stable ref for handleFilterChange to avoid temporal dead zone in transcript callback
+  const handleFilterChangeRef = useRef<(newFilter: string) => void>(() => {});
 
   // 🔷 Production Excellence: Inject shimmer animation styles
   useEffect(() => {
@@ -65,44 +110,13 @@ export default function ClientsPage() {
     document.head.appendChild(style);
     return () => { document.head.removeChild(style); };
   }, []);
-
-  // CRITICAL: Use String() runtime coercion, not TypeScript's compile-time `as string`.
-  const resellerSlug = String(params.resellerSlug ?? '');
   
-  // 🔷 Production Excellence: Detect Next.js hydration issues with route params
-  if (isInvalidSlug(resellerSlug)) {
-    console.error('%c[Pierre] ❌ Route parameter failed to resolve:', 'color: #0097b2; font-weight: bold;', { resellerSlug, params });
-  }
-  const categoryParam = (searchParams.get('category') || 'ALL').toUpperCase();
-  const CATEGORY_MAP = useCategoryMap();
-
-  const [activeFilter, setActiveFilter] = useState(categoryParam);
-  const [showOfflineOnly, setShowOfflineOnly] = useState(false);
-  const [selectedTenantId, setSelectedTenantId] = useState<string | null>(null);
-  const [selectedClientName, setSelectedClientName] = useState<string>('');
-  const [commandInput, setCommandInput] = useState('');
-  const [inputFlash, setInputFlash] = useState(false);
-  const [bulkConfirmation, setBulkConfirmation] = useState<BulkConfirmation | null>(null);
-  const [successRipple, setSuccessRipple] = useState(false);
-  const [voiceError, setVoiceError] = useState<string | null>(null);
-  const [isAwaitingVoiceConfirm, setIsAwaitingVoiceConfirm] = useState(false);
-  const confirmationTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const commandInputRef = useRef<HTMLInputElement>(null);
-  const hasProcessedRef = useRef(false);
-  // Stable ref for handleFilterChange to avoid temporal dead zone in transcript callback
-  const handleFilterChangeRef = useRef<(newFilter: string) => void>(() => {});
-  // SYSTEM_HELP popover state — when non-null, renders the command discovery overlay
-  const [helpCommands, setHelpCommands] = useState<string[] | null>(null);
-
-  // Portfolio Stats State (lifted from ClientsGrid)
-  const [portfolioStats, setPortfolioStats] = useState({
-    totalClients: 0,
-    totalMRR: 0,
-    totalSignals: 0,
-    aiEfficiency: 0,
-    criticalAlerts: 0,
-    loading: true
-  });
+  // ── Logic: Hannah Briefing Telemetry ──────────────────────────────
+  useEffect(() => {
+    if (isHannahAwake && !portfolioStats.loading && portfolioStats.totalClients > 0 && !currentBriefing) {
+      setCurrentBriefing(`System ready: ${portfolioStats.totalClients} unique tenant detected.`);
+    }
+  }, [isHannahAwake, portfolioStats.loading, portfolioStats.totalClients, currentBriefing, setCurrentBriefing]);
 
   // AI Command Integration
   const {
@@ -455,7 +469,7 @@ export default function ClientsPage() {
   useEffect(() => { handleFilterChangeRef.current = handleFilterChange; }, [handleFilterChange]);
 
   // Stable callback for tenant selection
-  const handleSelectTenant = useCallback((tenantId: string, clientName?: string) => {
+  const handleSelectTenant = useCallback((tenantId: string, clientName?: string, _category?: string) => {
     setSelectedTenantId(tenantId);
     if (clientName) {
       setSelectedClientName(clientName);
@@ -565,36 +579,36 @@ export default function ClientsPage() {
         {/* Industry Filter Tabs - Compact Grid Layout */}
         <div className="w-full">
           <div className="px-6">
-            <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 py-2">
+            <div className="flex flex-wrap gap-2 items-center w-full my-3 px-2">
               {(() => {
                 const FILTER_LABELS = Object.entries(CATEGORY_MAP)
                   .filter(([key]) => key !== 'ALL' && key !== 'OFFLINE_ONLY')
                   .map(([key]) => ({
-                    label: key.charAt(0) + key.slice(1).toLowerCase(),
+                    label: key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
                     value: key,
                   }));
                 return [{ label: 'All', value: 'ALL' }, ...FILTER_LABELS].map(({ label, value }) => (
                 <button
-                  key={value}
-                  onClick={() => handleFilterChange(value)}
-                  style={{ display: 'inline-flex', width: '100%', padding: '4px 8px' }}
-                  className={`relative rounded-lg text-[10px] font-medium tracking-wider uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden
-                    backdrop-blur-md bg-black/10 border border-white/10
-                    hover:-translate-y-0.5 hover:backdrop-blur-xl hover:border-white/20 transition-colors duration-200
-                    ${activeFilter === value.toUpperCase()
-                      ? '!text-[#FFD700] bg-[#FFD700]/10 border-[#FFD700]/30'
-                      : '!text-[#94a3b8] hover:!text-white hover:font-semibold hover:bg-black/20'
-                    }`}
-                >
-                  <span className={`relative z-20 ${activeFilter === value.toUpperCase() ? 'drop-shadow-[0_0_6px_rgba(255,215,0,0.3)]' : ''}`} style={{ textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>{label}</span>
-                </button>
-              ))})()}
+                    key={value}
+                    onClick={() => handleFilterChange(value)}
+                    style={{ display: 'inline-flex', padding: '4px 8px' }}
+                    className={`relative rounded-lg text-[10px] font-medium tracking-wider uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden
+                      backdrop-blur-md bg-black/10 border border-white/10
+                      hover:-translate-y-0.5 hover:backdrop-blur-xl hover:border-white/20 transition-colors duration-200
+                      ${activeFilter === value.toUpperCase()
+                        ? '!text-[#FFD700] bg-[#FFD700]/10 border-[#FFD700]/30'
+                        : '!text-[#94a3b8] hover:!text-white hover:font-semibold hover:bg-black/20'
+                      }`}
+                  >
+                    <span className={`relative z-20 ${activeFilter === value.toUpperCase() ? 'drop-shadow-[0_0_6px_rgba(255,215,0,0.3)]' : ''}`} style={{ textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}>{label}</span>
+                  </button>
+                ))})()}
 
               <div className="w-px h-4 bg-[#0097b2]/30 mx-1" />
 
               <button
                 onClick={toggleOfflineOnly}
-                style={{ display: 'inline-flex', width: '100%', padding: '4px 8px' }}
+                style={{ display: 'inline-flex', padding: '4px 8px' }}
                 className={`relative rounded-lg text-[10px] font-medium tracking-wider uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden
                   backdrop-blur-md bg-black/10 border border-white/10
                   hover:-translate-y-0.5 hover:backdrop-blur-xl hover:border-white/20 transition-colors duration-200
@@ -620,8 +634,8 @@ export default function ClientsPage() {
           <div className="max-w-3xl mx-auto">
             <div className="relative p-[1px] rounded-xl bg-gradient-to-r from-transparent via-[#0097b2]/50 to-transparent">
               <div className="absolute inset-0 rounded-xl bg-[#0097b2]/20 blur-xl -z-10" />
-              <div className="relative bg-white/[0.05] backdrop-blur-xl rounded-xl p-4 md:p-6 border-t border-white/20 border-b border-[#0097b2]/40">
-                <div className="flex items-center gap-3">
+              <div className="relative bg-black/40 backdrop-blur-2xl border border-white/10 rounded-xl p-4">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full">
                   {/* Green Pulse Indicator */}
                   <div className="relative">
                     {selectedTenantId ? (
@@ -643,7 +657,7 @@ export default function ClientsPage() {
                       onChange={(e) => setCommandInput(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && handleCommandExecute()}
                       disabled={!selectedTenantId || isAnalyzing}
-                      placeholder={selectedTenantId 
+                      placeholder={selectedTenantId
                         ? `I'm listening. What should we change for ${selectedClientName || 'this client'}?`
                         : "Step 1: Select a client card to begin..."
                       }

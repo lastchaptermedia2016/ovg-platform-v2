@@ -13,7 +13,7 @@ export function ColorPicker({ label, value, onChange }: ColorPickerProps) {
 
   const presetColors = [
     '#0097b2', // Electric Blue
-    '#226683', // Dealership Gold
+    '#226683', // Deep Blue
     '#d4af37', // Gold
     '#3b82f6', // Blue
     '#10b981', // Green

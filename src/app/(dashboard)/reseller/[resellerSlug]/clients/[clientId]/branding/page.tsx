@@ -1,11 +1,56 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Image from 'next/image';
 import { useParams, useRouter } from 'next/navigation';
 import { isInvalidSlug } from '@/lib/utils/guard';
 import { ClientBrandingStudio } from '@/components/reseller/ClientBrandingStudio';
+import { IntegrationSuite } from '@/components/reseller/IntegrationSuite';
+import type { BookingProviderType } from '@/interfaces/booking-provider.interface';
 import type { Client, Tenant } from '@/types';
+
+interface BookingIntegrationState {
+  enabled: boolean;
+  providerType: BookingProviderType;
+}
+
+function readBookingIntegrationState(tenant: Tenant | null): BookingIntegrationState {
+  const metadata = (tenant as Tenant & { metadata?: unknown } | null)?.metadata;
+  const widgetConfig = (tenant as Tenant & { widget_config?: unknown } | null)?.widget_config;
+
+  if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
+    const integrations = (metadata as Record<string, unknown>).integrations;
+    if (integrations && typeof integrations === 'object' && !Array.isArray(integrations)) {
+      const booking = (integrations as Record<string, unknown>).booking;
+      if (booking && typeof booking === 'object' && !Array.isArray(booking)) {
+        const bookingRecord = booking as Record<string, unknown>;
+        return {
+          enabled: bookingRecord.enabled === true,
+          providerType: bookingRecord.providerType === 'EXTERNAL' ? 'EXTERNAL' : 'INTERNAL',
+        };
+      }
+    }
+  }
+
+  if (widgetConfig && typeof widgetConfig === 'object' && !Array.isArray(widgetConfig)) {
+    const integrations = (widgetConfig as Record<string, unknown>).integrations;
+    if (integrations && typeof integrations === 'object' && !Array.isArray(integrations)) {
+      const booking = (integrations as Record<string, unknown>).booking;
+      if (booking && typeof booking === 'object' && !Array.isArray(booking)) {
+        const bookingRecord = booking as Record<string, unknown>;
+        return {
+          enabled: bookingRecord.enabled === true,
+          providerType: bookingRecord.providerType === 'EXTERNAL' ? 'EXTERNAL' : 'INTERNAL',
+        };
+      }
+    }
+  }
+
+  return {
+    enabled: false,
+    providerType: 'INTERNAL',
+  };
+}
 
 export default function ClientBrandingPage() {
   const params = useParams();
@@ -25,6 +70,10 @@ export default function ClientBrandingPage() {
   const [clientData, setClientData] = useState<Tenant | null>(null);
   const [allClients, setAllClients] = useState<Client[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [integrationState, setIntegrationState] = useState<BookingIntegrationState>({
+    enabled: false,
+    providerType: 'INTERNAL',
+  });
 
   useEffect(() => {
     async function fetchData() {
@@ -34,14 +83,13 @@ export default function ClientBrandingPage() {
         if (!clientResponse.ok) throw new Error('Failed to fetch client data');
         const clientDataResult = await clientResponse.json() as Tenant;
         setClientData(clientDataResult);
+        setIntegrationState(readBookingIntegrationState(clientDataResult));
 
         // Fetch all reseller clients
         const clientsResponse = await fetch(`/api/reseller/${resellerSlug}/clients`);
         if (!clientsResponse.ok) throw new Error('Failed to fetch clients');
         const clientsDataResult = await clientsResponse.json() as Client[];
         setAllClients(clientsDataResult);
-
-        console.log("OVG-PLATFORM-V2: Client branding studio initialized for", clientDataResult.name);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Unknown error');
       } finally {
@@ -54,9 +102,9 @@ export default function ClientBrandingPage() {
     }
   }, [clientId, resellerSlug]);
 
-  const handleClientChange = (newClientId: string) => {
+  const handleClientChange = useCallback((newClientId: string) => {
     router.push(`/reseller/${resellerSlug}/clients/${newClientId}/branding`);
-  };
+  }, [resellerSlug, router]);
 
   // Extract features and branding from the tenant's widget_config for toggle hydration.
   // This ensures that both functional flags and design tokens are cleanly bound
@@ -139,6 +187,12 @@ export default function ClientBrandingPage() {
           planTier={clientData?.pricing_tier_key || 'standard'}
           clients={allClients}
           onClientChange={handleClientChange}
+        />
+        <IntegrationSuite
+          key={clientId}
+          tenantId={clientId}
+          initialEnabled={integrationState.enabled}
+          initialProviderType={integrationState.providerType}
         />
       </div>
     </div>

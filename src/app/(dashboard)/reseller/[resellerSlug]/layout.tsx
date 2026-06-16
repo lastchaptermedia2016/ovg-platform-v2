@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { BrandingFooter } from "@/components/reseller/BrandingFooter";
+import { HannahProvider } from "@/contexts/HannahContext";
 
 // Production Excellence: Critical Security - Server-side Authorization Check
 async function verifyResellerAccess(resellerSlug: string) {
@@ -171,7 +172,9 @@ export default async function ResellerLayout({
         <div className="relative z-10 flex flex-col w-full">
           {/* Main Content - Page handles its own header */}
           <main className="w-full">
-            {children}
+            <HannahProvider>
+              {children}
+            </HannahProvider>
           </main>
 
           {/* Footer */}

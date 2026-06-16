@@ -10,6 +10,7 @@ import { Client as ClientType } from '@/types/index';
 import { createHarmoniousGreeting, VisualStyle } from '@/lib/voice-visual-harmony';
 import { isInvalidSlug } from '@/lib/utils/guard';
 import { type IncomingAIAction } from '@/hooks/use-voice-command';
+import { useHannah } from '@/contexts/HannahContext';
 
 interface ClientWithBranding extends ClientType {
   industry?: string;
@@ -174,9 +175,10 @@ export function ClientBrandingStudio({
 
   // (PTT replaces forcedContinuousMode — retained only for hook compat)
 
-  // Privacy State for Hannah
-  const [isHannahAwake, setIsHannahAwake] = useState(true);
-  const hasGreetedRef = useRef<string | null>(null);
+  // Consume Hannah state from global context
+  const { isHannahAwake, setIsHannahAwake, setHasGreeted } = useHannah();
+  // Synchronous lock to prevent double-fire during async greeting fetch
+  const greetingLockRef = useRef(false);
 
   // Resolve resellerSlug from URL params as fallback (bypass prop-drilling gaps).
   // CRITICAL: decodeURIComponent prevents 404 when the URL contains encoded chars
@@ -997,7 +999,7 @@ export function ClientBrandingStudio({
       tts("I'm awake and ready to help!");
       return;
     }
-  }, [isLongFormSTT, tts]);
+  }, [isLongFormSTT, tts, setIsHannahAwake]);
 
   // Voice command hook for STT — Push-to-Talk (PTT) state machine
   const {
@@ -1032,10 +1034,11 @@ export function ClientBrandingStudio({
   // a stuck lock. The hard-coded slug mirrors the reseller's primary route.
   const router = useRouter();
   const handleBackToClients = useCallback(() => {
-    hasGreetedRef.current = null;
+    greetingLockRef.current = false;
+    setHasGreeted(false);
     resetState();
     router.push('/reseller/lastchaptermedia2016/clients');
-  }, [resetState, router]);
+  }, [resetState, router, setHasGreeted]);
 
   const updateConfig = (key: keyof BrandingConfig, value: string | number | boolean) => {
     setConfig((prev) => ({ ...prev, [key]: value }));
@@ -1108,13 +1111,14 @@ export function ClientBrandingStudio({
 
   // Gated Tenant Switch Announcement
   useEffect(() => {
-    if (!clientId || !effectiveResellerSlug || hasGreetedRef.current === clientId) return;
+    if (!clientId || !effectiveResellerSlug || greetingLockRef.current) return;
 
     const fetchAndConfirmClientSwitch = async () => {
       // Guard: skip if the slug hasn't resolved yet.
       // Reset the greeted flag so this retries once the slug is available.
       if (!effectiveResellerSlug) {
-        hasGreetedRef.current = null;
+        greetingLockRef.current = false;
+        setHasGreeted(false);
         console.warn('[TTS] Greeting skipped — resellerSlug not yet available');
         return;
       }
@@ -1125,9 +1129,10 @@ export function ClientBrandingStudio({
         const welcomeBack = sessionStorage.getItem('hannah_welcome_back');
 
         // Mark as greeted BEFORE the async fetch to prevent double-fire races.
-        // If a re-render happens during the await, the outer guard at line 705
-        // (`hasGreetedRef.current === clientId`) will block re-entry.
-        hasGreetedRef.current = clientId;
+        // If a re-render happens during the await, the outer guard
+        // (`greetingLockRef.current`) will block re-entry.
+        greetingLockRef.current = true;
+        setHasGreeted(true);
 
         // Fetch new client data
         const response = await fetch(`/api/tenants/${clientId}`);
@@ -1162,7 +1167,8 @@ export function ClientBrandingStudio({
           }
         }
 
-        hasGreetedRef.current = clientId;
+        greetingLockRef.current = true;
+        setHasGreeted(true);
         console.log(`OVG-PLATFORM-V2: Tenant switch confirmed to ${clientName}${wrongTurn ? ' (with wrong turn correction)' : ''}`);
       } catch (err) {
         console.error('Error fetching client data for tenant switch:', err);
@@ -1170,7 +1176,7 @@ export function ClientBrandingStudio({
     };
 
     fetchAndConfirmClientSwitch();
-  }, [clientId, effectiveResellerSlug, isHannahAwake, tts]);
+  }, [clientId, effectiveResellerSlug, isHannahAwake, tts, setHasGreeted]);
 
   // Handle initial load from redirect with immediate branding sync
   useEffect(() => {
@@ -1329,11 +1335,19 @@ export function ClientBrandingStudio({
               onChange={(e) => onClientChange(e.target.value)}
               className="flex-1 bg-black/30 border border-white/20 rounded px-3 py-2 text-sm text-white focus:border-[#0097b2] outline-none"
             >
-              {clients.map((client) => (
-                <option key={client.id} value={client.id}>
-                  {client.name}
-                </option>
-              ))}
+              {Array.isArray(clients) ? (
+                clients.map((client, index) => {
+                  if (!client) return null;
+                  const stableKey = client?.id ?? `client-fallback-${index}`;
+                  return (
+                    <option key={stableKey} value={client?.id ?? ''}>
+                      {client?.name ?? 'Unknown Client'}
+                    </option>
+                  );
+                })
+              ) : (
+                <option disabled value="">Loading clients...</option>
+              )}
             </select>
           </div>
         </div>

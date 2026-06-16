@@ -5,12 +5,15 @@ import Image from 'next/image';
 import { useParams, useRouter } from 'next/navigation';
 import { isInvalidSlug } from '@/lib/utils/guard';
 import { ClientBrandingStudio, BrandingConfig } from '@/components/reseller/ClientBrandingStudio';
+import { IntegrationSuite } from '@/components/reseller/IntegrationSuite';
+import type { BookingProviderType } from '@/interfaces/booking-provider.interface';
 import type { Client } from '@/types';
 
 interface TenantRecord {
   id: string;
   name: string;
   pricing_tier_key?: string;
+  metadata?: unknown;
   widget_config?: {
     branding?: Record<string, unknown>;
     features?: {
@@ -18,6 +21,43 @@ interface TenantRecord {
       aiDesignMirror?: boolean;
       customCss?: boolean;
     };
+    integrations?: {
+      booking?: {
+        enabled?: boolean;
+        providerType?: BookingProviderType;
+      };
+    };
+  };
+}
+
+interface BookingIntegrationState {
+  enabled: boolean;
+  providerType: BookingProviderType;
+}
+
+function readBookingIntegrationState(tenant: TenantRecord | null): BookingIntegrationState {
+  const metadataRecord = tenant?.metadata;
+  const widgetRecord = tenant?.widget_config;
+
+  if (metadataRecord && typeof metadataRecord === 'object' && !Array.isArray(metadataRecord)) {
+    const integrations = (metadataRecord as Record<string, unknown>).integrations;
+    if (integrations && typeof integrations === 'object' && !Array.isArray(integrations)) {
+      const booking = (integrations as Record<string, unknown>).booking;
+      if (booking && typeof booking === 'object' && !Array.isArray(booking)) {
+        const bookingRecord = booking as Record<string, unknown>;
+        return {
+          enabled: bookingRecord.enabled === true,
+          providerType: bookingRecord.providerType === 'EXTERNAL' ? 'EXTERNAL' : 'INTERNAL',
+        };
+      }
+    }
+  }
+
+  const widgetBooking = widgetRecord?.integrations?.booking;
+
+  return {
+    enabled: widgetBooking?.enabled === true,
+    providerType: widgetBooking?.providerType === 'EXTERNAL' ? 'EXTERNAL' : 'INTERNAL',
   };
 }
 
@@ -38,6 +78,10 @@ export default function ResellerBrandingPage() {
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [integrationState, setIntegrationState] = useState<BookingIntegrationState>({
+    enabled: false,
+    providerType: 'INTERNAL',
+  });
 
   // Hydrated state from the tenant record
   const [hydratedConfig, setHydratedConfig] = useState<Record<string, unknown>>({});
@@ -86,6 +130,7 @@ export default function ResellerBrandingPage() {
         const branding = widgetConfig.branding as Record<string, unknown> | undefined;
         const features = widgetConfig.features as { aiInsightBadge?: boolean; aiDesignMirror?: boolean; customCss?: boolean } | undefined;
 
+        setIntegrationState(readBookingIntegrationState(tenant));
         setHydratedConfig({
           branding: branding || {},
           features: features || {},
@@ -133,7 +178,7 @@ export default function ResellerBrandingPage() {
   }
 
   return (
-    <div className="min-h-screen p-6">
+    <div className="min-h-screen p-4 sm:p-6">
       <div className="max-w-7xl mx-auto">
         <div className="relative overflow-hidden rounded-xl mb-8 min-h-[120px]">
           {/* Background Image */}
@@ -156,15 +201,23 @@ export default function ResellerBrandingPage() {
         </div>
 
         {selectedClientId ? (
-          <ClientBrandingStudio
-            key={resellerSlug}
-            clientId={selectedClientId}
-            resellerSlug={resellerSlug}
-            clients={clients}
-            onClientChange={handleClientChange}
-            initialConfig={hydratedConfig as { branding?: Partial<BrandingConfig>; features?: { aiInsightBadge?: boolean; aiDesignMirror?: boolean; customCss?: boolean } }}
-            planTier={hydratedPlanTier}
-          />
+          <>
+            <ClientBrandingStudio
+              key={resellerSlug}
+              clientId={selectedClientId}
+              resellerSlug={resellerSlug}
+              clients={clients}
+              onClientChange={handleClientChange}
+              initialConfig={hydratedConfig as { branding?: Partial<BrandingConfig>; features?: { aiInsightBadge?: boolean; aiDesignMirror?: boolean; customCss?: boolean } }}
+              planTier={hydratedPlanTier}
+            />
+            <IntegrationSuite
+              key={selectedClientId}
+              tenantId={selectedClientId}
+              initialEnabled={integrationState.enabled}
+              initialProviderType={integrationState.providerType}
+            />
+          </>
         ) : (
           <div className="text-white/60">No clients found</div>
         )}

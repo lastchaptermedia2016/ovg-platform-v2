@@ -1,5 +1,3 @@
-'use client';
-
 import { useEffect, useState, useRef, useMemo, memo, startTransition, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient as createSupabaseClient } from '@/lib/supabase/client';
@@ -10,6 +8,7 @@ import { ParallaxStream } from './ParallaxStream';
 import { DiagnosticPanel } from './DiagnosticPanel';
 import { ClientCard } from './ClientCard';
 import { UniversalCommandModal } from './modals/UniversalCommandModal';
+import { TenantPricingModal } from './TenantPricingModal';
 
 // Removed unused imports: getIndustryProfile, getIndustryFeatureLabel, AddClientModal, formatCurrency, checkClientStatus
 // Capability Map: Dynamic industry-to-action permissions
@@ -102,7 +101,7 @@ export function ClientsGridInternal({
   filter?: string; 
   showOfflineOnly?: boolean; 
   categoryMap?: Record<string, string>;
-  onSelectTenant?: (tenantId: string, clientName?: string) => void;
+  onSelectTenant?: (tenantId: string, clientName?: string, _category?: string) => void;
   activeTenantId?: string | null;
   isProcessing?: boolean;
   isGlobalScanning?: boolean;
@@ -142,6 +141,7 @@ export function ClientsGridInternal({
   const [diagnosticTenantId, setDiagnosticTenantId] = useState<string | null>(null);
   const [hoveredCardId, setHoveredCardId] = useState<string | null>(null);
   const [showAddClientModal, setShowAddClientModal] = useState(false);
+  const [pricingTenant, setPricingTenant] = useState<Tenant | null>(null);
   const [successGlow, _setSuccessGlow] = useState<string | null>(null);
 
   // HUD State
@@ -913,7 +913,7 @@ export function ClientsGridInternal({
                 key={tenant.id}
                 onClick={() => {
                   console.log('ClientCard clicked, selecting tenant:', tenant.id, 'name:', tenant.name);
-                  onSelectTenant?.(tenant.id, tenant.name);
+                  onSelectTenant?.(tenant.id, tenant.name, tenant.category);
                 }}
                 className={`relative cursor-pointer transition-all duration-200 ${
                   onSelectTenant ? 'hover:ring-2 hover:ring-[#0097b2]/50' : ''
@@ -938,6 +938,7 @@ export function ClientsGridInternal({
                   onDiagnosticClick={setDiagnosticTenantId}
                   onFeatureToggle={handleFeatureToggle}
                   onModuleAction={handleModuleAction}
+                  onPricingClick={() => setPricingTenant(tenant)}
                   selectedClientId={selectedClientId}
                   onExecuteCommand={handleExecuteCommand}
                   onSTTResult={(tenantId, text) => {
@@ -962,6 +963,15 @@ export function ClientsGridInternal({
           tenantId={diagnosticTenantId}
           isOpen={!!diagnosticTenantId}
           onClose={() => setDiagnosticTenantId(null)}
+        />
+      )}
+
+      {pricingTenant && (
+        <TenantPricingModal
+          tenant={pricingTenant as unknown as Parameters<typeof TenantPricingModal>[0]['tenant']}
+          isOpen={!!pricingTenant}
+          onClose={() => setPricingTenant(null)}
+          onSaved={() => fetchTenants({ filterParam: filter, resellerSlugParam: resellerSlug })}
         />
       )}
 

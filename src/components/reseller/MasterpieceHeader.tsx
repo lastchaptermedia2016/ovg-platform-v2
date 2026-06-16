@@ -167,7 +167,7 @@ export function MasterpieceHeader({
         }
       `}</style>
       
-      <nav className="w-full flex justify-between items-center px-6 py-2 backdrop-blur-md bg-black/60 border border-white/5 rounded-2xl pointer-events-none">
+      <nav className="flex flex-wrap items-center justify-between gap-3 px-4 py-2 w-full backdrop-blur-md bg-black/60 border border-white/5 rounded-2xl pointer-events-none">
         {/* Left Side - POWERED BY PIERRE AI */}
         <div className="flex items-center space-x-2 pointer-events-auto">
           <span className="text-white/60 text-[10px] font-light tracking-wider uppercase">

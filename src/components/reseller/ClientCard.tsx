@@ -39,6 +39,7 @@ interface ClientCardProps {
   onDiagnosticClick: (tenantId: string) => void;
   onFeatureToggle: (tenantId: string, feature: string, event: React.MouseEvent) => void;
   onModuleAction?: (clientId: string, actionType: 'ai' | 'sms' | 'vin' | 'signal') => void;
+  onPricingClick: (tenantId: string) => void;
   selectedClientId?: string | null;
   onExecuteCommand?: (tenantId: string, command: string) => Promise<void>;
   onSTTResult?: (tenantId: string, text: string) => void;
@@ -91,6 +92,7 @@ export function ClientCard({
   successGlow,
   onDiagnosticClick,
   onModuleAction,
+  onPricingClick,
   selectedClientId,
   onExecuteCommand,
   isHovered = false,
@@ -230,7 +232,7 @@ export function ClientCard({
             <span className={`px-2 py-1 text-[10px] tracking-[0.1em] rounded uppercase min-w-[120px] w-fit text-center ${industryStyle.bg} ${industryStyle.border} ${industryStyle.text}`}>
               {displayIndustry}
             </span>
-            <div className="flex items-center gap-2 w-[72px] justify-end">
+            <div className="flex items-center gap-2 w-[104px] justify-end">
               <button
                 onClick={() => onDiagnosticClick(tenant.id)}
                 className="!opacity-100 !mix-blend-normal backdrop-blur-none w-7 h-7 rounded-lg bg-white/[0.02] border border-white/20 flex items-center justify-center hover:bg-white/5 hover:border-[#00E5FF] transition-all duration-300 shadow-[0_0_10px_rgba(0,229,255,0.3)]"
@@ -248,6 +250,24 @@ export function ClientCard({
                   style={{ color: '#00E5FF' }}
                 >
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+              </button>
+              <button
+                onClick={() => onPricingClick(tenant.id)}
+                className="p-1.5 rounded-md bg-white/5 hover:bg-white/15 text-white/60 hover:text-white transition-all border border-white/10"
+                title="Configure pricing and add-ons"
+                style={{
+                  filter: 'drop-shadow(0 0 2px rgba(0, 151, 178, 0.3))',
+                  transform: 'translateZ(0)'
+                }}
+              >
+                <svg
+                  className="w-3.5 h-3.5"
+                  fill="currentColor"
+                  viewBox="0 0 20 20"
+                  aria-hidden="true"
+                >
+                  <path fillRule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
                 </svg>
               </button>
               <div className="relative !opacity-100 !visible z-50 force-glow-icon">
