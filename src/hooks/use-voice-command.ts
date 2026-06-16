@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect, type MutableRefObject } from 'react';
 import { isInvalidSlug } from '@/lib/utils/guard';
+import { useHannah } from '@/contexts/HannahContext';
 import { transcodeBlobToWav } from '@/utils/audio/transcode-to-wav';
 
 interface UseVoiceCommandReturn {
@@ -93,6 +94,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     onError,
     onActionsReceived,
   } = options;
+  const { setCommandDeckOpen } = useHannah();
 
   // ─── Refs for dynamic options ────────────────────────────────────────
   const resellerIdRef = useRef(options.resellerId);
@@ -408,6 +410,9 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       if (!processResponse.ok) throw new Error(`Process failed: ${processResponse.status}`);
 
       const parsedResponse = await processResponse.json() as ProcessResponse;
+      if (parsedResponse?.actionType === 'SYSTEM_HELP') {
+        setCommandDeckOpen(true);
+      }
       const aiText = parsedResponse?.response || parsedResponse?.summary;
       if (!aiText || !aiText.trim()) {
         console.warn('[VoiceHook] Aborting internal TTS: No text or fallback summary available.');
@@ -504,7 +509,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       isProcessingRef.current = false;
       setIsProcessing(false);
     }
-  }, [onTranscript, onAIResponse, onError, skipAIPipeline, _currentConfig, deriveActionsFromPayload, validateAudioResponse]);
+  }, [onTranscript, onAIResponse, onError, skipAIPipeline, _currentConfig, deriveActionsFromPayload, validateAudioResponse, setCommandDeckOpen]);
 
   // ─── STRICT PTT: startListening — mousedown / touchstart handler ────────
   // Alias: startRecording is exposed on the return as startRecording for UI compatibility.

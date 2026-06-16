@@ -162,10 +162,20 @@ export function ClientsGridInternal({
 
   const fetchDashboardStats = useCallback(async () => {
     try {
+      // Guard: ensure resellerSlug is valid before querying
+      if (!resellerSlug || resellerSlug.startsWith('[') || resellerSlug === 'undefined') return;
+      
       const supabase = createSupabaseClient();
+      const resolvedId = await resolveResellerId(supabase, resellerSlug);
+      
+      // Guard: ensure resolvedId exists
+      if (!resolvedId) return;
+      
+      // Scoped query: only fetch stats for this reseller's tenants
       const { data: tenantsData, error: tenantsError } = await supabase
         .from('tenants')
-        .select('mrr, total_leads, total_revenue, signal_count');
+        .select('mrr, total_leads, total_revenue, signal_count')
+        .eq('reseller_id', resolvedId);
 
       if (tenantsError) throw tenantsError;
 
@@ -179,7 +189,7 @@ export function ClientsGridInternal({
     } finally {
       setHudLoading(false);
     }
-  }, []);
+  }, [resellerSlug]);
 
   const fetchCriticalAlerts = useCallback(async () => {
     try {

@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
+import type { CommandCapability } from '@/core/ai/system-capabilities';
 
 /**
  * HannahContext — Global AI Assistant State Provider
@@ -24,6 +25,14 @@ export interface HannahContextValue {
   hasGreeted: boolean;
   /** Mark greeting as spoken (or reset when switching tenants). */
   setHasGreeted: (greeted: boolean) => void;
+  /** Whether the command deck modal is open. */
+  isCommandDeckOpen: boolean;
+  /** Toggle command deck visibility. */
+  setCommandDeckOpen: (open: boolean) => void;
+  /** Currently active commands to display in the deck. */
+  activeCommands: CommandCapability[];
+  /** Set the commands to display in the deck. */
+  setActiveCommands: (commands: CommandCapability[]) => void;
 }
 
 // ── Context Instance ───────────────────────────────────────────────────
@@ -34,6 +43,8 @@ export function HannahProvider({ children }: { children: ReactNode }) {
   const [isHannahAwake, setIsHannahAwakeState] = useState(true);
   const [currentBriefing, setCurrentBriefing] = useState<string | null>(null);
   const [hasGreeted, setHasGreetedState] = useState(false);
+  const [isCommandDeckOpen, setCommandDeckOpenState] = useState(false);
+  const [activeCommands, setActiveCommandsState] = useState<CommandCapability[]>([]);
 
   const setIsHannahAwake = useCallback((awake: boolean) => {
     setIsHannahAwakeState(awake);
@@ -43,6 +54,14 @@ export function HannahProvider({ children }: { children: ReactNode }) {
     setHasGreetedState(greeted);
   }, []);
 
+  const setCommandDeckOpen = useCallback((open: boolean) => {
+    setCommandDeckOpenState(open);
+  }, []);
+
+  const setActiveCommands = useCallback((commands: CommandCapability[]) => {
+    setActiveCommandsState(commands);
+  }, []);
+
   const value: HannahContextValue = {
     isHannahAwake,
     setIsHannahAwake,
@@ -50,6 +69,10 @@ export function HannahProvider({ children }: { children: ReactNode }) {
     setCurrentBriefing,
     hasGreeted,
     setHasGreeted,
+    isCommandDeckOpen,
+    setCommandDeckOpen,
+    activeCommands,
+    setActiveCommands,
   };
 
   return (

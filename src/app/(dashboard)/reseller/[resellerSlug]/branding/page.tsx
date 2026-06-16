@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import Image from 'next/image';
 import { useParams, useRouter } from 'next/navigation';
 import { isInvalidSlug } from '@/lib/utils/guard';
@@ -8,6 +8,8 @@ import { ClientBrandingStudio, BrandingConfig } from '@/components/reseller/Clie
 import { IntegrationSuite } from '@/components/reseller/IntegrationSuite';
 import type { BookingProviderType } from '@/interfaces/booking-provider.interface';
 import type { Client } from '@/types';
+import { useHannah } from '@/contexts/HannahContext';
+import type { CommandCapability } from '@/core/ai/system-capabilities';
 
 interface TenantRecord {
   id: string;
@@ -69,11 +71,10 @@ export default function ResellerBrandingPage() {
   // to a primitive string yet. String() ensures a primitve is always passed downstream.
   const resellerSlug = String(params.resellerSlug ?? '');
 
-  // 🔷 Production Excellence: Detect Next.js hydration issues with route params
-  if (isInvalidSlug(resellerSlug)) {
-    console.error('%c[Pierre] ❌ Route parameter failed to resolve (branding):', 'color: #0097b2; font-weight: bold;', { resellerSlug, params });
-  }
+  // ── Hannah Context Integration ───────────────────────────────────────────
+  const { setActiveCommands } = useHannah();
 
+  // ── Initialization: State ──────────────────────────────────────────
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -86,6 +87,38 @@ export default function ResellerBrandingPage() {
   // Hydrated state from the tenant record
   const [hydratedConfig, setHydratedConfig] = useState<Record<string, unknown>>({});
   const [hydratedPlanTier, setHydratedPlanTier] = useState<string>('standard');
+
+  // Branding studio-specific command capabilities (static, memoized)
+  const BRANDING_COMMANDS = useMemo<CommandCapability[]>(() => [
+    {
+      key: 'SYSTEM_UPDATE_BRANDING',
+      name: 'Apply [vibe] archetype',
+      description: 'Apply visual design changes such as colors, gradients, logos, and feature toggles.',
+      examples: ['Make it cyberpunk neon', 'Set the logo to my image', 'Enable design mirror']
+    },
+    {
+      key: 'SYNC_ASSETS',
+      name: 'Synchronize asset buffers',
+      description: 'Sync all branding assets to the active client configuration.',
+      examples: ['Sync assets', 'Synchronize branding', 'Update assets']
+    },
+    {
+      key: 'TOGGLE_GREETING',
+      name: 'Toggle welcome greeting lock',
+      description: 'Lock or unlock the welcome greeting configuration for this client.',
+      examples: ['Lock greeting', 'Unlock welcome', 'Toggle greeting']
+    }
+  ], []);
+
+  // ── Lifecycle: Register Branding Commands on Mount ───────────────────────
+  useEffect(() => {
+    setActiveCommands(BRANDING_COMMANDS);
+
+    // Cleanup on unmount - clear commands when leaving page
+    return () => {
+      setActiveCommands([]);
+    };
+  }, [setActiveCommands, BRANDING_COMMANDS]);
 
   // Fetch clients list on mount
   useEffect(() => {
@@ -143,8 +176,6 @@ export default function ResellerBrandingPage() {
         console.error("OVG-PLATFORM-V2: Hydration failed, using defaults:", err);
         setHydratedConfig({});
         setHydratedPlanTier('standard');
-      } finally {
-        // Cleanup complete; no synchronous setState needed
       }
     }
 

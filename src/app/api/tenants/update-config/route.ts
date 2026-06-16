@@ -22,9 +22,57 @@ const UpdateConfigSchema = z.object({
   }).optional(),
 });
 
+// ──────────────────────────────────────────────
+// Double-lock ownership verification
+// Validates that authenticated user owns/reseller for the tenant
+// ──────────────────────────────────────────────
+async function validateTenantOwnership(
+  userId: string,
+  tenantId: string,
+): Promise<{ resellerId: string } | null> {
+  const supabase = await createClient();
+
+  // Resolve tenant to get its reseller_id
+  const { data: tenant, error } = await supabase
+    .from("tenants")
+    .select("reseller_id")
+    .eq("id", tenantId)
+    .single();
+
+  if (error || !tenant?.reseller_id) {
+    return null;
+  }
+
+  // Verify user has access to this reseller via user_resellers junction
+  const { data: userReseller } = await supabase
+    .from("user_resellers")
+    .select("reseller_id")
+    .eq("user_id", userId)
+    .eq("reseller_id", tenant.reseller_id)
+    .maybeSingle();
+
+  if (!userReseller) {
+    return null;
+  }
+
+  return { resellerId: tenant.reseller_id };
+}
+
+// ──────────────────────────────────────────────
 export async function POST(request: NextRequest) {
   try {
-    // Parse and validate request body against the consolidated schema
+    // ── STEP 1: Session Validation ─────────────────
+    const supabase = await createClient();
+    const { data: { session }, error: authError } = await supabase.auth.getSession();
+
+    if (authError || !session) {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized access path" },
+        { status: 401 }
+      );
+    }
+
+    // ── STEP 2: Parse and validate request body ─────
     const body = await request.json();
     const validationResult = UpdateConfigSchema.safeParse(body);
 
@@ -37,15 +85,26 @@ export async function POST(request: NextRequest) {
 
     const { tenantId, branding, features } = validationResult.data;
 
+    // ── STEP 3: Double-lock tenant ownership verification ──
+    const ownership = await validateTenantOwnership(session.user.id, tenantId);
+
+    if (!ownership) {
+      return NextResponse.json(
+        { success: false, error: "Forbidden - tenant access denied" },
+        { status: 403 }
+      );
+    }
+
     // Transaction Logging
     console.log('=== ATOMIC UPDATE CONFIG REQUEST ===');
     console.log('tenantId:', tenantId);
+    console.log('resellerId (validated):', ownership.resellerId);
     console.log('branding:', JSON.stringify(branding, null, 2));
     console.log('features:', JSON.stringify(features, null, 2));
     console.log('timestamp:', new Date().toISOString());
 
-    // Initialize Supabase client
-    const supabase = await createClient();
+    // Initialize Supabase client (already have from session check)
+    // Note: supabaseAdmin removed - using request-bound client only
 
     // ================================================================
     // ATOMIC COMMIT via sync_tenant_config RPC

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { supabaseAdmin } from "@/lib/supabase/admin";
 import { z } from "zod";
 
 // ──────────────────────────────────────────────
@@ -15,10 +14,58 @@ const UpdateAIEngineSchema = z.object({
 });
 
 // ──────────────────────────────────────────────
+// Double-lock ownership verification
+// Validates that authenticated user owns/reseller for the tenant
+// ──────────────────────────────────────────────
+async function validateTenantOwnership(
+  userId: string,
+  tenantId: string,
+): Promise<{ resellerId: string } | null> {
+  const supabase = await createClient();
+
+  // Resolve tenant to get its reseller_id
+  const { data: tenant, error } = await supabase
+    .from("tenants")
+    .select("reseller_id")
+    .eq("id", tenantId)
+    .single();
+
+  if (error || !tenant?.reseller_id) {
+    return null;
+  }
+
+  // Verify user has access to this reseller via user_resellers junction
+  const { data: userReseller } = await supabase
+    .from("user_resellers")
+    .select("reseller_id")
+    .eq("user_id", userId)
+    .eq("reseller_id", tenant.reseller_id)
+    .maybeSingle();
+
+  if (!userReseller) {
+    return null;
+  }
+
+  return { resellerId: tenant.reseller_id };
+}
+
+// ──────────────────────────────────────────────
 // POST — Upsert ai_settings for a tenant
 // ──────────────────────────────────────────────
 export async function POST(request: NextRequest) {
   try {
+    // ── STEP 1: Session Validation ─────────────────
+    const supabase = await createClient();
+    const { data: { session }, error: authError } = await supabase.auth.getSession();
+
+    if (authError || !session) {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized access path" },
+        { status: 401 },
+      );
+    }
+
+    // ── STEP 2: Parse and validate request body ─────
     const body = await request.json();
     const validationResult = UpdateAIEngineSchema.safeParse(body);
 
@@ -36,18 +83,27 @@ export async function POST(request: NextRequest) {
     const { tenantId, initialGreeting, voicePersonaTone, voiceVocabularyStyle, syncedWithBranding } =
       validationResult.data;
 
+    // ── STEP 3: Double-lock tenant ownership verification ──
+    const ownership = await validateTenantOwnership(session.user.id, tenantId);
+
+    if (!ownership) {
+      return NextResponse.json(
+        { success: false, error: "Forbidden - tenant access denied" },
+        { status: 403 },
+      );
+    }
+
     const now = new Date().toISOString();
 
     console.log("=== UPDATE AI ENGINE REQUEST ===");
     console.log("tenantId:", tenantId);
+    console.log("resellerId (validated):", ownership.resellerId);
     console.log("initialGreeting length:", initialGreeting?.length ?? 0);
     console.log("voicePersonaTone length:", voicePersonaTone?.length ?? 0);
     console.log("voiceVocabularyStyle length:", voiceVocabularyStyle?.length ?? 0);
     console.log("syncedWithBranding:", syncedWithBranding);
 
-    // Try user-session client first, fall back to service-role
-    const supabase = await createClient();
-
+    // ── STEP 4: Scoped mutation with explicit reseller context ──
     const { error: upsertError } = await supabase
       .from("ai_settings")
       .upsert(
@@ -63,31 +119,13 @@ export async function POST(request: NextRequest) {
       );
 
     if (upsertError) {
-      // Fallback with admin client
-      const { error: adminError } = await supabaseAdmin
-        .from("ai_settings")
-        .upsert(
-          {
-            tenant_id: tenantId,
-            initial_greeting: initialGreeting,
-            voice_persona_tone: voicePersonaTone,
-            voice_vocabulary_style: voiceVocabularyStyle,
-            synced_with_branding: syncedWithBranding,
-            updated_at: now,
-          },
-          { onConflict: "tenant_id" },
-        );
+      console.error("=== UPDATE AI ENGINE ERROR ===");
+      console.error("Database error:", upsertError.message);
 
-      if (adminError) {
-        console.error("=== UPDATE AI ENGINE ERROR ===");
-        console.error("User-session error:", upsertError.message);
-        console.error("Admin fallback error:", adminError.message);
-
-        return NextResponse.json(
-          { success: false, error: "Database write failed" },
-          { status: 500 },
-        );
-      }
+      return NextResponse.json(
+        { success: false, error: "Database write failed" },
+        { status: 500 },
+      );
     }
 
     console.log("=== UPDATE AI ENGINE SUCCESS ===");

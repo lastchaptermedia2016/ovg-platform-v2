@@ -13,6 +13,7 @@ import { CaptionsHUD } from '@/components/voice/CaptionsHUD';
 import { formatCurrency } from '@/utils/formatters';
 import { SYSTEM_CAPABILITIES } from '@/core/ai/system-capabilities';
 import { useHannah } from "@/contexts/HannahContext";
+import type { CommandCapability } from '@/core/ai/system-capabilities';
 
 // Type definitions
 interface BulkConfirmation {
@@ -45,7 +46,7 @@ const useCategoryMap = () => useMemo(() => ({
 
 export default function ClientsPage() {
   // Consume Hannah state from global context — Must be first to establish scope
-  const { isHannahAwake, currentBriefing, setCurrentBriefing } = useHannah();
+  const { isHannahAwake, currentBriefing, setCurrentBriefing, setActiveCommands } = useHannah();
 
   const params = useParams();
   const searchParams = useSearchParams();
@@ -58,6 +59,7 @@ export default function ClientsPage() {
   if (isInvalidSlug(resellerSlug)) {
     console.error('%c[Pierre] ❌ Route parameter failed to resolve:', 'color: #0097b2; font-weight: bold;', { resellerSlug, params });
   }
+  
   const categoryParam = (searchParams.get('category') || 'ALL').toUpperCase();
   const CATEGORY_MAP = useCategoryMap();
 
@@ -91,27 +93,45 @@ export default function ClientsPage() {
   // Stable ref for handleFilterChange to avoid temporal dead zone in transcript callback
   const handleFilterChangeRef = useRef<(newFilter: string) => void>(() => {});
 
-  // 🔷 Production Excellence: Inject shimmer animation styles
+  // ── Initialization: Command Capabilities ───────────────────────────────
+  const CLIENTS_COMMANDS = useMemo<CommandCapability[]>(() => [
+    {
+      key: 'DELETE_CLIENT',
+      name: 'Delete client [name]',
+      description: 'Removes a client tenant from your portfolio. Hannah will confirm the client name before executing.',
+      examples: ['Delete BMW Test', 'Remove client John Doe Motors', 'Deactivate ABC Services']
+    },
+    {
+      key: 'SYSTEM_FILTER_GRID',
+      name: 'Filter clients by [sector]',
+      description: 'Filters the client grid to show only clients in a specific industry sector.',
+      examples: ['Filter by automotive', 'Show only retail clients', 'Switch to healthcare', 'Filter insurance']
+    },
+    {
+      key: 'SIGNAL_RESET',
+      name: 'Reset signals for [client]',
+      description: 'Resets signal count and tracking for a specific client.',
+      examples: ['Reset signals for Tesla', 'Clear signals on Acme Corp']
+    },
+    {
+      key: 'INDUSTRY_FILTER',
+      name: 'Show me [industry] clients',
+      description: 'Display all clients belonging to a specific industry category.',
+      examples: ['Show me automotive clients', 'Show retail clients', 'Show healthcare', 'Show insurance clients']
+    }
+], []);
+   
+  // ── Lifecycle: Register Client Commands on Mount ───────────────────────
   useEffect(() => {
-    const style = document.createElement('style');
-    style.textContent = `
-      @keyframes tab-shimmer {
-        0% { transform: translateX(-100%); }
-        100% { transform: translateX(100%); }
-      }
-      .animate-tab-shimmer {
-        animation: tab-shimmer 5s ease-in-out infinite;
-      }
-      .mask-gradient {
-        mask-image: linear-gradient(to right, black 85%, transparent 100%);
-        -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%);
-      }
-    `;
-    document.head.appendChild(style);
-    return () => { document.head.removeChild(style); };
-  }, []);
-  
-  // ── Logic: Hannah Briefing Telemetry ──────────────────────────────
+    setActiveCommands(CLIENTS_COMMANDS);
+    
+    // Cleanup on unmount - clear commands when leaving page
+    return () => {
+      setActiveCommands([]);
+    };
+  }, [setActiveCommands, CLIENTS_COMMANDS]);
+
+  // ── Logic: Hannah Briefing Telemetry ─────────────────────────────────
   useEffect(() => {
     if (isHannahAwake && !portfolioStats.loading && portfolioStats.totalClients > 0 && !currentBriefing) {
       setCurrentBriefing(`System ready: ${portfolioStats.totalClients} unique tenant detected.`);

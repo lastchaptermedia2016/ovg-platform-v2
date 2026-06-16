@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { BrandingFooter } from "@/components/reseller/BrandingFooter";
 import { HannahProvider } from "@/contexts/HannahContext";
+import { CommandDeckPortal } from "@/components/hannah/CommandDeckPortal";
 
 // Production Excellence: Critical Security - Server-side Authorization Check
 async function verifyResellerAccess(resellerSlug: string) {
@@ -167,22 +168,23 @@ export default async function ResellerLayout({
         }}
       />
 
-      {/* Dashboard Spine */}
-      <div className="w-full flex flex-col items-center overflow-x-hidden relative min-h-screen">
-        <div className="relative z-10 flex flex-col w-full">
-          {/* Main Content - Page handles its own header */}
-          <main className="w-full">
-            <HannahProvider>
-              {children}
-            </HannahProvider>
-          </main>
+{/* Dashboard Spine */}
+       <div className="w-full flex flex-col items-center overflow-x-hidden relative min-h-screen">
+         <div className="relative z-10 flex flex-col w-full">
+           {/* Main Content - Page handles its own header */}
+           <main className="w-full">
+             <HannahProvider>
+               <CommandDeckPortal />
+               {children}
+             </HannahProvider>
+           </main>
 
-          {/* Footer */}
-          <div className="w-full flex justify-center">
-            <BrandingFooter />
-          </div>
-        </div>
-      </div>
+           {/* Footer */}
+           <div className="w-full flex justify-center">
+             <BrandingFooter />
+           </div>
+         </div>
+       </div>
     </>
   );
 }

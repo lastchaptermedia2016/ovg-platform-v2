@@ -88,53 +88,61 @@
    return data as ResellerClient;
  }
 
- /** 
-  * Update an existing reseller client.
-  * Uses the server client for higher privileges in Route Handler context.
-  */
- export async function updateResellerClient(
-   id: string,
-   updates: Partial<ResellerClient>
- ): Promise<ResellerClient | null> {
-   const supabase = await createServerClient();
+/** 
+   * Update an existing reseller client with explicit ownership verification.
+   * Uses the server client for Route Handler context with RLS enforcement.
+   */
+  export async function updateResellerClient(
+    id: string,
+    resellerId: string,
+    updates: Partial<ResellerClient>
+  ): Promise<ResellerClient | null> {
+    const supabase = await createServerClient();
 
-   const { data, error } = await supabase
-     .from("tenants")
-     .update({
-       ...updates,
-       updated_at: new Date().toISOString(),
-     })
-     .eq("id", id)
-     .select("*")
-     .single();
+    // Explicitly scope query by both id and reseller_id for ownership verification
+    const { data, error } = await supabase
+      .from("tenants")
+      .update({
+        ...updates,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id)
+      .eq("reseller_id", resellerId)
+      .select("*")
+      .single();
 
-   if (error) {
-     console.error("[updateResellerClient] Supabase error:", error);
-     throw new Error(`Failed to update reseller client: ${error.message}`);
-   }
+    if (error) {
+      console.error("[updateResellerClient] Supabase error:", error);
+      throw new Error(`Failed to update reseller client: ${error.message}`);
+    }
 
-   return data as ResellerClient | null;
- }
+    return data as ResellerClient | null;
+  }
 
- /** 
-  * Soft-delete a reseller client by setting is_active to false.
-  * Uses the browser client with corrected RLS policy.
-  */
- export async function deleteResellerClient(id: string): Promise<boolean> {
-   const supabase = createBrowserClient();
+/** 
+   * Soft-delete a reseller client by setting is_active to false.
+   * Now requires resellerId for explicit ownership verification.
+   */
+  export async function deleteResellerClient(
+    resellerId: string,
+    id: string
+  ): Promise<boolean> {
+    const supabase = await createServerClient();
 
-   const { error } = await supabase
-     .from("tenants")
-     .update({ is_active: false, updated_at: new Date().toISOString() })
-     .eq("id", id);
+    // Explicitly scope query by both id and reseller_id for ownership verification
+    const { error } = await supabase
+      .from("tenants")
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("reseller_id", resellerId);
 
-   if (error) {
-     console.error("[deleteResellerClient] Supabase error:", error);
-     throw new Error(`Failed to delete reseller client: ${error.message}`);
-   }
+    if (error) {
+      console.error("[deleteResellerClient] Supabase error:", error);
+      throw new Error(`Failed to delete reseller client: ${error.message}`);
+    }
 
-   return true;
- }
+    return true;
+  }
 
  // ---------------------------------------------------------------------------
  // Deletion helpers – unified ownership‑checked deletion
