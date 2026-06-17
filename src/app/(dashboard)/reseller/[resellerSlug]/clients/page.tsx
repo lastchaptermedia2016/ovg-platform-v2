@@ -371,10 +371,12 @@ export default function ClientsPage() {
   const {
     isRecording,
     isProcessing,
+    volumeLevel: _volumeLevel,
     transcript: voiceTranscript,
-    startRecording,
+    startListening,
     stopListeningAndProcess,
     abortRecording,
+    resetState: _resetState,
   } = useVoiceCommand({
     resellerId: resellerSlug,
     tenantContext: selectedTenantId ? { tenantId: selectedTenantId, category: activeFilter } : { category: activeFilter },
@@ -387,6 +389,14 @@ export default function ClientsPage() {
       speakVoiceRef.current("I didn't catch that. Please try again.");
     },
   });
+
+  const handleCommandInputKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    const input = e.currentTarget;
+    const isInputFocused = document.activeElement === input;
+    if (isInputFocused) {
+      e.stopPropagation();
+    }
+  }, []);
 
   // Sync voice hook TTS playing state to isAwaitingVoiceConfirm timeout
   useEffect(() => {
@@ -532,7 +542,7 @@ export default function ClientsPage() {
       <header className="sticky top-0 left-0 right-0 z-[50]">
         <MasterpieceHeader 
           isRecording={isRecording}
-          onStartRecording={startRecording}
+          onStartRecording={startListening}
           onStopListeningAndProcess={stopListeningAndProcess}
           onAbortRecording={abortRecording}
           isProcessing={isProcessing}
@@ -675,7 +685,10 @@ export default function ClientsPage() {
                       type="text"
                       value={commandInput}
                       onChange={(e) => setCommandInput(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleCommandExecute()}
+                      onKeyDown={(e) => {
+                        handleCommandInputKeyDown(e);
+                        if (e.key === 'Enter') handleCommandExecute();
+                      }}
                       disabled={!selectedTenantId || isAnalyzing}
                       placeholder={selectedTenantId
                         ? `I'm listening. What should we change for ${selectedClientName || 'this client'}?`

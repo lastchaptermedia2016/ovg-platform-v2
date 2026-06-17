@@ -7,6 +7,7 @@ import {
 } from "@/config/ai-engine";
 import { IntegrationSuite } from "@/components/reseller/IntegrationSuite";
 import type { BookingProviderType } from "@/interfaces/booking-provider.interface";
+import { useHannah } from "@/contexts/HannahContext";
 
 // ──────────────────────────────────────────────
 // Types
@@ -104,11 +105,6 @@ export function AIEngineStudio({
     tenants[0]?.id ?? "",
   );
 
-  const selectedTenant = useMemo(
-    () => tenants.find((t) => t.id === selectedTenantId) ?? null,
-    [tenants, selectedTenantId],
-  );
-
   // Text area state
   const [initialGreeting, setInitialGreeting] = useState("");
   const [voicePersonaTone, setVoicePersonaTone] = useState("");
@@ -121,6 +117,83 @@ export function AIEngineStudio({
     bookingProviderType: "INTERNAL",
   });
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── AI Cognition Integration ──────────────────────────────────────
+  const { isRecording, isProcessing, transcript } = useHannah();
+
+  const parseAICommand = useCallback((text: string): string | null => {
+    const lower = text.toLowerCase();
+
+    // Model switching
+    if (lower.includes("switch model to premium") || lower.includes("use premium model"))
+      return "__model_premium__";
+    if (
+      lower.includes("switch model to standard") ||
+      lower.includes("use standard model")
+    )
+      return "__model_standard__";
+
+    // Prompt optimization
+    if (
+      lower.includes("optimize fallback prompts") ||
+      lower.includes("optimize prompts")
+    )
+      return "__optimize_prompts__";
+
+    // Workspace actions
+    if (
+      lower.includes("clear workspace") ||
+      lower.includes("clear configuration")
+    )
+      return "__clear_workspace__";
+    if (lower.includes("reset to default")) return "__reset_default__";
+
+    // Quick presets via voice
+    if (lower.includes("apply healthcare preset")) return "HEALTHCARE";
+    if (lower.includes("apply automotive preset")) return "AUTOMOTIVE";
+    if (lower.includes("apply retail preset")) return "RETAIL";
+
+    return null;
+  }, []);
+
+  // Derive status text from voice telemetry
+  const derivedStatus = useMemo(() => {
+    if (isProcessing) return "COMPILING AI ARRAYS...";
+    if (isRecording) return "LISTENING...";
+    return "STANDBY";
+  }, [isProcessing, isRecording]);
+
+  // Process transcript for AI commands
+  useEffect(() => {
+    if (!transcript || transcript.length === 0) return;
+
+    const command = parseAICommand(transcript);
+    if (!command) return;
+
+    const timer = setTimeout(() => {
+      if (command === "__model_premium__") {
+        // Model tier switch acknowledgment
+      }
+      if (command === "__model_standard__") {
+        // Model tier switch acknowledgment
+      }
+      if (command === "__clear_workspace__") {
+        setInitialGreeting("");
+        setVoicePersonaTone("");
+        setVoiceVocabularyStyle("");
+      }
+      if (command === "__reset_default__") {
+        setSelectedTenantId(tenants[0]?.id ?? "");
+      }
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [transcript, parseAICommand, tenants, setInitialGreeting, setVoicePersonaTone, setVoiceVocabularyStyle, setSelectedTenantId]);
+
+  const selectedTenant = useMemo(
+    () => tenants.find((t) => t.id === selectedTenantId) ?? null,
+    [tenants, selectedTenantId],
+  );
 
   // Hydrate from ai_settings when tenant changes
   useEffect(() => {
@@ -226,16 +299,27 @@ export function AIEngineStudio({
     <div className="w-full space-y-4 sm:space-y-6">
       {/* ── Header ── */}
       <div>
-        <h1 className="text-xl font-bold text-slate-100 tracking-tight uppercase">
-          AI Engine Studio
-        </h1>
+        <div className="flex items-center gap-3 mb-1">
+          <h1 className="text-xl font-bold text-slate-100 tracking-tight uppercase">
+            AI Engine Studio
+          </h1>
+          <span
+            className={`text-[10px] tracking-[0.2em] uppercase font-bold transition-all duration-300 ease-in-out ${
+              isRecording || isProcessing
+                ? "text-[#00e5ff] drop-shadow-[0_0_8px_rgba(0,229,255,0.4)]"
+                : "text-white/60"
+            }`}
+          >
+            {derivedStatus}
+          </span>
+        </div>
         <p className="text-sm text-slate-200 mt-1">
           Configure voice personas, greetings, and vocabulary per client.
         </p>
       </div>
 
       {/* ── Tenant Selector ── */}
-      <div className="rounded-xl backdrop-blur-md bg-white/5 border border-white/10 p-3 sm:p-4">
+      <div className="rounded-xl backdrop-blur-md bg-white/5 border border-white/10 p-3 sm:p-4 transition-all duration-300 ease-in-out">
         <label className="text-[10px] tracking-[0.2em] uppercase text-slate-200 font-medium mb-2 block">
           Select Client
         </label>
@@ -255,7 +339,7 @@ export function AIEngineStudio({
       {selectedTenant && (
         <>
           {/* ── Industry Preset Templates ── */}
-          <div className="rounded-xl backdrop-blur-md bg-white/5 border border-white/10 p-3 sm:p-4">
+          <div className="rounded-xl backdrop-blur-md bg-white/5 border border-white/10 p-3 sm:p-4 transition-all duration-300 ease-in-out">
             <p className="text-[10px] tracking-[0.2em] uppercase text-slate-200 font-medium mb-3">
               Industry Preset Templates
             </p>
@@ -279,7 +363,7 @@ export function AIEngineStudio({
           {/* ── Text Area Blocks ── */}
           <div className="space-y-4">
             {/* Initial Greeting */}
-            <div className="rounded-xl backdrop-blur-md bg-white/5 border border-white/10 p-3 sm:p-4">
+            <div className="rounded-xl backdrop-blur-md bg-white/5 border border-white/10 p-3 sm:p-4 transition-all duration-300 ease-in-out">
               <label className="text-[10px] tracking-[0.2em] uppercase text-slate-200 font-medium mb-2 block">
                 Initial Greeting
               </label>
@@ -293,7 +377,7 @@ export function AIEngineStudio({
             </div>
 
             {/* Voice Persona & Tone */}
-            <div className="rounded-xl backdrop-blur-md bg-white/5 border border-white/10 p-3 sm:p-4">
+            <div className="rounded-xl backdrop-blur-md bg-white/5 border border-white/10 p-3 sm:p-4 transition-all duration-300 ease-in-out">
               <label className="text-[10px] tracking-[0.2em] uppercase text-slate-200 font-medium mb-2 block">
                 Voice Persona & Tone
               </label>
@@ -307,7 +391,7 @@ export function AIEngineStudio({
             </div>
 
             {/* Vocabulary & Dialect Style */}
-            <div className="rounded-xl backdrop-blur-md bg-white/5 border border-white/10 p-3 sm:p-4">
+            <div className="rounded-xl backdrop-blur-md bg-white/5 border border-white/10 p-3 sm:p-4 transition-all duration-300 ease-in-out">
               <label className="text-[10px] tracking-[0.2em] uppercase text-slate-200 font-medium mb-2 block">
                 Vocabulary & Dialect Style
               </label>
@@ -333,7 +417,7 @@ export function AIEngineStudio({
           )}
 
           {/* ── Synced with Branding Toggle ── */}
-          <div className="rounded-xl backdrop-blur-md bg-white/5 border border-white/10 p-3 sm:p-4">
+          <div className="rounded-xl backdrop-blur-md bg-white/5 border border-white/10 p-3 sm:p-4 transition-all duration-300 ease-in-out">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-[10px] tracking-[0.2em] uppercase text-slate-200 font-medium">

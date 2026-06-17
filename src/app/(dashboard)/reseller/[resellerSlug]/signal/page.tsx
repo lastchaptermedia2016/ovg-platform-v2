@@ -3,6 +3,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { SignalConsole } from "@/components/reseller/SignalConsole";
+import { SignalCommandRegistrar } from "@/components/signal/SignalCommandRegistrar";
 
 // ──────────────────────────────────────────────
 // Data shape for tenant summaries
@@ -124,6 +125,7 @@ export default async function SignalPage({
           Back to Clients
         </Link>
 
+        <SignalCommandRegistrar />
         <SignalConsole
           tenants={tenants}
           resellerSlug={resellerSlug}

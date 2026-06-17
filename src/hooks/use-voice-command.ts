@@ -2,7 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect, type MutableRefObject } from 'react';
 import { isInvalidSlug } from '@/lib/utils/guard';
-import { useHannah } from '@/contexts/HannahContext';
+import { useCommandDeck } from '@/contexts/CommandDeckContext';
 import { transcodeBlobToWav } from '@/utils/audio/transcode-to-wav';
 
 interface UseVoiceCommandReturn {
@@ -72,6 +72,7 @@ interface SttResponse {
 
 interface VoiceCommandOptions {
   resellerId?: string;
+  activeRoute?: string;
   tenantContext?: TenantContext;
   currentConfig?: Record<string, unknown>;
   contextCapabilities?: Record<string, { key?: string; description: string; examples: readonly string[] | string[] }>;
@@ -94,7 +95,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     onError,
     onActionsReceived,
   } = options;
-  const { setCommandDeckOpen } = useHannah();
+  const { setCommandDeckOpen } = useCommandDeck();
 
   // ─── Refs for dynamic options ────────────────────────────────────────
   const resellerIdRef = useRef(options.resellerId);

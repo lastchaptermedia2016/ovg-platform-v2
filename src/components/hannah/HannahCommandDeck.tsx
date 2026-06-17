@@ -31,9 +31,9 @@ export function HannahCommandDeck({ isOpen, onClose, commands }: HannahCommandDe
       className="fixed inset-0 z-[100] flex items-center justify-center"
       onClick={onClose}
     >
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-md duration-300 ease-out" />
       <div
-        className="relative max-w-md w-full mx-4 rounded-xl bg-slate-900/80 backdrop-blur-xl border border-white/10 shadow-2xl shadow-black/50 overflow-hidden"
+        className="relative max-w-md w-full mx-4 rounded-xl bg-slate-900/80 backdrop-blur-xl border border-white/10 shadow-2xl shadow-black/50 overflow-hidden transition-all cubic-bezier(0.16, 1, 0.3, 1) duration-500"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-5 py-4 border-b border-white/5 flex items-center justify-between">
@@ -55,9 +55,10 @@ export function HannahCommandDeck({ isOpen, onClose, commands }: HannahCommandDe
           {commands.map((cmd, idx) => (
             <div
               key={cmd.key || idx}
-              className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-white/[0.03] border border-white/5 hover:bg-white/[0.06] hover:border-white/10 transition-all duration-200 group"
+              className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-white/[0.03] border border-white/5 hover:bg-white/[0.06] hover:border-[#00e5ff]/30 hover:shadow-lg hover:shadow-[#00e5ff]/5 hover:scale-[1.015] hover:-translate-y-0.5 active:scale-[0.99] transition-all duration-200 ease-out group"
             >
               <span className="w-1.5 h-1.5 rounded-full bg-[#0097b2]/60 group-hover:bg-[#00e5ff] transition-colors duration-200 flex-shrink-0" />
+              <span className="group-hover:translate-x-1 transition-transform inline-block text-[#00e5ff]">→</span>
               <span className="text-[11px] font-medium text-white/80 group-hover:text-white tracking-wide">
                 {cmd.name}
               </span>

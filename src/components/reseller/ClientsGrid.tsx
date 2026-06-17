@@ -794,7 +794,7 @@ export function ClientsGridInternal({
   }
 
   return (
-    <div className="w-full max-w-[1200px] flex flex-col items-center space-y-6 relative pb-20">
+    <div className="w-full max-w-[1200px] flex flex-col items-center space-y-6 relative pb-20 transition-all duration-300 ease-in-out">
       {/* Parallax Stream */}
       <ParallaxStream />
 
@@ -917,7 +917,7 @@ export function ClientsGridInternal({
           );
         }
         return (
-          <div ref={gridContainerRef} className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(300px,1fr))] w-full px-4 sm:px-0">
+          <div ref={gridContainerRef} className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(300px,1fr))] w-full px-4 sm:px-0 transition-all duration-200 ease-out">
             {visibleClients.map((tenant) => (
               <div
                 key={tenant.id}
@@ -925,7 +925,7 @@ export function ClientsGridInternal({
                   console.log('ClientCard clicked, selecting tenant:', tenant.id, 'name:', tenant.name);
                   onSelectTenant?.(tenant.id, tenant.name, tenant.category);
                 }}
-                className={`relative cursor-pointer transition-all duration-200 ${
+              className={`relative cursor-pointer transition-all duration-200 ease-out ${
                   onSelectTenant ? 'hover:ring-2 hover:ring-[#0097b2]/50' : ''
                 } ${activeTenantId === tenant.id ? 'ring-2 ring-green-500 shadow-[0_0_20px_rgba(34,197,94,0.3)]' : ''}`}
               >

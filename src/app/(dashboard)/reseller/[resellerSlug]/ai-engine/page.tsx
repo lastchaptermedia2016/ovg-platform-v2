@@ -3,6 +3,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { AIEngineStudio } from "@/components/reseller/AIEngineStudio";
+import { AiEngineCommandRegistrar } from "@/components/ai-engine/AiEngineCommandRegistrar";
 
 // ──────────────────────────────────────────────
 // Data shape for tenants passed to the workspace
@@ -143,6 +144,7 @@ export default async function AIEnginePage({
           Back to Clients
         </Link>
 
+        <AiEngineCommandRegistrar />
         <AIEngineStudio
           tenants={tenants}
           resellerSlug={resellerSlug}

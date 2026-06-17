@@ -151,16 +151,21 @@ export function useAICommand(): UseAICommandReturn {
       // response.text() never throws on empty bodies; response.json() does.
       // This lets us distinguish infrastructure-level failures (empty body,
       // HTML error page) from route-level JSON error responses.
-      const rawBody = await response.text();
+      let rawBody = '';
+      try {
+        rawBody = await response.text();
+      } catch (bodyErr) {
+        console.error('%c[useAICommand] ❌ Failed to read response body:', 'color: #dc2626; font-weight: bold;', bodyErr);
+      }
 
       if (!response.ok) {
-        console.error('%c[useAICommand] ❌ Transport failure:', 'color: #dc2626; font-weight: bold;', {
+        const diagnostic = {
           status: response.status,
           statusText: response.statusText,
           rawBody: rawBody.trim() || 'EMPTY',
-          // First 200 chars to catch HTML error pages without flooding the console
           bodyPreview: rawBody.slice(0, 200) || 'EMPTY',
-        });
+        };
+        console.error('%c[useAICommand] ❌ Transport failure:', 'color: #dc2626; font-weight: bold;', JSON.stringify(diagnostic, null, 2));
         // Attempt to extract a structured error message if the body is JSON
         let errorMessage = `HTTP ${response.status} ${response.statusText}`;
         try {

@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { ClientRevenueDashboard } from "@/components/reseller/ClientRevenueDashboard";
+import { RevenueCommandRegistrar } from "@/components/revenue/RevenueCommandRegistrar";
 
 // ──────────────────────────────────────────────
 // Data shape: Financial ledger row from tenants
@@ -188,6 +189,7 @@ export default async function RevenuePage({
   return (
     <div className="min-h-screen p-6">
       <div className="max-w-7xl mx-auto">
+        <RevenueCommandRegistrar />
         <ClientRevenueDashboard
           initialTenants={tenants}
           resellerSlug={resellerSlug}

@@ -2,13 +2,15 @@
 
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
 import type { CommandCapability } from '@/core/ai/system-capabilities';
+import { usePathname } from 'next/navigation';
+import { useVoiceCommand } from '@/hooks/use-voice-command';
 
 /**
  * HannahContext — Global AI Assistant State Provider
  *
  * Centralizes Hannah's awake/sleep state, the current briefing text,
- * and the greeted latch so all dashboard sub-views share a single
- * source of truth instead of duplicating state inside individual components.
+ * the greeted latch, and the unified global PTT event loop so all
+ * dashboard sub-views share a single source of truth.
  */
 
 // ── Type-Safe Interface ────────────────────────────────────────────────
@@ -25,25 +27,44 @@ export interface HannahContextValue {
   hasGreeted: boolean;
   /** Mark greeting as spoken (or reset when switching tenants). */
   setHasGreeted: (greeted: boolean) => void;
-  /** Whether the command deck modal is open. */
-  isCommandDeckOpen: boolean;
-  /** Toggle command deck visibility. */
-  setCommandDeckOpen: (open: boolean) => void;
   /** Currently active commands to display in the deck. */
   activeCommands: CommandCapability[];
   /** Set the commands to display in the deck. */
   setActiveCommands: (commands: CommandCapability[]) => void;
+
+  /** ── Global PTT State ─────────────────────────────────────────── */
+  /** True while the mic is actively capturing audio (global). */
+  isRecording: boolean;
+  /** True while the STT → AI → TTS pipeline is processing (global). */
+  isProcessing: boolean;
+  /** True while the TTS AudioContext is actively playing back audio (global). */
+  isSpeaking: boolean;
+  /** Live volume meter (0–1). Only updated while recording is active. */
+  volumeLevel: number;
+  /** Latest transcript from STT (global). */
+  transcript: string;
+  /** Latest error message, if any. */
+  error: string | null;
+  /** Current active route path (e.g., /revenue, /ai-engine). */
+  activeRoute: string;
+  /** Strict PTT: Begin audio capture. */
+  startListening: () => Promise<void>;
+  /** Strict PTT: Finalize audio and trigger pipeline. */
+  stopListeningAndProcess: () => void;
+  /** Strict PTT: Abort capture. */
+  abortRecording: () => void;
+  /** Reset all state to idle. */
+  resetState: () => void;
 }
 
 // ── Context Instance ───────────────────────────────────────────────────
 const HannahContext = createContext<HannahContextValue | undefined>(undefined);
 
 // ── Provider Component ─────────────────────────────────────────────────
-export function HannahProvider({ children }: { children: ReactNode }) {
+export function HannahProvider({ children, resellerSlug }: { children: ReactNode; resellerSlug?: string }) {
   const [isHannahAwake, setIsHannahAwakeState] = useState(true);
   const [currentBriefing, setCurrentBriefing] = useState<string | null>(null);
   const [hasGreeted, setHasGreetedState] = useState(false);
-  const [isCommandDeckOpen, setCommandDeckOpenState] = useState(false);
   const [activeCommands, setActiveCommandsState] = useState<CommandCapability[]>([]);
 
   const setIsHannahAwake = useCallback((awake: boolean) => {
@@ -54,13 +75,21 @@ export function HannahProvider({ children }: { children: ReactNode }) {
     setHasGreetedState(greeted);
   }, []);
 
-  const setCommandDeckOpen = useCallback((open: boolean) => {
-    setCommandDeckOpenState(open);
-  }, []);
 
   const setActiveCommands = useCallback((commands: CommandCapability[]) => {
     setActiveCommandsState(commands);
   }, []);
+
+  const pathname = usePathname();
+  // Extract route scope (e.g., /revenue, /ai-engine, /signal) from pathname
+  const activeRoute = pathname.split('/').filter(Boolean).slice(1).join('/') || 'dashboard';
+
+  const voice = useVoiceCommand({ resellerId: resellerSlug });
+
+  const startListening = voice.startListening;
+  const stopListeningAndProcess = voice.stopListeningAndProcess;
+  const abortRecording = voice.abortRecording;
+  const resetState = voice.resetState;
 
   const value: HannahContextValue = {
     isHannahAwake,
@@ -69,10 +98,19 @@ export function HannahProvider({ children }: { children: ReactNode }) {
     setCurrentBriefing,
     hasGreeted,
     setHasGreeted,
-    isCommandDeckOpen,
-    setCommandDeckOpen,
     activeCommands,
     setActiveCommands,
+    isRecording: voice.isRecording,
+    isProcessing: voice.isProcessing,
+    isSpeaking: voice.isSpeaking,
+    volumeLevel: voice.volumeLevel,
+    transcript: voice.transcript,
+    error: voice.error,
+    activeRoute,
+    startListening,
+    stopListeningAndProcess,
+    abortRecording,
+    resetState,
   };
 
   return (
@@ -89,4 +127,10 @@ export function useHannah(): HannahContextValue {
     throw new Error('useHannah must be used within a <HannahProvider>');
   }
   return ctx;
+}
+
+// ── Route Segment Guard ────────────────────────────────────────────────
+export function useActiveRoute(): string {
+  const { activeRoute } = useHannah();
+  return activeRoute;
 }
