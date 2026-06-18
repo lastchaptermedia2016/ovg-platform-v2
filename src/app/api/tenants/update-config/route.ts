@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createAuthClient, getAuthenticatedUser, unauthorizedResponse, validateTenantOwnership } from '@/lib/auth/server';
 import { z } from 'zod';
 
 // Request validation schema — expanded to enforce the atomic consolidated payload.
@@ -23,54 +23,13 @@ const UpdateConfigSchema = z.object({
 });
 
 // ──────────────────────────────────────────────
-// Double-lock ownership verification
-// Validates that authenticated user owns/reseller for the tenant
-// ──────────────────────────────────────────────
-async function validateTenantOwnership(
-  userId: string,
-  tenantId: string,
-): Promise<{ resellerId: string } | null> {
-  const supabase = await createClient();
-
-  // Resolve tenant to get its reseller_id
-  const { data: tenant, error } = await supabase
-    .from("tenants")
-    .select("reseller_id")
-    .eq("id", tenantId)
-    .single();
-
-  if (error || !tenant?.reseller_id) {
-    return null;
-  }
-
-  // Verify user has access to this reseller via user_resellers junction
-  const { data: userReseller } = await supabase
-    .from("user_resellers")
-    .select("reseller_id")
-    .eq("user_id", userId)
-    .eq("reseller_id", tenant.reseller_id)
-    .maybeSingle();
-
-  if (!userReseller) {
-    return null;
-  }
-
-  return { resellerId: tenant.reseller_id };
-}
-
+// POST — Atomic tenant config update via RPC
 // ──────────────────────────────────────────────
 export async function POST(request: NextRequest) {
   try {
-    // ── STEP 1: Session Validation ─────────────────
-    const supabase = await createClient();
-    const { data: { session }, error: authError } = await supabase.auth.getSession();
-
-    if (authError || !session) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized access path" },
-        { status: 401 }
-      );
-    }
+    // ── STEP 1: Authenticate user ───────────────────
+    const { userId, error: authError } = await getAuthenticatedUser();
+    if (authError || !userId) return unauthorizedResponse();
 
     // ── STEP 2: Parse and validate request body ─────
     const body = await request.json();
@@ -84,9 +43,10 @@ export async function POST(request: NextRequest) {
     }
 
     const { tenantId, branding, features } = validationResult.data;
+    const supabase = await createAuthClient();
 
     // ── STEP 3: Double-lock tenant ownership verification ──
-    const ownership = await validateTenantOwnership(session.user.id, tenantId);
+    const ownership = await validateTenantOwnership(userId, tenantId);
 
     if (!ownership) {
       return NextResponse.json(
@@ -94,17 +54,6 @@ export async function POST(request: NextRequest) {
         { status: 403 }
       );
     }
-
-    // Transaction Logging
-    console.log('=== ATOMIC UPDATE CONFIG REQUEST ===');
-    console.log('tenantId:', tenantId);
-    console.log('resellerId (validated):', ownership.resellerId);
-    console.log('branding:', JSON.stringify(branding, null, 2));
-    console.log('features:', JSON.stringify(features, null, 2));
-    console.log('timestamp:', new Date().toISOString());
-
-    // Initialize Supabase client (already have from session check)
-    // Note: supabaseAdmin removed - using request-bound client only
 
     // ================================================================
     // ATOMIC COMMIT via sync_tenant_config RPC
@@ -161,9 +110,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log('=== ATOMIC UPDATE SUCCESS ===');
-    console.log('widget_config:', JSON.stringify(result.widget_config, null, 2));
-
     return NextResponse.json({
       success: true,
       widget_config: result.widget_config ?? null,
@@ -172,10 +118,7 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error('=== UNEXPECTED ERROR ===');
-    console.error('Error:', error);
-    console.error('Error message:', errorMessage);
-    if (error instanceof Error) console.error('Error stack:', error.stack);
+    console.error('Unexpected error:', errorMessage);
     return NextResponse.json(
       { success: false, error: 'Internal server error', details: errorMessage },
       { status: 500 }

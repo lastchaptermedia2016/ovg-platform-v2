@@ -3,6 +3,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { Dialog, Transition } from "@headlessui/react";
 import { PLAN_TIER_COSTS, ADDON_COSTS } from "@/config/pricing";
+import { provisionTenantPricing } from "@/app/(admin)/master-gate/actions";
 
 // ──────────────────────────────────────────────
 // Types
@@ -156,33 +157,35 @@ export function TenantPricingModal({
     return base + addons;
   }, [selectedTier, whatsappActive, signalsActive]);
 
-  // Save handler — POST to the authoritative API route
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Save handler — calls the Server Action directly
   const handleSave = useCallback(async () => {
     setInternalSaving(true);
+    setSaveError(null);
     try {
-      const res = await fetch("/api/tenants/update-pricing", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tenantId: tenant.id,
-          planTier: selectedTier,
-          indicators: {
-            sms: whatsappActive ? "active" as IndicatorStatus : "inactive" as IndicatorStatus,
-            signal: signalsActive ? "active" as IndicatorStatus : "inactive" as IndicatorStatus,
-          },
-        }),
+      const result = await provisionTenantPricing({
+        tenantId: tenant.id,
+        planTier: selectedTier,
+        indicators: {
+          sms: whatsappActive ? "active" as IndicatorStatus : "inactive" as IndicatorStatus,
+          signal: signalsActive ? "active" as IndicatorStatus : "inactive" as IndicatorStatus,
+        },
+        computedRetail: computedRetail,
       });
 
-      if (res.ok) {
+      if (result.success) {
         onSaved();
         onClose();
+      } else {
+        setSaveError(result.error ?? 'Failed to save pricing');
       }
     } catch (_err) {
-      console.error("Failed to save pricing:", _err);
+      setSaveError(_err instanceof Error ? _err.message : 'Unexpected error');
     } finally {
       setInternalSaving(false);
     }
-  }, [tenant.id, selectedTier, whatsappActive, signalsActive, onSaved, onClose]);
+  }, [tenant.id, selectedTier, whatsappActive, signalsActive, computedRetail, onSaved, onClose]);
 
   // Reset internal state when tenant changes
   const handleClose = useCallback(() => {
@@ -287,6 +290,13 @@ export function TenantPricingModal({
                     />
                   </div>
                 </div>
+
+                {/* ── Error Banner ── */}
+                {saveError ? (
+                  <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-400">
+                    {saveError}
+                  </div>
+                ) : null}
 
                 {/* ── Estimated Retail Summary ── */}
                 <div className="mb-6 p-4 rounded-xl bg-gradient-to-r from-[#0097b2]/10 to-[#D4AF37]/10 border border-[#0097b2]/20">

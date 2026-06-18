@@ -1,7 +1,6 @@
 // Session management for authentication
-// Replace with your actual implementation
-
-import { createClient } from "@/lib/supabase/server";
+// ⚠️ SERVER-SIDE getSession() REMOVED — migrating to getAuthenticatedUser() in src/lib/auth/server.ts
+// Client-side utilities remain untouched.
 
 export interface User {
   id: string;
@@ -17,31 +16,16 @@ export interface GetUserResult {
   error?: Error;
 }
 
+// Server-side getUser now delegates to the centralized auth utility.
+// This ensures getUser() and getSession() are never mixed on the server.
 export async function getUser(): Promise<User | null> {
   try {
-    const supabase = await createClient();
-    const { data: { user }, error } = await supabase.auth.getUser();
-    
-    if (error || !user) {
+    const { getAuthenticatedUser } = await import('./server');
+    const result = await getAuthenticatedUser();
+    if (result.error || !result.user) {
       return null;
     }
-    
-    return user as User;
-  } catch {
-    return null;
-  }
-}
-
-export async function getSession() {
-  try {
-    const supabase = await createClient();
-    const { data: { session }, error } = await supabase.auth.getSession();
-    
-    if (error || !session) {
-      return null;
-    }
-    
-    return session;
+    return result.user as User;
   } catch {
     return null;
   }

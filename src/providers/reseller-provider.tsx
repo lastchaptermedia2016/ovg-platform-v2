@@ -3,22 +3,11 @@
 import { useEffect, useState, ReactNode } from "react";
 import { createBrowserClient } from "@/lib/supabase";
 import { BrandingData } from "@/types";
+import type { ResellerRecord } from "@/types/database";
 
 interface ResellerProviderProps {
   children: ReactNode;
   resellerSlug: string;
-}
-
-interface ResellerData {
-  id: string;
-  tenant_id: string;
-  name: string;
-  branding_colors: {
-    primary: string;
-    secondary: string;
-  };
-  accent_color: string;
-  logo_url: string;
 }
 
 export function ResellerProvider({ 
@@ -30,9 +19,8 @@ export function ResellerProvider({
 
   useEffect(() => {
     async function fetchResellerBranding() {
-      // 🔷 Hydration Guard: Prevent query until real URL slug is ready
+      // Hydration Guard: skip until real slug is ready
       if (!resellerSlug || resellerSlug.startsWith('[') || resellerSlug === 'undefined') {
-        console.log('%c[Pierre] ⏳ ResellerProvider Guard: Skipping fetch - resellerSlug not ready', 'color: #0097b2; font-weight: bold;');
         setIsLoading(false);
         return;
       }
@@ -48,7 +36,7 @@ export function ResellerProvider({
           .single();
 
         if (error || !data) {
-          console.error("Failed to fetch reseller branding:", error);
+          console.error("Failed to fetch reseller branding");
           // Fallback to default branding
           setBranding({
             name: "Voice Platform",
@@ -59,13 +47,22 @@ export function ResellerProvider({
           return;
         }
 
-        const reseller = data as ResellerData;
-        
+        const reseller = data as unknown as ResellerRecord;
+
+        const primaryColor =
+          (reseller.branding_bag?.primaryColor as string | undefined) ??
+          reseller.branding_color ??
+          "#0097b2";
+        const accentColor =
+          (reseller.branding_bag?.accentColor as string | undefined) ??
+          reseller.accent_color ??
+          "#D4AF37";
+
         const brandingData: BrandingData = {
           name: reseller.name,
           logoUrl: reseller.logo_url || "/logo-default.svg",
-          primaryColor: reseller.branding_colors?.primary || "#0097b2",
-          accentColor: reseller.accent_color || "#D4AF37",
+          primaryColor,
+          accentColor,
         };
 
         setBranding(brandingData);
@@ -77,7 +74,6 @@ export function ResellerProvider({
           root.style.setProperty("--brand-accent", brandingData.accentColor);
           root.style.setProperty("--brand-name", `"${brandingData.name}"`);
           
-          console.log("🎨 Branding injected:", brandingData);
         }
       } catch (error) {
         console.error("Error fetching reseller branding:", error);
@@ -91,9 +87,8 @@ export function ResellerProvider({
 
   // Initialize Supabase Realtime for Sales Tapper alerts
   useEffect(() => {
-    // 🔷 Hydration Guard: Prevent subscription until real URL slug is ready
+    // Hydration Guard: skip subscription until real slug is ready
     if (!resellerSlug || resellerSlug.startsWith('[') || resellerSlug === 'undefined') {
-      console.log('%c[Pierre] ⏳ Realtime Guard: Skipping subscription - resellerSlug not ready', 'color: #0097b2; font-weight: bold;');
       return;
     }
 
@@ -116,9 +111,7 @@ export function ResellerProvider({
           window.dispatchEvent(new CustomEvent("intent-alert", { detail: payload.new }));
         }
       )
-      .subscribe((status) => {
-        console.log(`📡 Realtime subscription status: ${status}`);
-      });
+      .subscribe();
 
     return () => {
       channel.unsubscribe();

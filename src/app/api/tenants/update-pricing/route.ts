@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createAuthClient, getAuthenticatedUser, unauthorizedResponse, validateTenantOwnership } from "@/lib/auth/server";
 import { z } from "zod";
 import { PLAN_TIER_COSTS, ADDON_COSTS } from "@/config/pricing";
 
@@ -34,56 +34,13 @@ function computeNewMrr(
 }
 
 // ──────────────────────────────────────────────
-// Double-lock ownership verification
-// Validates that authenticated user owns/reseller for the tenant
-// ──────────────────────────────────────────────
-async function validateTenantOwnership(
-  userId: string,
-  tenantId: string,
-): Promise<{ resellerId: string } | null> {
-  const supabase = await createClient();
-
-  // Resolve tenant to get its reseller_id
-  const { data: tenant, error } = await supabase
-    .from("tenants")
-    .select("reseller_id")
-    .eq("id", tenantId)
-    .single();
-
-  if (error || !tenant?.reseller_id) {
-    return null;
-  }
-
-  // Verify user has access to this reseller via user_resellers junction
-  const { data: userReseller } = await supabase
-    .from("user_resellers")
-    .select("reseller_id")
-    .eq("user_id", userId)
-    .eq("reseller_id", tenant.reseller_id)
-    .maybeSingle();
-
-  if (!userReseller) {
-    return null;
-  }
-
-  return { resellerId: tenant.reseller_id };
-}
-
-// ──────────────────────────────────────────────
 // POST — Update tenant pricing and add-ons
 // ──────────────────────────────────────────────
 export async function POST(request: NextRequest) {
   try {
-    // ── STEP 1: Session Validation ─────────────────
-    const supabase = await createClient();
-    const { data: { session }, error: authError } = await supabase.auth.getSession();
-
-    if (authError || !session) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized access path" },
-        { status: 401 },
-      );
-    }
+    // ── STEP 1: Authenticate user ───────────────────
+    const { userId, error: authError } = await getAuthenticatedUser();
+    if (authError || !userId) return unauthorizedResponse();
 
     // ── STEP 2: Parse and validate request body ─────
     const body = await request.json();
@@ -101,9 +58,10 @@ export async function POST(request: NextRequest) {
     }
 
     const { tenantId, planTier, indicators } = validationResult.data;
+    const supabase = await createAuthClient();
 
     // ── STEP 3: Double-lock tenant ownership verification ──
-    const ownership = await validateTenantOwnership(session.user.id, tenantId);
+    const ownership = await validateTenantOwnership(userId, tenantId);
 
     if (!ownership) {
       return NextResponse.json(
@@ -116,15 +74,8 @@ export async function POST(request: NextRequest) {
     // Compute the new retail MRR server-side
     const newMrr = computeNewMrr(planTier, indicators);
 
-    console.log("=== UPDATE PRICING REQUEST ===");
-    console.log("tenantId:", tenantId);
-    console.log("resellerId (validated):", ownership.resellerId);
-    console.log("planTier:", planTier);
-    console.log("indicators:", JSON.stringify(indicators));
-    console.log("computedMrr:", newMrr);
-
     // Explicit ownership filter appended to mutation
-    const { error } = await supabase
+    const { error: updateError } = await supabase
       .from("tenants")
       .update({
         plan_tier: planTier,
@@ -135,18 +86,14 @@ export async function POST(request: NextRequest) {
       .eq("id", tenantId)
       .eq("reseller_id", ownership.resellerId);
 
-    if (error) {
-      console.error("=== UPDATE PRICING ERROR ===");
-      console.error("Database error:", error.message);
+    if (updateError) {
+      console.error("Database error:", updateError.message);
 
       return NextResponse.json(
         { success: false, error: "Database write failed" },
         { status: 500 },
       );
     }
-
-    console.log("=== UPDATE PRICING SUCCESS ===");
-    console.log("newMrr:", newMrr);
 
     return NextResponse.json({
       success: true,
@@ -156,7 +103,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : String(error);
-    console.error("=== UPDATE PRICING UNEXPECTED ERROR ===", errorMessage);
+    console.error("Unexpected error:", errorMessage);
     return NextResponse.json(
       { success: false, error: "Internal server error", details: errorMessage },
       { status: 500 },

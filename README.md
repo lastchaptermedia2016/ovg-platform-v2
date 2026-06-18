@@ -24,7 +24,22 @@ The **OVG Platform** is now a fully-functional enterprise solution with advanced
 - Secure authentication and session management via Supabase SSR
 - `user_resellers` table for secure reseller-user association
 
-#### 2. **Advanced Branding Studio**
+#### 1.5 **Master Admin Gate**
+- Isolated Super Admin login at `/master-gate/login` bypassing multi-tenant reseller checks
+- Premium high-contrast dark theme matching OVG branding
+- Server-side role enforcement (`app_metadata.role === 'super_admin'`)
+- Unauthorized users are signed out immediately with explicit error messaging
+- `/master-gate` layout prevents infinite redirect loops for the login route
+
+#### 2. **Master Admin Console**
+- Bird's-eye system overview dashboard for platform owners
+- Metrics panel: Total Active Resellers, Pending Provisioning, System Health
+- Tenant Registry table fetching all resellers via service-role Supabase client
+- Columns: Name, Slug (`tenant_id`), Owner Email, Status (color-coded), Stripe Status, Created At
+- Strict TypeScript `ResellerRecord` interface aligned with database schema
+- OVG dark-theme palette preserved throughout
+
+#### 3. **Advanced Branding Studio**
 - Real-time visual customization with Live Preview
 - Glassmorphism effects and gradient backgrounds
 - Color harmony and opacity tuning

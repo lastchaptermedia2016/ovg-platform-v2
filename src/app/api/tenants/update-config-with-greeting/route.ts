@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createAuthClient, getAuthenticatedUser, unauthorizedResponse, validateTenantOwnership } from '@/lib/auth/server';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
@@ -12,55 +12,18 @@ const UpdateConfigSchema = z.object({
 });
 
 // ──────────────────────────────────────────────
-// Double-lock ownership verification
-// Validates that authenticated user owns/reseller for the tenant
-// ──────────────────────────────────────────────
-async function validateTenantOwnership(
-  userId: string,
-  tenantId: string,
-): Promise<{ resellerId: string } | null> {
-  const supabase = await createClient();
-
-  // Resolve tenant to get its reseller_id
-  const { data: tenant, error } = await supabase
-    .from("tenants")
-    .select("reseller_id")
-    .eq("id", tenantId)
-    .single();
-
-  if (error || !tenant?.reseller_id) {
-    return null;
-  }
-
-  // Verify user has access to this reseller via user_resellers junction
-  const { data: userReseller } = await supabase
-    .from("user_resellers")
-    .select("reseller_id")
-    .eq("user_id", userId)
-    .eq("reseller_id", tenant.reseller_id)
-    .maybeSingle();
-
-  if (!userReseller) {
-    return null;
-  }
-
-  return { resellerId: tenant.reseller_id };
-}
-
+// POST — Update tenant config with optional greeting
 // ──────────────────────────────────────────────
 export async function POST(request: NextRequest) {
   try {
-    // ── STEP 1: Session Validation ─────────────────
-    const supabase = await createClient();
-    const { data: { session }, error: authError } = await supabase.auth.getSession();
-
-    if (authError || !session) {
-      return NextResponse.json({ error: 'Unauthorized access path' }, { status: 401 });
-    }
+    // ── STEP 1: Authenticate user ───────────────────
+    const { userId, error: authError } = await getAuthenticatedUser();
+    if (authError || !userId) return unauthorizedResponse();
 
     // ── STEP 2: Parse and validate request body ─────
     const body = await request.json();
-    
+    const supabase = await createAuthClient();
+
     const validationResult = UpdateConfigSchema.safeParse(body);
     if (!validationResult.success) {
       console.error('[UpdateConfig] Validation error:', validationResult.error.flatten());
@@ -73,7 +36,7 @@ export async function POST(request: NextRequest) {
     const { tenantId, configPatch, aiSettings } = validationResult.data;
 
     // ── STEP 3: Double-lock tenant ownership verification ──
-    const ownership = await validateTenantOwnership(session.user.id, tenantId);
+    const ownership = await validateTenantOwnership(userId, tenantId);
 
     if (!ownership) {
       return NextResponse.json({ error: 'Forbidden - tenant access denied' }, { status: 403 });
@@ -172,4 +135,26 @@ export async function POST(request: NextRequest) {
     console.error('[API] update-config-with-greeting error:', error);
     return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
+}
+
+// Handle unsupported methods
+export async function GET() {
+  return NextResponse.json(
+    { error: 'Method not allowed' },
+    { status: 405 }
+  );
+}
+
+export async function PUT() {
+  return NextResponse.json(
+    { error: 'Method not allowed' },
+    { status: 405 }
+  );
+}
+
+export async function DELETE() {
+  return NextResponse.json(
+    { error: 'Method not allowed' },
+    { status: 405 }
+  );
 }

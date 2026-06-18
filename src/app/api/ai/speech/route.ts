@@ -8,14 +8,19 @@ if (typeof window !== 'undefined') {
 
 export async function POST(req: Request) {
   try {
-    const { text, voice, metadata } = await req.json();
+    const { text, voice, resellerSlug, metadata } = await req.json();
     const apiKey = process.env.GROQ_API_KEY;
+
+    // Bridge dual frontend patterns: top-level resellerSlug (ClientBrandingStudio)
+    // takes precedence; fall back to nested metadata (UniversalCommandModal) for
+    // backward compatibility.
+    const activeResellerSlug = resellerSlug ?? metadata?.resellerSlug;
 
     // Log metadata for clean tracking
     console.log('[TTS] Request:', { 
       textLength: text?.length, 
       voice, 
-      resellerSlug: metadata?.resellerSlug 
+      resellerSlug: activeResellerSlug 
     });
 
     if (!apiKey) {
