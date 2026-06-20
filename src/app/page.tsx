@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback, type MouseEvent } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { Zap, Mic, Brain } from "lucide-react";
 
 function ParticleCanvas() {
@@ -122,6 +122,7 @@ export default function Home() {
   const [isTypingStatus, setIsTypingStatus] = useState(true);
   const fullText = "OVG Platform v2: Phoenix Rising";
   const router = useRouter();
+  const pathname = usePathname();
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const handleResellerTabClick = useCallback(
@@ -144,6 +145,24 @@ export default function Home() {
 
       setTimeout(() => {
         router.push('/auth');
+      }, 150);
+    },
+    [router]
+  );
+
+  const handleClientClick = useCallback(
+    (event: MouseEvent<HTMLAnchorElement>) => {
+      event.preventDefault();
+
+      if (typeof window !== "undefined") {
+        const audio = new Audio('/clientsloginwelcom.mp3');
+        audio.play().catch((_error) => {
+          console.log("Playback deferred by browser policy");
+        });
+      }
+
+      setTimeout(() => {
+        router.push('/client-auth');
       }, 150);
     },
     [router]
@@ -258,12 +277,17 @@ export default function Home() {
               <span className="absolute -top-4 right-0 bg-gray-100 text-gray-500 text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap">
                 Coming Soon
               </span>
-              <a
-                href="#"
-                className="block px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-300/50 text-gray-400 font-medium rounded-lg text-[10px] sm:text-sm whitespace-nowrap"
-              >
-                CLIENT PORTAL
-              </a>
+               <Link
+                 href="/client-auth"
+                 onClick={handleClientClick}
+                 className={`block px-3 py-1.5 sm:px-4 sm:py-2 border rounded-lg text-[10px] sm:text-sm whitespace-nowrap font-medium transition-colors ${
+                   pathname === '/client-auth'
+                     ? 'border-[#0097b2] text-[#0097b2]'
+                     : 'border-gray-300/50 text-gray-400'
+                 }`}
+               >
+                 CLIENT PORTAL
+               </Link>
             </div>
 
             {/* Reseller Access */}
