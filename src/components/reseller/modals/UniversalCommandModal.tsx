@@ -5,6 +5,12 @@ import { mapVisualStyleToPersona } from '@/lib/voice-visual-harmony';
 import { createClient } from '@/lib/supabase/client';
 import { resolveResellerId } from '@/lib/supabase/resolve-reseller-id';
 
+function triggerHapticFeedback(): void {
+  if (typeof navigator !== "undefined" && navigator.vibrate) {
+    navigator.vibrate(30);
+  }
+}
+
 type Step = 'command' | 'draft' | 'review' | 'confirm';
 type VoiceEntryStep = 0 | 1 | 2 | 3 | 4; // Multi-step voice entry
 
@@ -460,6 +466,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
       clearTimeout(pttStopTimerRef.current);
       pttStopTimerRef.current = null;
     }
+    triggerHapticFeedback();
     startListening();
   }, [startListening]);
 
@@ -1192,7 +1199,10 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
                       onMouseDown={handlePTTMouseDown}
                       onMouseUp={handlePTTStop}
                       onMouseLeave={handlePTTStop}
-                      className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 flex-shrink-0 select-none ${
+                      onTouchStart={(e) => { e.preventDefault(); handlePTTMouseDown(); }}
+                      onTouchEnd={(e) => { e.preventDefault(); handlePTTStop(); }}
+                      onTouchCancel={() => handlePTTStop()}
+                      className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 flex-shrink-0 touch-none select-none active:scale-95 ${
                         isListening
                           ? 'bg-[#0097b2] text-white shadow-[0_0_15px_#0097b2] animate-pulse'
                           : 'bg-white/5 text-white/60 hover:bg-white/10'

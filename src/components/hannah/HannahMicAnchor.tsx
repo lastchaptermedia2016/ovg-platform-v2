@@ -3,6 +3,12 @@
 import { useCallback } from "react";
 import { useHannah } from "@/contexts/HannahContext";
 
+function triggerHapticFeedback(): void {
+  if (typeof navigator !== "undefined" && navigator.vibrate) {
+    navigator.vibrate(30);
+  }
+}
+
 export function HannahMicAnchor() {
   const { isRecording, isProcessing, startListening, stopListeningAndProcess } =
     useHannah();
@@ -21,12 +27,21 @@ export function HannahMicAnchor() {
   const handleTouchStart = useCallback(
     (e: React.TouchEvent) => {
       e.preventDefault();
+      triggerHapticFeedback();
       handleMouseDown();
     },
     [handleMouseDown],
   );
 
   const handleTouchEnd = useCallback(
+    (e: React.TouchEvent) => {
+      e.preventDefault();
+      handleMouseUp();
+    },
+    [handleMouseUp],
+  );
+
+  const handleTouchCancel = useCallback(
     (e: React.TouchEvent) => {
       e.preventDefault();
       handleMouseUp();
@@ -43,8 +58,9 @@ export function HannahMicAnchor() {
       onMouseUp={handleMouseUp}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchCancel}
       aria-label="Push to talk"
-      className={`fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full backdrop-blur-md bg-slate-950/80 border flex items-center justify-center cursor-pointer transition-all duration-300 ease-in-out ${
+      className={`fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full backdrop-blur-md bg-slate-950/80 border flex items-center justify-center cursor-pointer touch-none select-none active:scale-95 duration-75 transition-transform ${
         isActive
           ? "border-[#00e5ff] shadow-[0_0_25px_rgba(0,229,255,0.4)]"
           : "border-[#00e5ff]/30 shadow-[0_0_15px_rgba(0,229,255,0.15)]"

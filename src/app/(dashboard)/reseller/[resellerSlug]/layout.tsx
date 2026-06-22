@@ -7,7 +7,6 @@ import { HannahProvider } from "@/contexts/HannahContext";
 import { CommandDeckProvider } from "@/contexts/CommandDeckContext";
 import { CommandDeckPortal } from "@/components/hannah/CommandDeckPortal";
 import { GlobalPTTListener } from "@/components/reseller/GlobalPTTListener";
-import { HannahMicAnchor } from "@/components/hannah/HannahMicAnchor";
 
 // Production Excellence: Critical Security - Server-side Authorization Check
 async function verifyResellerAccess(resellerSlug: string) {
@@ -181,7 +180,6 @@ export default async function ResellerLayout({
                   <GlobalPTTListener />
                   <CommandDeckPortal />
                   {children}
-                  <HannahMicAnchor />
                 </HannahProvider>
               </CommandDeckProvider>
             </main>

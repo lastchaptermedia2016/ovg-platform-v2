@@ -2,6 +2,12 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+
+function triggerHapticFeedback(): void {
+  if (typeof navigator !== "undefined" && navigator.vibrate) {
+    navigator.vibrate(30);
+  }
+}
 import Image from 'next/image';
 import { ColorPicker } from '@/components/reseller/ColorPicker';
 import { useBrandingStudio } from '@/hooks/use-branding-studio';
@@ -1273,18 +1279,18 @@ export function ClientBrandingStudio({
                 </svg>
                 <span>Back to Clients</span>
               </button>
-              {/* Voice Command Mic Button — Push-to-Talk */}
-              <button
-                onMouseDown={() => startRecording()}
-                onMouseUp={() => stopListeningAndProcess()}
-                onMouseLeave={() => {
-                  // Guard: if the user drags off the button mid-press, abort instead of letting the press hang
-                  if (isRecording) abortRecording();
-                }}
-                onTouchStart={(e) => { e.preventDefault(); startRecording(); }}
-                onTouchEnd={(e) => { e.preventDefault(); stopListeningAndProcess(); }}
-                onTouchCancel={() => abortRecording()}
-                className={`relative p-3 rounded-full transition-all select-none ${
+{/* Voice Command Mic Button — Push-to-Talk */}
+               <button
+                 onMouseDown={() => startRecording()}
+                 onMouseUp={() => stopListeningAndProcess()}
+                 onMouseLeave={() => {
+                   // Guard: if the user drags off the button mid-press, abort instead of letting the press hang
+                   if (isRecording) abortRecording();
+                 }}
+                 onTouchStart={(e) => { e.preventDefault(); triggerHapticFeedback(); startRecording(); }}
+                 onTouchEnd={(e) => { e.preventDefault(); stopListeningAndProcess(); }}
+                 onTouchCancel={() => abortRecording()}
+                 className={`relative p-3 rounded-full transition-all touch-none select-none active:scale-95 duration-75 ${
                   isRecording
                     ? 'bg-red-600 animate-pulse shadow-lg shadow-red-500/50 ring-2 ring-red-400'
                     : isProcessing

@@ -3,11 +3,17 @@
 import { Mic } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { useCallback, useEffect, useRef } from 'react';
+import { SignOutButton } from './SignOutButton';
+import { SystemHelpTooltip } from './SystemHelpTooltip';
 
 /** Windows 300 ms: synthetic mouse events trailing a real touch are dropped. */
 const TOUCH_DEDUP_MS = 300;
-import { SignOutButton } from './SignOutButton';
-import { SystemHelpTooltip } from './SystemHelpTooltip';
+
+function triggerHapticFeedback(): void {
+  if (typeof navigator !== "undefined" && navigator.vibrate) {
+    navigator.vibrate(30);
+  }
+}
 
 interface MasterpieceHeaderProps {
   /** True while the mic is actively capturing audio. */
@@ -116,7 +122,10 @@ export function MasterpieceHeader({
   const handleMicMouseDown = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     const isTouch = e.type.startsWith('touch');
     if (!isTouch && Date.now() - lastTouchEventRef.current < TOUCH_DEDUP_MS) return;
-    if (isTouch) lastTouchEventRef.current = Date.now();
+    if (isTouch) {
+      lastTouchEventRef.current = Date.now();
+      triggerHapticFeedback();
+    }
     console.log('[PTT] 🔥 Mic %s captured — dispatching startRecording', e.type);
     onStartRecording?.();
   }, [onStartRecording]);
@@ -198,7 +207,7 @@ export function MasterpieceHeader({
             onTouchStart={handleMicMouseDown}
             onTouchEnd={handleMicMouseUp}
             onTouchCancel={handleMicMouseLeave}
-            className={`relative flex items-center gap-2 px-3 py-1.5 rounded-full pointer-events-auto cursor-pointer active:scale-95 transition-all duration-300 ease-out overflow-hidden ${
+            className={`relative flex items-center gap-2 px-3 py-1.5 rounded-full pointer-events-auto cursor-pointer touch-none select-none active:scale-95 duration-75 transition-transform overflow-hidden ${
               isAwaitingVoiceConfirm ? 'bg-emerald-500/10 border border-emerald-500/30' : ''
             } ${
               isMicActive ? 'bg-[#0097b2]/20 border border-[#0097b2]/40' : ''

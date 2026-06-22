@@ -4,6 +4,8 @@ import { useState, useRef, useCallback, useEffect, type MutableRefObject } from 
 import { isInvalidSlug } from '@/lib/utils/guard';
 import { useCommandDeck } from '@/contexts/CommandDeckContext';
 import { transcodeBlobToWav } from '@/utils/audio/transcode-to-wav';
+import { createClient as createBrowserClient } from '@/lib/supabase/client';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 interface UseVoiceCommandReturn {
   /** True while the mic is actively capturing audio. */
@@ -159,6 +161,18 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   const onActionsReceivedRef = useRef(onActionsReceived);
   useEffect(() => { onActionsReceivedRef.current = onActionsReceived; }, [onActionsReceived]);
 
+  const channelRef = useRef<RealtimeChannel | null>(null);
+
+  const broadcastStatus = useCallback((status: "interacting" | "processing" | "online") => {
+    const channel = channelRef.current;
+    if (!channel) return;
+    channel.send({
+      type: "broadcast",
+      event: "status_change",
+      payload: { status, timestamp: new Date().toISOString() },
+    });
+  }, []);
+
   const getAudioContextConstructor = useCallback((): typeof AudioContext => {
     if (typeof AudioContext !== 'undefined') return AudioContext;
     if (typeof window !== 'undefined' && 'webkitAudioContext' in window) {
@@ -251,6 +265,25 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
 
   useEffect(() => { tenantContextRef.current = options.tenantContext; }, [options.tenantContext]);
   useEffect(() => { resellerIdRef.current = options.resellerId; }, [options.resellerId]);
+
+  useEffect(() => {
+    const tenantId = _tenantContext?.tenantId;
+    if (!tenantId) return;
+    const supabase = createBrowserClient();
+    const channel = supabase.channel(`presence:${tenantId}`);
+    channelRef.current = channel;
+    channel.subscribe((statusSub) => {
+      if (statusSub === "SUBSCRIBED") {
+        console.log(`[VoiceCommand] 📡 Realtime channel subscribed for tenant: ${tenantId}`);
+      }
+    });
+    return () => {
+      if (channelRef.current) {
+        try { supabase.removeChannel(channelRef.current); } catch { /* ignore */ }
+        channelRef.current = null;
+      }
+    };
+  }, [_tenantContext?.tenantId]);
 
   const deriveActionsFromPayload = useCallback(
     (payload: unknown, actionType?: string): IncomingAIAction[] => {
@@ -509,8 +542,9 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     } finally {
       isProcessingRef.current = false;
       setIsProcessing(false);
+      broadcastStatus("online");
     }
-  }, [onTranscript, onAIResponse, onError, skipAIPipeline, _currentConfig, deriveActionsFromPayload, validateAudioResponse, setCommandDeckOpen]);
+  }, [onTranscript, onAIResponse, onError, skipAIPipeline, _currentConfig, deriveActionsFromPayload, validateAudioResponse, setCommandDeckOpen, broadcastStatus]);
 
   // ─── STRICT PTT: startListening — mousedown / touchstart handler ────────
   // Alias: startRecording is exposed on the return as startRecording for UI compatibility.
@@ -518,10 +552,6 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     console.log('[VoiceCommand] 🎤 startRecording invoked — entering mic capture path');
     if (isRecordingRef.current) {
       console.log('[VoiceCommand] 🚫 Idempotency guard — already recording');
-      return;
-    }
-    if (ttsPlaybackActiveRef.current) {
-      console.warn('[VoiceCommand] 🚫 TTS active — blocking mic start');
       return;
     }
     console.log('[VoiceCommand] ✅ Idempotency check cleared — proceeding with getUserMedia');
@@ -554,6 +584,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
 
       console.log(`[VoiceCommand] 📡 getUserMedia granted — tracks: ${stream.getTracks().map(t => `${t.kind}/${t.readyState}`).join(', ')}`);
       streamRef.current = stream;
+      broadcastStatus("interacting");
 
       const AudioContextCtor = getAudioContextConstructor();
       const audioContext = new AudioContextCtor();
@@ -619,7 +650,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       onError?.(errorMsg);
       cleanup();
     }
-  }, [processAudioPipeline, cleanup, onError, getAudioContextConstructor]);
+  }, [processAudioPipeline, cleanup, onError, getAudioContextConstructor, broadcastStatus]);
 
   // Public API alias: startListening matches the task spec method name
   const startListening = startRecording;
@@ -646,6 +677,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     }
 
     stoppedByUserRef.current = true;
+    broadcastStatus("processing");
     // ── PTT Race Guard ──────────────────────────────────────────────────
     // If getUserMedia hasn't resolved yet (mediaRecorderRef is null), set
     // the abort flag so the pending startRecording callback discards the
@@ -661,7 +693,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     } else {
       console.warn(`[VoiceCommand] 🚫 stopListeningAndProcess — mediaRecorder state is ${mediaRecorderRef.current?.state ?? 'null'}, not recording`);
     }
-  }, [cleanup]);
+  }, [cleanup, broadcastStatus]);
 
   const abortRecording = useCallback(() => {
     if (!isRecordingRef.current) return;
@@ -671,7 +703,8 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     setIsRecording(false);
     console.log('[VoiceCommand] 🛑 abortRecording — drag-off or touch-cancel detected');
     cleanup();
-  }, [cleanup]);
+    broadcastStatus("online");
+  }, [cleanup, broadcastStatus]);
 
   const resetState = useCallback(() => {
     isProcessingRef.current = false;

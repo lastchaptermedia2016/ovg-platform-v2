@@ -3,6 +3,7 @@ import Pod from "@/features/widget/components/Pod";
 import PodBubble from "@/components/widget/PodBubble";
 import { getTenantBySlug } from "@/core/tenant/db";
 import { notFound } from "next/navigation";
+import WidgetPresence from "./WidgetPresence";
 
 export default async function WidgetPage({
   params,
@@ -32,6 +33,7 @@ export default async function WidgetPage({
         voiceId={tenant.voice_id}
         name={tenant.name}
       />
+      <WidgetPresence tenantId={tenantId} />
     </TenantProvider>
   );
 }
