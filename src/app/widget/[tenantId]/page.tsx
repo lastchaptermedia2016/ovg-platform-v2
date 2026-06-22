@@ -1,6 +1,7 @@
 import { TenantProvider } from "@/providers/tenant-provider";
 import Pod from "@/features/widget/components/Pod";
 import PodBubble from "@/components/widget/PodBubble";
+import ChatWidget from "@/components/widget/ChatWidget";
 import { getTenantBySlug } from "@/core/tenant/db";
 import { notFound } from "next/navigation";
 import WidgetPresence from "./WidgetPresence";
@@ -34,6 +35,7 @@ export default async function WidgetPage({
         name={tenant.name}
       />
       <WidgetPresence tenantId={tenantId} />
+      <ChatWidget tenantId={tenantId} />
     </TenantProvider>
   );
 }

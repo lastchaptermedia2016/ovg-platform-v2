@@ -635,6 +635,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
         }
 
         console.log('[VoiceCommand] 📡 onstop — dispatching processAudioPipeline');
+        broadcastStatus("processing");
         await processAudioPipeline(audioBlob);
         cleanup();
       };
@@ -677,7 +678,6 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     }
 
     stoppedByUserRef.current = true;
-    broadcastStatus("processing");
     // ── PTT Race Guard ──────────────────────────────────────────────────
     // If getUserMedia hasn't resolved yet (mediaRecorderRef is null), set
     // the abort flag so the pending startRecording callback discards the
@@ -693,7 +693,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     } else {
       console.warn(`[VoiceCommand] 🚫 stopListeningAndProcess — mediaRecorder state is ${mediaRecorderRef.current?.state ?? 'null'}, not recording`);
     }
-  }, [cleanup, broadcastStatus]);
+  }, [cleanup]);
 
   const abortRecording = useCallback(() => {
     if (!isRecordingRef.current) return;

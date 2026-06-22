@@ -1,5 +1,24 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: 'AgrandirGrand';
+  src: url('/fonts/Agrandir - Free For Personal Use/Agrandir-GrandLight.otf') format('opentype');
+  font-weight: 300;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'AgrandirGrand';
+  src: url('/fonts/Agrandir - Free For Personal Use/Agrandir-GrandHeavy.otf') format('opentype');
+  font-weight: 900;
+  font-style: normal;
+}
+
+/* Force a global utility class */
+.font-agrandir {
+  font-family: 'AgrandirGrand', sans-serif !important;
+}
+
 :root {
   --font-geist-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-geist-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
@@ -8,6 +27,12 @@
 @theme {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --animate-marquee: marquee 15s linear infinite;
+}
+
+@keyframes marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
 }
 
 @layer base {
@@ -15,3 +40,4 @@
     font-family: var(--font-geist-sans);
   }
 }
+
