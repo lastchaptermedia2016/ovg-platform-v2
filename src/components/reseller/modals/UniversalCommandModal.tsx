@@ -44,6 +44,8 @@ interface UniversalCommandModalProps {
   onClose: () => void;
   resellerSlug?: string;
   onClientCreated?: () => void;
+  modalTitle?: string;
+  voiceEntryLabel?: string;
 }
 
 // ─── Atomic Form State ─────────────────────────────────────────────
@@ -97,7 +99,7 @@ interface ReviewData {
   vibe: string;
 }
 
-export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }: UniversalCommandModalProps) {
+export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, modalTitle = 'Universal Command', voiceEntryLabel = 'UNIVERSAL' }: UniversalCommandModalProps) {
   const getErrorMessage = (err: unknown): string => {
     if (err instanceof Error) return err.message;
     if (typeof err === 'string') return err;
@@ -1077,7 +1079,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
         {/* Header */}
         <div className="px-6 py-4 border-b border-white/10 bg-white/[0.01]">
           <h2 className="text-lg font-light tracking-widest text-white uppercase">
-            Universal Command
+            {modalTitle}
           </h2>
           <div className="flex gap-2 mt-4">
             {(['command', 'draft', 'confirm'] as Step[]).map((s) => (
@@ -1186,7 +1188,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated }
 
               <div>
                 <label className="block text-xs font-light tracking-[0.2em] text-white/60 uppercase mb-3">
-                  {isVoiceEntryMode ? 'UNIVERSAL (Voice Entry)' : 'UNIVERSAL'}
+                  {isVoiceEntryMode ? (voiceEntryLabel + ' (Voice Entry)') : voiceEntryLabel}
                 </label>
                 <div className={`backdrop-blur-xl bg-white/[0.02] border rounded-lg p-4 transition-all duration-300 ${
                   isListening

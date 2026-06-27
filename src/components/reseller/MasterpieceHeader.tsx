@@ -52,7 +52,6 @@ function playReadyTone(): void {
     osc.connect(gain).connect(audioCtx.destination);
     osc.start();
     osc.stop(audioCtx.currentTime + 0.4);
-    // Close context after tone completes
     setTimeout(() => { audioCtx.close(); }, 500);
   } catch {
     // Silently fail — audio feedback is non-critical
@@ -116,9 +115,6 @@ export function MasterpieceHeader({
   }, [isRecording]);
 
   // Strict PTT event handlers — touch/mouse deduplication.
-  // On touch devices, touchstart → touchend → synthetic mousedown → synthetic mouseup.
-  // We timestamp real touch events and suppress any synthetic mouse counterpart
-  // that arrives within the TOUCH_DEDUP_MS window.
   const handleMicMouseDown = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     const isTouch = e.type.startsWith('touch');
     if (!isTouch && Date.now() - lastTouchEventRef.current < TOUCH_DEDUP_MS) return;
@@ -198,7 +194,7 @@ export function MasterpieceHeader({
           </motion.span>
         </div>
 
-        {/* Center: Voice Status Indicator - PTT Mic Button */}
+        {/* Center: Voice Status Indicator - PTT Mic Button with Locked Geometry */}
         <SystemHelpTooltip>
           <div 
             onMouseDown={handleMicMouseDown}
@@ -207,7 +203,7 @@ export function MasterpieceHeader({
             onTouchStart={handleMicMouseDown}
             onTouchEnd={handleMicMouseUp}
             onTouchCancel={handleMicMouseLeave}
-            className={`relative flex items-center gap-2 px-3 py-1.5 rounded-full pointer-events-auto cursor-pointer touch-none select-none active:scale-95 duration-75 transition-transform overflow-hidden ${
+            className={`relative flex items-center justify-center gap-2 w-48 flex-shrink-0 px-3 py-1.5 rounded-full pointer-events-auto cursor-pointer touch-none select-none active:scale-95 duration-75 transition-transform overflow-hidden ${
               isAwaitingVoiceConfirm ? 'bg-emerald-500/10 border border-emerald-500/30' : ''
             } ${
               isMicActive ? 'bg-[#0097b2]/20 border border-[#0097b2]/40' : ''
@@ -223,7 +219,7 @@ export function MasterpieceHeader({
                 </div>
               </div>
             )}
-            <div className="relative flex items-center justify-center">
+            <div className="relative flex items-center justify-center flex-shrink-0">
               {/* The Mic Icon — with recording glow when active */}
               <Mic 
                 className={`w-4 h-4 transition-colors duration-300 ${
@@ -245,7 +241,7 @@ export function MasterpieceHeader({
               )}
             </div>
 
-            <span className={`text-[9px] md:text-[10px] font-bold tracking-widest animate-pulse ${
+            <span className={`text-[9px] md:text-[10px] font-bold tracking-widest text-center truncate ${
               isCommunicating 
                 ? "!text-[#00e5ff] drop-shadow-[0_0_8px_rgba(0,229,255,0.6)]" 
                 : isRecording
@@ -258,15 +254,6 @@ export function MasterpieceHeader({
                   ? 'HOLD TO RECORD...' 
                   : 'SYSTEM'}
             </span>
-            
-            {/* Pierre HUD: STT Command Feedback */}
-            {transcribedText && (
-              <div className="ml-3 px-2 py-0.5 bg-[#226683]/50 border-l-2 border-[#0097b2] backdrop-blur-sm">
-                <span className="text-[#0097b2] text-[9px] font-mono uppercase tracking-tighter italic">
-                  Detected: {'\u201C'}{transcribedText}{'\u201D'}
-                </span>
-              </div>
-            )}
           </div>
         </SystemHelpTooltip>
 
@@ -283,6 +270,17 @@ export function MasterpieceHeader({
           </span>
         </div>
       </nav>
+       
+      {/* STT Layer - Dedicated full-width container beneath navbar */}
+      <div className="w-full px-4 mt-2 h-5 flex items-center justify-center">
+        <span className={`text-[#0097b2]/60 text-[10px] font-mono uppercase tracking-tight italic transition-opacity duration-200 ${
+          transcribedText ? 'opacity-100' : 'opacity-30'
+        }`}>
+          {transcribedText 
+            ? `Detected: "${transcribedText}"`
+            : '\u2009'}
+        </span>
+      </div>
     </>
   );
 }

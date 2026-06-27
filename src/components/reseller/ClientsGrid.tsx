@@ -989,6 +989,8 @@ export function ClientsGridInternal({
         <UniversalCommandModal 
           onClose={() => setShowAddClientModal(false)} 
           resellerSlug={resellerSlug}
+          modalTitle="CREATE CLIENT"
+          voiceEntryLabel="CREATE CLIENT"
           onClientCreated={() => {
             console.log('OVG-PLATFORM-V2: Client created successfully, adding delay before fetch');
             // Add 500ms delay to allow database to settle (race condition fix)

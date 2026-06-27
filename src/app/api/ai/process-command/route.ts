@@ -1,10 +1,43 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
 import Groq from 'groq-sdk';
 import { z } from 'zod';
 import { createClient as createSupabaseClient } from '@/lib/supabase/server';
 import { resolveResellerId } from '@/lib/db/resolve-reseller';
 import { buildDeploymentOfficerPrompt } from '@/core/ai/system-prompts';
 import { buildCapabilitiesSummary, type StudioCapabilitiesMap } from '@/core/ai/studio-capabilities';
+import { matchHelpIntent } from '@/lib/ai/help-matrix';
+
+// â”€â”€ Hybrid Routing Interfaces â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+export interface ActivePageContext {
+  currentPath: string;
+  viewState?: {
+    activeFilters?: string[];
+    visibleItemsCount: number;
+  };
+}
+
+export interface HybridVoiceRequest {
+  text: string;
+  context: ActivePageContext;
+}
+
+export interface HybridVoiceResponse {
+  executionMode: 'MACRO' | 'CONVERSATIONAL';
+  macroPayload?: {
+    actionType: string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    payload: Record<string, any>;
+    contextKey?: string;
+  };
+  conversationPayload?: {
+    responseText: string;
+    suggestedUIPressure?: {
+      highlightSelector?: string;
+    };
+  };
+}
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
 
 // Force dynamic to prevent build-time initialization
 export const dynamic = 'force-dynamic';
@@ -14,6 +47,10 @@ export const dynamic = 'force-dynamic';
 const ProcessCommandSchema = z.object({
   resellerId: z.string().min(1), // Reseller slug (e.g. "lastchaptermedia2016")
   userCommand: z.string().min(1).max(2000),
+  text: z.string().optional(), // Fallback from hybrid voice route
+  context: z.object({
+    currentPath: z.string(),
+  }).optional(), // Active page context from hybrid voice route
   currentConfig: z.record(z.any()).default({}),
   contextCapabilities: z.record(z.object({
     key: z.string().optional(),
@@ -29,7 +66,7 @@ const ProcessCommandSchema = z.object({
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 type ProcessCommandRequest = z.infer<typeof ProcessCommandSchema>;
 
-// Structured payload contract — replaces opaque z.record(z.any())
+// Structured payload contract â€” replaces opaque z.record(z.any())
 // Ensures the orchestrator returns predictable shapes the frontend can consume
 const StructuredPayloadSchema = z.object({
   theme: z.object({
@@ -75,7 +112,7 @@ const AIResponseSchema = z.object({
 const HELP_INTENT_REGEX = /^(what can you do|help|list commands|what are my options|capabilities|commands|what commands|show commands|show help|what can i do|how does this work|what are the commands)/i;
 
 /**
- * Levenshtein distance — counts single-character edits (insert, delete, substitute).
+ * Levenshtein distance â€” counts single-character edits (insert, delete, substitute).
  * Used to handle STT phonetic substitutions like "Zita" -> "Zeta".
  */
 function levenshtein(a: string, b: string): number {
@@ -98,9 +135,9 @@ function levenshtein(a: string, b: string): number {
  * Fuzzy, case-insensitive tenant name matcher.
  * Strategy (in priority order):
  * 1. Exact substring match
- * 2. Whitespace-collapsed match — handles run-ons like "ZetaSky" -> "Zeta Sky"
- * 3. Token match — all words in search term appear in tenant name
- * 4. Edit-distance match — tolerance of 2 edits per token, handles phonetic
+ * 2. Whitespace-collapsed match â€” handles run-ons like "ZetaSky" -> "Zeta Sky"
+ * 3. Token match â€” all words in search term appear in tenant name
+ * 4. Edit-distance match â€” tolerance of 2 edits per token, handles phonetic
  *    substitutions like "Zita AI" -> "Zeta AI"
  */
 function fuzzyMatchTenant(
@@ -129,7 +166,7 @@ function fuzzyMatchTenant(
     if (tokenMatch) return tokenMatch;
   }
 
-  // 4. Edit-distance match — sum of best-match distances across all search tokens
+  // 4. Edit-distance match â€” sum of best-match distances across all search tokens
   const EDIT_TOLERANCE = 2;
   let bestTenant: { id: string; name: string } | null = null;
   let bestScore = Infinity;
@@ -154,7 +191,7 @@ export async function POST(request: NextRequest) {
   // Initialize Groq client inside handler for production excellence
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
-    console.error('%c[ProcessCommand] ❌ GROQ_API_KEY not configured on server', 'color: #dc2626; font-weight: bold;');
+    console.error('%c[ProcessCommand] âŒ GROQ_API_KEY not configured on server', 'color: #dc2626; font-weight: bold;');
     return NextResponse.json(
       { error: 'AI service not configured' },
       { status: 500 }
@@ -168,15 +205,19 @@ export async function POST(request: NextRequest) {
     const validationResult = ProcessCommandSchema.safeParse(body);
 
     if (!validationResult.success) {
-      console.error('%c[ProcessCommand] ❌ Zod validation error:', 'color: #dc2626; font-weight: bold;', validationResult.error.flatten());
-      console.error('%c[ProcessCommand] 🔷 Request body:', 'color: #0097b2; font-weight: bold;', body);
+      console.error('%c[ProcessCommand:Exception] âŒ Zod validation error:', 'color: #dc2626; font-weight: bold;', validationResult.error.flatten());
+      console.error('%c[ProcessCommand] ðŸ”· Request body:', 'color: #0097b2; font-weight: bold;', body);
       return NextResponse.json(
         { error: 'Invalid request parameters', details: validationResult.error.flatten() },
         { status: 400 }
       );
     }
 
-    const { resellerId, userCommand, currentConfig, tenantContext, contextCapabilities } = validationResult.data;
+    const { resellerId, text, context, currentConfig, tenantContext, contextCapabilities } = validationResult.data;
+    let { userCommand } = validationResult.data;
+    if (text && text.trim().length > 0) {
+      userCommand = text;
+    }
 
     // Security: Validate reseller authorization
     if (!resellerId) {
@@ -190,14 +231,14 @@ export async function POST(request: NextRequest) {
     const supabase = await createSupabaseClient();
     let allTenants: { id: string; name: string; category: string }[] = [];
 
-    console.log('%c[ProcessCommand] 🔷 Fetching tenants for reseller:', 'color: #0097b2; font-weight: bold;', resellerId);
+    console.log('%c[ProcessCommand] ðŸ”· Fetching tenants for reseller:', 'color: #0097b2; font-weight: bold;', resellerId);
 
-    // 🔷 Production Excellence: Resolve reseller_slug to UUID via shared utility
+    // ðŸ”· Production Excellence: Resolve reseller_slug to UUID via shared utility
     // resolveResellerId queries slug first (text column), then falls back to tenant_id (UUID column)
     const actualResellerId = await resolveResellerId(supabase, resellerId);
 
     if (!actualResellerId) {
-      console.error('%c[ProcessCommand] ❌ Failed to resolve reseller slug:', 'color: #dc2626; font-weight: bold;', {
+      console.error('%c[ProcessCommand] âŒ Failed to resolve reseller slug:', 'color: #dc2626; font-weight: bold;', {
         slug: resellerId,
       });
       return NextResponse.json(
@@ -206,7 +247,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log('%c[ProcessCommand] ✅ Resolved slug to UUID:', 'color: #0097b2; font-weight: bold;', {
+    console.log('%c[ProcessCommand] âœ… Resolved slug to UUID:', 'color: #0097b2; font-weight: bold;', {
       slug: resellerId,
       uuid: actualResellerId,
     });
@@ -219,7 +260,7 @@ export async function POST(request: NextRequest) {
         .eq('reseller_id', actualResellerId);
 
       if (tenantsError) {
-        console.error('%c[ProcessCommand] ❌ Error fetching tenants:', 'color: #dc2626; font-weight: bold;', tenantsError);
+        console.error('%c[ProcessCommand] âŒ Error fetching tenants:', 'color: #dc2626; font-weight: bold;', tenantsError);
         return NextResponse.json(
           { error: 'Failed to fetch tenant list for global command', details: tenantsError.message },
           { status: 500 }
@@ -227,14 +268,14 @@ export async function POST(request: NextRequest) {
       }
 
       allTenants = (tenants as { id: string; name: string; category: string }[]) || [];
-      console.log(`%c[ProcessCommand] ✅ Found ${allTenants.length} tenants for reseller: ${actualResellerId}`, 'color: #0097b2; font-weight: bold;');
+      console.log(`%c[ProcessCommand] âœ… Found ${allTenants.length} tenants for reseller: ${actualResellerId}`, 'color: #0097b2; font-weight: bold;');
 
       if (allTenants.length === 0) {
-        console.warn('%c[ProcessCommand] ⚠️ No tenants found for reseller:', 'color: #f59e0b; font-weight: bold;', actualResellerId);
+        console.warn('%c[ProcessCommand] âš ï¸ No tenants found for reseller:', 'color: #f59e0b; font-weight: bold;', actualResellerId);
       }
     }
 
-    // ── Pre-LLM Intent Detection: Fast-path for "what can you do" ─────
+    // â”€â”€ Pre-LLM Intent Detection: Fast-path for "what can you do" â”€â”€â”€â”€â”€
     // If the frontend provided branding capabilities, respond deterministically
     // without hitting the LLM. This avoids a 2-4s Groq round-trip for help.
     if (contextCapabilities && HELP_INTENT_REGEX.test(userCommand.trim())) {
@@ -242,7 +283,7 @@ export async function POST(request: NextRequest) {
       const helpSummary = buildCapabilitiesSummary(typedCaps);
       const allExamples = Object.values(typedCaps).flatMap(c => c.examples);
 
-      console.log('%c[ProcessCommand] 🔷 Pre-LLM SYSTEM_HELLO — branding capabilities detected', 'color: #3b82f6; font-weight: bold;');
+      console.log('%c[ProcessCommand] ðŸ”· Pre-LLM SYSTEM_HELLO â€” branding capabilities detected', 'color: #3b82f6; font-weight: bold;');
       return NextResponse.json({
         success: true,
         actionType: 'SYSTEM_HELP',
@@ -310,7 +351,7 @@ Output ONLY valid JSON.`;
 
     const { actionType, targetIds, clientName, contextKey, payload, summary, confidenceScore } = aiValidation.data;
 
-    // 🔷 Confidence Threshold: If the AI is unsure (< 0.85), demote actionable types to SYSTEM_NOTE
+    // ðŸ”· Confidence Threshold: If the AI is unsure (< 0.85), demote actionable types to SYSTEM_NOTE
     // This prevents conversational filler from triggering ARMED state.
     // Meta-commands (SYSTEM_NOTE, SYSTEM_HELP, SYSTEM_DISARM, NO_MATCH, SYSTEM_BULK_*) are exempt.
     if (
@@ -325,26 +366,16 @@ Output ONLY valid JSON.`;
       confidenceScore !== undefined &&
       confidenceScore < 0.85
     ) {
-      console.log('%c[ProcessCommand] ⚠️ Low confidence score — demoting to SYSTEM_NOTE:', 'color: #f59e0b; font-weight: bold;', { actionType, confidenceScore });
-      return NextResponse.json({
-        success: true,
-        actionType: 'SYSTEM_NOTE',
-        targetIds: [],
-        payload: {},
-        hasAudio: false,
-        summary: 'Input unclear. Did you mean to issue a command?',
-        metadata: {
-          processedAt: new Date().toISOString(),
-          resellerId,
-          model: 'llama-3.3-70b-versatile',
-        },
-      });
+      console.log('%c[ProcessCommand] âš ï¸ Low confidence score â€” dispatching to conversational handler:', 'color: #f59e0b; font-weight: bold;', { actionType, confidenceScore });
+      const targetContext = context ?? { currentPath: '' };
+      const convResponse = handleConversationalIntent(targetContext, userCommand);
+      return NextResponse.json(convResponse);
     }
 
-    // 🔷 DELETE_CLIENT: fuzzy match the client name against fetched tenants
+    // ðŸ”· DELETE_CLIENT: fuzzy match the client name against fetched tenants
     if (actionType === 'DELETE_CLIENT') {
       if (!clientName) {
-        console.error('%c[ProcessCommand] ❌ DELETE_CLIENT intent missing clientName', 'color: #dc2626; font-weight: bold;');
+        console.error('%c[ProcessCommand] âŒ DELETE_CLIENT intent missing clientName', 'color: #dc2626; font-weight: bold;');
         return NextResponse.json(
           { error: 'Delete command requires a client name' },
           { status: 400 }
@@ -352,14 +383,14 @@ Output ONLY valid JSON.`;
       }
 
       if (allTenants.length === 0) {
-        // Tenants weren't pre-fetched (tenantId was provided) — fetch them now for matching
+        // Tenants weren't pre-fetched (tenantId was provided) â€” fetch them now for matching
         const { data: tenants, error: tenantsError } = await supabase
           .from('tenants')
           .select('id, name')
           .eq('reseller_id', actualResellerId);
 
         if (tenantsError) {
-          console.error('%c[ProcessCommand] ❌ Error fetching tenants for DELETE_CLIENT:', 'color: #dc2626; font-weight: bold;', tenantsError);
+          console.error('%c[ProcessCommand] âŒ Error fetching tenants for DELETE_CLIENT:', 'color: #dc2626; font-weight: bold;', tenantsError);
           return NextResponse.json(
             { error: 'Failed to fetch tenants for deletion' },
             { status: 500 }
@@ -371,14 +402,14 @@ Output ONLY valid JSON.`;
 
       const matched = fuzzyMatchTenant(allTenants, clientName);
       if (!matched) {
-        console.warn(`%c[ProcessCommand] ⚠️ Could not find a client matching '${clientName}'`, 'color: #f59e0b; font-weight: bold;');
+        console.warn(`%c[ProcessCommand] âš ï¸ Could not find a client matching '${clientName}'`, 'color: #f59e0b; font-weight: bold;');
         return NextResponse.json(
           { error: `Client "${clientName}" not found. Please check the name and try again.`, summary },
           { status: 404 }
         );
       }
 
-      console.log(`%c[ProcessCommand] ✅ Matched client '${clientName}' → tenant ${matched.id}`, 'color: #0097b2; font-weight: bold;');
+      console.log(`%c[ProcessCommand] âœ… Matched client '${clientName}' â†’ tenant ${matched.id}`, 'color: #0097b2; font-weight: bold;');
       return NextResponse.json({
         success: true,
         actionType: 'DELETE_CLIENT',
@@ -393,13 +424,28 @@ Output ONLY valid JSON.`;
       });
     }
 
-    // 🔷 NO_MATCH short-circuit: skip Supabase writes entirely
+    // ðŸ”· NO_MATCH short-circuit: skip Supabase writes entirely
     if (actionType === 'NO_MATCH') {
-      console.log('%c[ProcessCommand] 🔶 Command classified as NO_MATCH — returning neutral response', 'color: #f59e0b; font-weight: bold;', { summary });
+      console.log('%c[ProcessCommand] ðŸ”¶ Command classified as NO_MATCH â€” dispatching to conversational handler:', 'color: #f59e0b; font-weight: bold;', { summary });
+      const targetContext = context ?? { currentPath: '' };
+      const convResponse = handleConversationalIntent(targetContext, userCommand);
+      return NextResponse.json(convResponse);
+    }
+
+    // 🔷 SYSTEM_EXPLAIN: intercept to inject localized help-matrix documentation
+    if (actionType === 'SYSTEM_EXPLAIN') {
+      const detailedExplanation = matchHelpIntent(userCommand || text || '');
+      console.log('%c[ProcessCommand] 🔷 SYSTEM_EXPLAIN — injecting localized help matrix text', 'color: #3b82f6; font-weight: bold;', { contextKey });
       return NextResponse.json({
         success: true,
-        actionType: 'NO_MATCH',
+        actionType: 'SYSTEM_EXPLAIN',
+        targetIds: [],
+        payload: {
+          ...payload,
+          description: detailedExplanation,
+        },
         hasAudio: false,
+        contextKey,
         summary,
         metadata: {
           processedAt: new Date().toISOString(),
@@ -413,7 +459,7 @@ Output ONLY valid JSON.`;
     // These are emitted by the MACRO COMMAND DICTIONARY in DEPLOYMENT_OFFICER when the user
     // speaks confirmation ("yes", "confirm"), cancellation ("no", "cancel"), or grid filter intents.
     // They carry empty targetIds and must NOT reach the DB update layer.
-    if (actionType === 'SYSTEM_BULK_CONFIRM' || actionType === 'SYSTEM_BULK_CANCEL' || actionType === 'SYSTEM_FILTER_GRID' || actionType === 'SYSTEM_HELP' || actionType === 'SYSTEM_NOTE' || actionType === 'SYSTEM_DISARM' || actionType === 'SYSTEM_EXPLAIN') {
+    if (actionType === 'SYSTEM_BULK_CONFIRM' || actionType === 'SYSTEM_BULK_CANCEL' || actionType === 'SYSTEM_FILTER_GRID' || actionType === 'SYSTEM_HELP' || actionType === 'SYSTEM_NOTE' || actionType === 'SYSTEM_DISARM') {
       console.log('%c[ProcessCommand] 🔷 SYSTEM_ macro command recognized:', 'color: #3b82f6; font-weight: bold;', { actionType, payload, contextKey });
       return NextResponse.json({
         success: true,
@@ -421,7 +467,7 @@ Output ONLY valid JSON.`;
         targetIds: [],
         payload,
         hasAudio: false,
-        contextKey, // Pass through for SYSTEM_EXPLAIN; undefined for others
+        contextKey,
         summary,
         metadata: {
           processedAt: new Date().toISOString(),
@@ -430,7 +476,6 @@ Output ONLY valid JSON.`;
         },
       });
     }
-
     // Guard: targetIds must be present for SINGLE/BULK (enforced by schema but TS needs narrowing)
     if (!targetIds || targetIds.length === 0) {
       return NextResponse.json(
@@ -439,7 +484,7 @@ Output ONLY valid JSON.`;
       );
     }
 
-    // Deep merge helper — merges source into target while preserving existing keys
+    // Deep merge helper â€” merges source into target while preserving existing keys
     function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
       const output = { ...target };
       for (const key of Object.keys(source)) {
@@ -525,7 +570,7 @@ Output ONLY valid JSON.`;
       }
     } catch (updateError) {
       const errorMessage = updateError instanceof Error ? updateError.message : String(updateError);
-      console.error('%c[ProcessCommand] ❌ Update execution failed:', 'color: #dc2626; font-weight: bold;', updateError);
+      console.error('%c[ProcessCommand:Exception] âŒ Update execution failed:', 'color: #dc2626; font-weight: bold;', updateError);
       return NextResponse.json(
         { error: `Update failed: ${errorMessage}` },
         { status: 500 }
@@ -548,7 +593,7 @@ Output ONLY valid JSON.`;
     });
 
   } catch (error) {
-    console.error('%c[ProcessCommand] ❌ AI Process Command Error:', 'color: #dc2626; font-weight: bold;', error);
+    console.error('%c[ProcessCommand:Exception] âŒ AI Process Command Error:', 'color: #dc2626; font-weight: bold;', error);
 
     // Return clean error message as specified
     return NextResponse.json(
@@ -558,6 +603,20 @@ Output ONLY valid JSON.`;
   }
 }
 
+// ---- Conversational Intent Controller ------------------------------------------
+function handleConversationalIntent(pageContext: ActivePageContext, rawText: string = ''): HybridVoiceResponse {
+  const responseText = matchHelpIntent(rawText);
+  return {
+    executionMode: 'CONVERSATIONAL',
+    conversationPayload: {
+      responseText: responseText,
+      suggestedUIPressure: {
+        highlightSelector: undefined
+      }
+    }
+  };
+}
+// -------------------------------------------------------------------------------
 // Handle unsupported methods
 export async function GET() {
   return NextResponse.json(

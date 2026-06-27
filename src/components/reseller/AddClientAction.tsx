@@ -7,9 +7,10 @@ import { UniversalCommandModal } from './modals/UniversalCommandModal';
 
 interface AddClientActionProps {
   onClientAdded?: () => void;
+  triggerLabel?: string;
 }
 
-export function AddClientAction({ onClientAdded }: AddClientActionProps) {
+export function AddClientAction({ onClientAdded, triggerLabel = 'OPEN UNIVERSAL COMMAND' }: AddClientActionProps) {
   const params = useParams();
   const resellerSlug = params.resellerSlug as string;
   const [showModal, setShowModal] = useState(false);
@@ -30,7 +31,7 @@ export function AddClientAction({ onClientAdded }: AddClientActionProps) {
         <div className="flex items-center gap-4">
           <div className="w-1 h-8 bg-[#00e5ff] rounded-full group-hover:shadow-[0_0_15px_#00e5ff] transition-all duration-300" />
           <span className="text-sm font-light tracking-[0.2em] text-white uppercase group-hover:text-white group-hover:drop-shadow-[0_0_8px_rgba(255,255,255,0.5)] transition-all duration-300">
-            OPEN UNIVERSAL COMMAND
+            {triggerLabel}
           </span>
         </div>
         <div className="w-8 h-8 rounded-full bg-white/[0.02] border border-white/10 flex items-center justify-center group-hover:bg-[#00e5ff]/20 group-hover:border-[#00e5ff]/50 transition-all duration-300">
@@ -42,13 +43,13 @@ export function AddClientAction({ onClientAdded }: AddClientActionProps) {
       <div
         onClick={() => setShowModal(true)}
         className="fixed bottom-10 right-10 z-[9999] w-16 h-16 rounded-full bg-[#00e5ff]/20 backdrop-blur-xl border border-[#00e5ff]/50 flex items-center justify-center shadow-[0_0_30px_rgba(0,229,255,0.4)] hover:shadow-[0_0_50px_rgba(0,229,255,0.7)] hover:scale-110 active:scale-95 transition-all duration-300 cursor-pointer group"
-        aria-label="Open Universal Command"
+        aria-label={triggerLabel}
         title="Talk to Pierre"
       >
         <Sparkles className="w-7 h-7 text-[#00e5ff] group-hover:scale-110 transition-transform duration-200" />
       </div>
 
-      {showModal && <UniversalCommandModal onClose={handleClientAdded} resellerSlug={resellerSlug} />}
+      {showModal && <UniversalCommandModal onClose={handleClientAdded} resellerSlug={resellerSlug} modalTitle="CREATE CLIENT" voiceEntryLabel="CREATE CLIENT" />}
     </>
   );
 }
