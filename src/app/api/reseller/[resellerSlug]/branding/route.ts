@@ -71,7 +71,8 @@ function brandingField(
  * safe defaults for any missing values.
  */
 export function buildBrandingBag(row: ResolvedReseller): BrandingBag {
-  const b = row.branding;
+  const raw = typeof row.branding === 'string' ? (JSON.parse(row.branding) as Record<string, unknown>) : null;
+  const b = raw ?? {};
   return {
     primaryColor: brandingField(b, 'primaryColor') ?? '#0097b2',
     accentColor: brandingField(b, 'accentColor') ?? '#D4AF37',
@@ -212,7 +213,7 @@ export async function GET(
       name: reseller.name,
       tenant_id: reseller.tenant_id,
       brandingBag,
-      version: reseller.version_stamp ?? 1,
+      version: 1,
     };
 
     return NextResponse.json(response);

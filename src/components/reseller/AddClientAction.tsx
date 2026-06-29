@@ -10,7 +10,7 @@ interface AddClientActionProps {
   triggerLabel?: string;
 }
 
-export function AddClientAction({ onClientAdded, triggerLabel = 'OPEN UNIVERSAL COMMAND' }: AddClientActionProps) {
+export function AddClientAction({ onClientAdded, triggerLabel = 'CREATE NEW CLIENT' }: AddClientActionProps) {
   const params = useParams();
   const resellerSlug = params.resellerSlug as string;
   const [showModal, setShowModal] = useState(false);

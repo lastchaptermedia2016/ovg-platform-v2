@@ -268,7 +268,14 @@ export function useAICommand(): UseAICommandReturn {
 
   const handleConfirmDeployment = useCallback(async () => {
     if (!targetTenantId || !configPatch) {
-      setError('Missing deployment data');
+      // Graceful empty-state messaging when no client is selected or no config exists
+      if (!targetTenantId) {
+        setError('No clients detected — select a client before deploying');
+      } else if (!configPatch) {
+        setError('No pending changes to deploy');
+      } else {
+        setError('Missing deployment data');
+      }
       return;
     }
 

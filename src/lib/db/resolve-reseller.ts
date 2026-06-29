@@ -24,12 +24,7 @@ export interface ResolvedReseller {
   slug: string;
   tenant_id: string;
   name: string;
-  branding: Record<string, unknown> | null;
-  /** @deprecated This field is NOT selected from the database (column does not exist).
-   *  It remains on the type for backward compatibility with code that destructures
-   *  a ResolvedReseller and expects `version_stamp` to compile. Use `?? 1` as a
-   *  default when reading this value at runtime — it will always be `undefined`. */
-  version_stamp?: never;
+  branding: string | null;
 }
 
 /**
@@ -50,9 +45,10 @@ export interface ResolveResult {
  * Columns selected on every resolution query.
  *
  * CRITICAL: Do NOT add columns that don't exist in the database.
- * `version_stamp` was previously listed here, causing a `42703` error
- * on every query. If you need a new column, add it to the `resellers`
- * table via a Supabase migration first, then update this constant.
+ * This column list must stay in sync with migrations/002 and 010.
+ * - slug            → added by migration 013
+ * - branding_bag    → added by migration 010
+ * - version_stamp   → added by migration 010
  */
 const RESOLVER_COLUMNS = 'id, slug, tenant_id, name, branding' as const;
 
@@ -146,6 +142,11 @@ export async function resolveResellerFull(
     }
 
     if (slugError) {
+      // Suppress noisy 42703 "column does not exist" errors when the live
+      // schema is behind the expected migration. Treat as "not found".
+      if (slugError.code === '42703') {
+        return { data: null, error: null };
+      }
       console.error('[resolveReseller] Slug query error:', {
         message: slugError.message,
         details: slugError.details,

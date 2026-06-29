@@ -57,7 +57,34 @@ export function useReseller(): UseResellerReturn {
       }
 
       setReseller(resellerData as Reseller);
-      setBranding((resellerData as Reseller).branding || null);
+      const rawBranding = (resellerData as unknown as { branding?: string | null }).branding;
+      let parsedBranding: Record<string, unknown> | null = null;
+      if (typeof rawBranding === 'string') {
+        try {
+          parsedBranding = JSON.parse(rawBranding) as Record<string, unknown>;
+        } catch {
+          parsedBranding = null;
+        }
+      }
+      setBranding(
+        parsedBranding
+          ? {
+              name: (resellerData as Reseller).name,
+              logoUrl: (parsedBranding.logoUrl as string) ?? "",
+              primaryColor: (parsedBranding.primaryColor as string) ?? "#0097b2",
+              accentColor: (parsedBranding.accentColor as string) ?? "#D4AF37",
+              favicon: (parsedBranding.favicon as string | null) ?? undefined,
+              metaTitle: (parsedBranding.metaTitle as string | null) ?? undefined,
+              metaDescription: (parsedBranding.metaDescription as string | null) ?? undefined,
+              typography: (parsedBranding.typography as { headingFont: string; bodyFont: string } | undefined) ?? {
+                headingFont: 'Inter',
+                bodyFont: 'Inter',
+              },
+              borderRadius: typeof parsedBranding.borderRadius === "number" ? parsedBranding.borderRadius : undefined,
+              mode: parsedBranding.mode as "light" | "dark" | undefined,
+            }
+          : null,
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load reseller";
       setError(message);
