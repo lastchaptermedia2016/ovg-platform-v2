@@ -296,7 +296,7 @@ export function useAICommand(): UseAICommandReturn {
         },
         body: JSON.stringify({
           tenantId: targetTenantId,
-          configPatch,
+          widgetConfig: configPatch,
         }),
       });
 
