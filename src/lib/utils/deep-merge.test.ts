@@ -5,17 +5,15 @@ describe('deepMerge', () => {
   describe('basic object merging', () => {
     it('should merge simple properties', () => {
       const target = { a: 1, b: 2 };
-      const source = { b: 3, c: 4 };
-      const result = deepMerge(target, source);
+      const result = deepMerge(target, { b: 3, c: 4 } as unknown as typeof target & { c: number });
 
       expect(result).toEqual({ a: 1, b: 3, c: 4 });
-      expect(result).toBe(target); // Should return the same reference
+      expect(result).toBe(target);
     });
 
     it('should add new properties from source', () => {
       const target = { a: 1 };
-      const source = { b: 2, c: 3 };
-      const result = deepMerge(target, source);
+      const result = deepMerge(target, { b: 2, c: 3 } as unknown as typeof target);
 
       expect(result).toEqual({ a: 1, b: 2, c: 3 });
     });
@@ -88,16 +86,14 @@ describe('deepMerge', () => {
 
     it('should add new nested properties', () => {
       const target = { config: { a: 1 } };
-      const source = { config: { b: 2 } };
-      const result = deepMerge(target, source);
+      const result = deepMerge(target, { config: { b: 2 } } as unknown as typeof target);
 
       expect(result).toEqual({ config: { a: 1, b: 2 } });
     });
 
     it('should replace entire nested object when source value is not an object', () => {
       const target = { config: { a: 1, b: 2 } };
-      const source = { config: 'string-value' };
-      const result = deepMerge(target, source);
+      const result = deepMerge(target, { config: 'string-value' } as unknown as typeof target);
 
       expect(result).toEqual({ config: 'string-value' });
     });
@@ -135,7 +131,7 @@ describe('deepMerge', () => {
     });
 
     it('should handle empty arrays in target', () => {
-      const target = { items: [] };
+      const target = { items: [] as number[] };
       const source = { items: [1, 2] };
       const result = deepMerge(target, source);
 
@@ -144,8 +140,7 @@ describe('deepMerge', () => {
 
     it('should replace target array with source array (no mergeArrays option)', () => {
       const target = { data: ['old1', 'old2', 'old3'] };
-      const source = { data: ['new1'] };
-      const result = deepMerge(target, source);
+      const result = deepMerge(target, { data: ['new1'] } as typeof target);
 
       expect(result).toEqual({ data: ['new1'] });
     });
@@ -165,7 +160,7 @@ describe('deepMerge', () => {
           settings: { disabled: false },
         },
       };
-      const result = deepMerge(target, source);
+      const result = deepMerge(target, source as unknown as typeof target);
 
       expect(result).toEqual({
         config: {
@@ -309,7 +304,7 @@ describe('deepMerge', () => {
 
     it('should not mutate source object', () => {
       const target = { a: { b: 1 } };
-      const source = { a: { c: 2 } };
+      const source = { a: { c: 2 } } as unknown as typeof target;
       const sourceClone = JSON.parse(JSON.stringify(source));
 
       deepMerge(target, source);
@@ -333,8 +328,7 @@ describe('deepMerge', () => {
 
     it('should return same reference (mutate target)', () => {
       const target = { a: 1 };
-      const source = { b: 2 };
-      const result = deepMerge(target, source);
+      const result = deepMerge(target, { b: 2 } as unknown as typeof target);
 
       expect(result).toBe(target);
     });

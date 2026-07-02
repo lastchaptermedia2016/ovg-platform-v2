@@ -59,6 +59,15 @@ export const URLSchema = z
  *   widgetBodyBackground: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
  * }
  */
+export const BackgroundSettingsSchema = z.object({
+  type: z.enum(['solid', 'gradient']).optional(),
+  colorStart: HexColorSchema.optional(),
+  colorEnd: HexColorSchema.optional(),
+  image: URLSchema.nullable().optional(),
+}).passthrough();
+
+export type BackgroundSettings = z.infer<typeof BackgroundSettingsSchema>;
+
 export const BrandingSchema = z.object({
   primaryColor: HexColorSchema.optional(),
   accentColor: HexColorSchema.optional(),
@@ -69,6 +78,8 @@ export const BrandingSchema = z.object({
     .max(1)
     .optional(),
   widgetBodyBackground: z.string().optional(),
+  headerConfig: BackgroundSettingsSchema.optional(),
+  footerConfig: BackgroundSettingsSchema.optional(),
 }).passthrough();
 
 export type Branding = z.infer<typeof BrandingSchema>;
@@ -237,6 +248,14 @@ export type Features = z.infer<typeof FeaturesSchema>;
  *   maxTokens: 512
  * }
  */
+export const ActionCapabilitiesSchema = z.object({
+  canExecute: z.boolean().optional(),
+  canAccessAnalytics: z.boolean().optional(),
+  canModifyConfig: z.boolean().optional(),
+}).passthrough();
+
+export type ActionCapabilities = z.infer<typeof ActionCapabilitiesSchema>;
+
 export const AISettingsSchema = z.object({
   systemPrompt: z.string().optional(),
   model: z.string().optional(),
@@ -246,6 +265,17 @@ export const AISettingsSchema = z.object({
     .max(2)
     .optional(),
   maxTokens: z.number().positive().optional(),
+  // AI Persona fields
+  name: z.string().optional(),
+  voiceId: z.string().optional(),
+  personality: z.enum(['friendly', 'direct', 'professional']).optional(),
+  conversationStyle: z.union([
+    z.string(),
+    z.object({
+      text: z.string().optional(),
+      actionCapabilities: ActionCapabilitiesSchema.optional(),
+    }).passthrough(),
+  ]).optional(),
 }).passthrough();
 
 export type AISettings = z.infer<typeof AISettingsSchema>;

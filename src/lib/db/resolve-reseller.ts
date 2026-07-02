@@ -117,8 +117,30 @@ export async function resolveResellerFull(
         return { data: tenantResult as ResolvedReseller, error: null };
       }
 
+      // ── Fallback: tenants table ─────────────────────────────────────
+      // The UUID may belong to a tenant (client) rather than a reseller.
+      // Query tenants by id to find the parent reseller, then resolve
+      // the full reseller record from that relationship.
+      const { data: tenantByUuid, error: tenantUuidError } = await db
+        .from('tenants')
+        .select('reseller_id')
+        .eq('id', trimmed)
+        .maybeSingle();
+
+      if (tenantByUuid?.reseller_id) {
+        const { data: resellerFromTenant } = await db
+          .from('resellers')
+          .select(RESOLVER_COLUMNS)
+          .eq('id', tenantByUuid.reseller_id)
+          .maybeSingle();
+
+        if (resellerFromTenant) {
+          return { data: resellerFromTenant as ResolvedReseller, error: null };
+        }
+      }
+
       // Neither matched — return the more meaningful of the two errors
-      const finalError = idError || tenantError;
+      const finalError = idError || tenantError || tenantUuidError;
       if (finalError) {
         console.error('[resolveReseller] UUID query error:', {
           message: finalError.message,
@@ -139,6 +161,26 @@ export async function resolveResellerFull(
 
     if (slugResult) {
       return { data: slugResult as ResolvedReseller, error: null };
+    }
+
+    // ── Fallback: tenants table ─────────────────────────────────────
+    // The identifier may be a tenant_id (text) rather than a reseller slug.
+    const { data: tenantByText, error: _tenantTextError } = await db
+      .from('tenants')
+      .select('reseller_id')
+      .eq('tenant_id', trimmed)
+      .maybeSingle();
+
+    if (tenantByText?.reseller_id) {
+      const { data: resellerFromTenant } = await db
+        .from('resellers')
+        .select(RESOLVER_COLUMNS)
+        .eq('id', tenantByText.reseller_id)
+        .maybeSingle();
+
+      if (resellerFromTenant) {
+        return { data: resellerFromTenant as ResolvedReseller, error: null };
+      }
     }
 
     if (slugError) {

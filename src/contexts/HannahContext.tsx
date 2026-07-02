@@ -1,7 +1,8 @@
 'use client';
 
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useState, useCallback, useRef, type ReactNode } from 'react';
 import type { CommandCapability } from '@/core/ai/system-capabilities';
+import type { CommandIntent } from '@/lib/hooks/useCommandListener';
 import { usePathname } from 'next/navigation';
 import { useVoiceCommand } from '@/hooks/use-voice-command';
 
@@ -31,6 +32,28 @@ export interface HannahContextValue {
   activeCommands: CommandCapability[];
   /** Set the commands to display in the deck. */
   setActiveCommands: (commands: CommandCapability[]) => void;
+
+  /** Latest command intent trigger from the event bus. */
+  commandIntent: CommandIntent | null;
+  /** Update the active command intent. */
+  setCommandIntent: (intent: CommandIntent | null) => void;
+
+  /** Hannah operating mode: conversational vs executor. */
+  agentMode: 'conversational' | 'executor';
+  /** Switch Hannah's operating mode. */
+  setAgentMode: (mode: 'conversational' | 'executor') => void;
+
+  /** Conversation history for follow-up context. */
+  conversationHistory: Array<{ role: 'user' | 'assistant'; content: string; timestamp: number }>;
+  /** Append to conversation history. */
+  appendConversationHistory: (entry: { role: 'user' | 'assistant'; content: string }) => void;
+  /** Clear conversation history. */
+  clearConversationHistory: () => void;
+
+  /** Register a page-specific action dispatcher keyed by route. */
+  registerActionDispatcher: (route: string, dispatcher: (action: Record<string, unknown>) => void) => void;
+  /** Universal action dispatcher for AI-generated actions. */
+  dispatchAction: (action: Record<string, unknown>, context: { tenantId?: string; resellerSlug: string }) => Promise<void>;
 
   /** ── Global PTT State ─────────────────────────────────────────── */
   /** True while the mic is actively capturing audio (global). */
@@ -66,6 +89,9 @@ export function HannahProvider({ children, resellerSlug }: { children: ReactNode
   const [currentBriefing, setCurrentBriefing] = useState<string | null>(null);
   const [hasGreeted, setHasGreetedState] = useState(false);
   const [activeCommands, setActiveCommandsState] = useState<CommandCapability[]>([]);
+  const [commandIntent, setCommandIntentState] = useState<CommandIntent | null>(null);
+  const [agentMode, setAgentModeState] = useState<'conversational' | 'executor'>('executor');
+  const [conversationHistory, setConversationHistory] = useState<Array<{ role: 'user' | 'assistant'; content: string; timestamp: number }>>([]);
 
   const setIsHannahAwake = useCallback((awake: boolean) => {
     setIsHannahAwakeState(awake);
@@ -75,14 +101,44 @@ export function HannahProvider({ children, resellerSlug }: { children: ReactNode
     setHasGreetedState(greeted);
   }, []);
 
-
   const setActiveCommands = useCallback((commands: CommandCapability[]) => {
     setActiveCommandsState(commands);
   }, []);
 
+  const setCommandIntent = useCallback((intent: CommandIntent | null) => {
+    setCommandIntentState(intent);
+  }, []);
+
+  const setAgentMode = useCallback((mode: 'conversational' | 'executor') => {
+    setAgentModeState(mode);
+  }, []);
+
+  const appendConversationHistory = useCallback((entry: { role: 'user' | 'assistant'; content: string }) => {
+    setConversationHistory(prev => [...prev.slice(-20), { ...entry, timestamp: Date.now() }]);
+  }, []);
+
+  const clearConversationHistory = useCallback(() => {
+    setConversationHistory([]);
+  }, []);
+
+  const actionDispatchersRef = useRef<Record<string, (action: Record<string, unknown>) => void>>({});
+
   const pathname = usePathname();
   // Extract route scope (e.g., /revenue, /ai-engine, /signal) from pathname
   const activeRoute = pathname.split('/').filter(Boolean).slice(1).join('/') || 'dashboard';
+
+  const registerActionDispatcher = useCallback((route: string, dispatcher: (action: Record<string, unknown>) => void) => {
+    actionDispatchersRef.current[route] = dispatcher;
+  }, []);
+
+  const dispatchAction = useCallback(async (action: Record<string, unknown>, _context: { tenantId?: string; resellerSlug: string }) => {
+    const dispatcher = actionDispatchersRef.current[activeRoute];
+    if (dispatcher) {
+      await dispatcher(action);
+    } else {
+      console.warn(`[HannahContext] No dispatcher registered for route: ${activeRoute}`);
+    }
+  }, [activeRoute]);
 
   const voice = useVoiceCommand({ resellerId: resellerSlug });
 
@@ -100,6 +156,15 @@ export function HannahProvider({ children, resellerSlug }: { children: ReactNode
     setHasGreeted,
     activeCommands,
     setActiveCommands,
+    commandIntent,
+    setCommandIntent,
+    agentMode,
+    setAgentMode,
+    conversationHistory,
+    appendConversationHistory,
+    clearConversationHistory,
+    registerActionDispatcher,
+    dispatchAction,
     isRecording: voice.isRecording,
     isProcessing: voice.isProcessing,
     isSpeaking: voice.isSpeaking,

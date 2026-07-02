@@ -46,7 +46,7 @@ const useCategoryMap = () => useMemo(() => ({
 
 export default function ClientsPage() {
   // Consume Hannah state from global context — Must be first to establish scope
-  const { isHannahAwake, currentBriefing, setCurrentBriefing, setActiveCommands } = useHannah();
+  const { isHannahAwake, currentBriefing, setCurrentBriefing, setActiveCommands, agentMode, setAgentMode, appendConversationHistory } = useHannah();
 
   const params = useParams();
   const searchParams = useSearchParams();
@@ -124,8 +124,6 @@ export default function ClientsPage() {
   // ── Lifecycle: Register Client Commands on Mount ───────────────────────
   useEffect(() => {
     setActiveCommands(CLIENTS_COMMANDS);
-    
-    // Cleanup on unmount - clear commands when leaving page
     return () => {
       setActiveCommands([]);
     };
@@ -527,14 +525,21 @@ export default function ClientsPage() {
         console.log('%c[Pierre] 🚀 Extracted slug from URL path (manual execute):', 'color: #0097b2; font-weight: bold;', activeSlug);
       }
     }
+    const text = commandInput;
+    appendConversationHistory({ role: 'user', content: text });
     handleCommandSubmitRef.current(
-      commandInput,
+      text,
       { theme: { primary: '#0097b2' }, behavior: { prompt: 'Default' } },
       { tenantId: selectedTenantId, category: activeFilter },
-      activeSlug
+      activeSlug,
+      (response) => {
+        if (response?.summary) {
+          appendConversationHistory({ role: 'assistant', content: response.summary });
+        }
+      }
     );
     setCommandInput('');
-  }, [selectedTenantId, commandInput, activeFilter, resellerSlug]);
+  }, [selectedTenantId, commandInput, activeFilter, resellerSlug, appendConversationHistory]);
 
   return (
     <div className="w-full">
@@ -606,6 +611,25 @@ export default function ClientsPage() {
           </div>
         </div>
         
+        {/* Hannah Mode Toggle */}
+        <div className="w-full">
+          <div className="px-6">
+            <div className="flex items-center justify-between w-full my-2 px-2">
+              <span className="text-[10px] font-bold text-white/70 tracking-widest uppercase">Hannah Mode</span>
+              <button
+                onClick={() => setAgentMode(agentMode === 'executor' ? 'conversational' : 'executor')}
+                className={`px-3 py-1.5 rounded-lg border text-[10px] font-semibold tracking-wider uppercase transition-all duration-200 ${
+                  agentMode === 'executor'
+                    ? 'border-emerald-500 text-emerald-300 bg-emerald-500/10'
+                    : 'border-cyan-500 text-cyan-300 bg-cyan-500/10'
+                }`}
+              >
+                {agentMode === 'executor' ? 'Executor' : 'Conversational'}
+              </button>
+            </div>
+          </div>
+        </div>
+
         {/* Industry Filter Tabs - Compact Grid Layout */}
         <div className="w-full">
           <div className="px-6">
@@ -913,6 +937,11 @@ export default function ClientsPage() {
         technicalSummary={technicalSummary}
         isDeploying={isDeploying}
         onDeploy={handleConfirmDeployment}
+        onDeploySuccess={(summary) => {
+          setSuccessRipple(true);
+          setTimeout(() => setSuccessRipple(false), 1000);
+          speakVoiceRef.current(summary || 'All settings saved successfully.');
+        }}
       />
 
       {/* Error Display */}

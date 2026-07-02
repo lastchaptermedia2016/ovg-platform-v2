@@ -35,6 +35,28 @@
   100% { transform: translateX(-50%); }
 }
 
+/* ── ZEEDER Gold Pulse Animation ────────────────────────────────── */
+/* Applied to the SystemMicButton during the executing state to create */
+/* a signature gold-border pulse that signals active AI processing.   */
+@keyframes zeeder-gold-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.7);
+    border-color: rgba(255, 215, 0, 1);
+  }
+  50% {
+    box-shadow: 0 0 15px 5px rgba(255, 215, 0, 0.4);
+    border-color: rgba(255, 215, 0, 0.8);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.7);
+    border-color: rgba(255, 215, 0, 1);
+  }
+}
+
+.zeeder-pulse-animation {
+  animation: zeeder-gold-pulse 2s infinite ease-in-out;
+}
+
 @layer base {
   html {
     font-family: var(--font-geist-sans);

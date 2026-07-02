@@ -83,6 +83,8 @@ interface VoiceCommandOptions {
   onAIResponse?: (text: string, payload?: unknown) => void;
   onError?: (error: string) => void;
   onActionsReceived?: (actions: IncomingAIAction[]) => void;
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string; timestamp: number }>;
+  agentMode?: 'conversational' | 'executor';
 }
 
 export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceCommandReturn {
@@ -96,6 +98,8 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     onAIResponse,
     onError,
     onActionsReceived,
+    conversationHistory: _conversationHistory,
+    agentMode: _agentMode,
   } = options;
   const { setCommandDeckOpen } = useCommandDeck();
 
@@ -265,6 +269,10 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
 
   useEffect(() => { tenantContextRef.current = options.tenantContext; }, [options.tenantContext]);
   useEffect(() => { resellerIdRef.current = options.resellerId; }, [options.resellerId]);
+  const conversationHistoryRef = useRef(_conversationHistory);
+  const agentModeRef = useRef(_agentMode);
+  useEffect(() => { conversationHistoryRef.current = _conversationHistory; }, [_conversationHistory]);
+  useEffect(() => { agentModeRef.current = _agentMode; }, [_agentMode]);
 
   useEffect(() => {
     const tenantId = _tenantContext?.tenantId;
@@ -437,6 +445,8 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
           currentConfig: _currentConfig || {},
           contextCapabilities: contextCapabilitiesRef.current || undefined,
           tenantContext: { tenantId: currentContext.tenantId, category: currentContext.category || 'GENERAL' },
+          conversationHistory: conversationHistoryRef.current,
+          agentMode: agentModeRef.current,
         }),
         signal,
       });
@@ -484,6 +494,23 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       }
 
       const currentTtsContext = tenantContextRef.current || {};
+
+      if (parsedResponse?.actionType === 'SYSTEM_HELP') {
+        const channel = channelRef.current;
+        if (channel) {
+          try {
+            channel.send({
+              type: 'broadcast',
+              event: 'intent-command',
+              payload: { intent: 'list_capabilities', tenantId: currentTtsContext.tenantId },
+            });
+            window.dispatchEvent(new MessageEvent('message', {
+              data: JSON.stringify({ type: 'hannah:intent-command', data: { intent: 'list_capabilities', tenantId: currentTtsContext.tenantId } }),
+            }));
+          } catch { /* no-op */ }
+        }
+      }
+
       const ttsResponse = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

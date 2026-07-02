@@ -61,6 +61,12 @@ const ProcessCommandSchema = z.object({
     tenantId: z.string().uuid().optional(), // Optional for global commands
     category: z.string().optional(),
   }),
+  conversationHistory: z.array(z.object({
+    role: z.enum(['user', 'assistant']),
+    content: z.string(),
+    timestamp: z.number(),
+  })).optional(), // Conversation history for follow-up context
+  agentMode: z.enum(['conversational', 'executor']).optional(), // Hannah operating mode
 });
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -98,7 +104,7 @@ const StructuredPayloadSchema = z.object({
 // SYSTEM_BULK_CONFIRM / SYSTEM_BULK_CANCEL / SYSTEM_FILTER_GRID are structural payloads
 // that bypass database writes (see short-circuit guard in POST handler).
 const AIResponseSchema = z.object({
-  actionType: z.enum(['SINGLE', 'BULK', 'NO_MATCH', 'DELETE_CLIENT', 'SYSTEM_BULK_CONFIRM', 'SYSTEM_BULK_CANCEL', 'SYSTEM_FILTER_GRID', 'SYSTEM_UPDATE_BRANDING', 'SYSTEM_HELP', 'SYSTEM_NOTE', 'SYSTEM_DISARM', 'SYSTEM_EXPLAIN']),
+  actionType: z.enum(['SINGLE', 'BULK', 'NO_MATCH', 'DELETE_CLIENT', 'SYSTEM_BULK_CONFIRM', 'SYSTEM_BULK_CANCEL', 'SYSTEM_FILTER_GRID', 'SYSTEM_UPDATE_BRANDING', 'SYSTEM_HELP', 'SYSTEM_NOTE', 'SYSTEM_DISARM', 'SYSTEM_EXPLAIN', 'SYSTEM_TELEMETRY']),
   targetIds: z.array(z.string().uuid()).optional(),
   clientName: z.string().optional(),
   contextKey: z.string().optional(), // Relevant capability key for SYSTEM_EXPLAIN
@@ -304,6 +310,38 @@ export async function POST(request: NextRequest) {
 
     // Build the system prompt dynamically from capabilities
     const SYSTEM_PROMPT = buildDeploymentOfficerPrompt(contextCapabilities as unknown as StudioCapabilitiesMap | undefined);
+
+    // ── Live telemetry fast-path ─────────────────────────────────────────
+    // If the user asks for success/performance/health metrics, query the
+    // reseller's signal logs and return a natural-language answer instead
+    // of forcing the LLM to hallucinate numbers.
+    const TELEMETRY_INTENT_REGEX = /(success rate|performance|health|signals|telemetry|metrics|uptime|stats)/i;
+    if (TELEMETRY_INTENT_REGEX.test(userCommand.trim()) && !tenantContext.tenantId) {
+      console.log('%c[ProcessCommand] 📊 Telemetry intent detected — querying signal logs', 'color: #3b82f6; font-weight: bold;');
+      try {
+        const { data: signalLogs, error: signalError } = await supabase
+          .from('tenant_logs')
+          .select('status, created_at')
+          .in('tenant_id', allTenants.map(t => t.id))
+          .order('created_at', { ascending: false })
+          .limit(500);
+
+        if (signalError) throw signalError;
+
+        const total = (signalLogs || []).length;
+        const successes = (signalLogs || []).filter((l: { status: string }) => l.status === 'success' || l.status === 'completed').length;
+        const failures = (signalLogs || []).filter((l: { status: string }) => l.status === 'failed' || l.status === 'error').length;
+        const successRate = total > 0 ? Math.round((successes / total) * 100) : 0;
+
+        return NextResponse.json({
+          actionType: 'SYSTEM_TELEMETRY',
+          summary: `Portfolio health: ${successRate}% success rate across ${total} recent signals. ${failures > 0 ? `${failures} failures detected.` : 'No failures.'}`,
+          payload: { successRate, totalSignals: total, successes, failures },
+        });
+      } catch (telemetryErr) {
+        console.error('[ProcessCommand] Telemetry query failed:', telemetryErr);
+      }
+    }
 
     // Construct the AI prompt with tenant context
     const userPrompt = `CURRENT CONFIG: ${JSON.stringify(currentConfig, null, 2)}

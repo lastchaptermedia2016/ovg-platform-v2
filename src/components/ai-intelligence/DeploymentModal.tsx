@@ -8,6 +8,7 @@ interface DeploymentModalProps {
   technicalSummary: string;
   isDeploying: boolean;
   onDeploy: () => void;
+  onDeploySuccess?: (summary: string) => void;
 }
 
 export function DeploymentModal({
@@ -16,6 +17,7 @@ export function DeploymentModal({
   technicalSummary,
   isDeploying,
   onDeploy,
+  onDeploySuccess,
 }: DeploymentModalProps) {
   return (
     <Transition appear show={isOpen} as="div">
@@ -79,7 +81,12 @@ export function DeploymentModal({
 
                     <button
                       type="button"
-                      onClick={onDeploy}
+                      onClick={async () => {
+                        await onDeploy();
+                        if (onDeploySuccess && technicalSummary) {
+                          onDeploySuccess(technicalSummary);
+                        }
+                      }}
                       disabled={isDeploying}
                       className={`relative px-6 py-2 rounded-lg border text-xs tracking-widest uppercase transition-all duration-300 overflow-hidden ${
                         isDeploying
