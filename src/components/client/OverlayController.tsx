@@ -11,6 +11,7 @@ import { CommandModal } from '@/components/client/CommandModal';
 // Types
 // ────────────────────────────────────────────────────────────────────
 type OverlayView = 'branding' | 'persona' | 'commands' | null;
+type CommandIntent = 'list_capabilities' | 'view_status' | 'get_help' | 'show_analytics';
 
 interface OverlayControllerProps {
   /** Optional initial view when mounted */
@@ -19,6 +20,7 @@ interface OverlayControllerProps {
   commandIntent?: 'list_capabilities' | 'view_status' | 'get_help' | 'show_analytics' | null;
   /** Called when the command modal requests close */
   onCommandClose?: () => void;
+  clientProfile?: { resellerSlug?: string } | null;
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -27,8 +29,9 @@ interface OverlayControllerProps {
 export const OverlayController = forwardRef<
   { openBranding: () => void; openPersona: () => void; openCommands: () => void },
   OverlayControllerProps
->(function OverlayController({ defaultView = null, commandIntent, onCommandClose }, ref) {
+>(function OverlayController({ defaultView = null, commandIntent, onCommandClose, clientProfile }, ref) {
   const [view, setView] = useState<OverlayView>(defaultView);
+  const [commandIntentState, setCommandIntent] = useState<CommandIntent | null>(null);
   const [isMounted, setIsMounted] = useState(false);
 
   // Ensure portal target exists on client
@@ -39,7 +42,23 @@ export const OverlayController = forwardRef<
   const openBranding = useCallback(() => setView('branding'), []);
   const openPersona = useCallback(() => setView('persona'), []);
   const openCommands = useCallback(() => setView('commands'), []);
-  const close = useCallback(() => setView(null), []);
+  const close = useCallback(() => {
+    setView(null);
+    setCommandIntent(null);
+  }, []);
+
+  // Bridge: open commands modal when commandIntent changes (from postMessage listener)
+  useEffect(() => {
+    if (commandIntent) {
+      setCommandIntent(commandIntent);
+      openCommands();
+    }
+  }, [commandIntent, openCommands]);
+
+  const handleCommandClose = () => {
+    setView(null);
+    setCommandIntent(null);
+  };
 
   useImperativeHandle(ref, () => ({ openBranding, openPersona, openCommands }), [openBranding, openPersona, openCommands]);
 
@@ -70,8 +89,9 @@ export const OverlayController = forwardRef<
     return (
       <CommandModal
         open
-        intent={commandIntent ?? null}
-        onClose={onCommandClose ?? close}
+        intent={commandIntentState}
+        onClose={onCommandClose ?? handleCommandClose}
+        clientProfile={clientProfile}
       />
     );
   }

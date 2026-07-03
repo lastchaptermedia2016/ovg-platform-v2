@@ -109,8 +109,14 @@ export default function SystemMicButton() {
 
     recognition.onresult = (event: SpeechRecognitionResultEvent) => {
       const results = event.results;
+      console.log('[TRACE] SpeechRecognitionResult:', {
+        resultsLength: results.length,
+        result0Length: results[0]?.length,
+        transcript: results[0]?.[0]?.transcript,
+      });
       if (results.length > 0 && results[0].length > 0 && results[0][0].transcript) {
         transcriptRef.current = results[0][0].transcript.trim();
+        console.log('[TRACE] Transcript stored:', `"${transcriptRef.current}"`);
       }
     };
 
@@ -120,12 +126,17 @@ export default function SystemMicButton() {
     };
 
     recognition.onend = () => {
+      console.log('[ZEEDER-VOICE] Speech recognition ended');
       setIsListening(false);
       const transcript = transcriptRef.current;
+      console.log('[ZEEDER-VOICE] Transcript captured:', transcript ? `"${transcript}"` : '(empty)');
       transcriptRef.current = '';
 
       if (transcript) {
+        console.log('[ZEEDER-VOICE] Calling handleVoiceCommand with transcript');
         handleVoiceCommand(transcript);
+      } else {
+        console.warn('[ZEEDER-VOICE] No transcript captured, not calling handleVoiceCommand');
       }
     };
 

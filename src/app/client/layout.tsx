@@ -21,16 +21,31 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
 
     supabase.auth.getSession().then(async ({ data }) => {
       const session = data.session;
+      console.log('[TRACE ClientLayout] Session:', session?.user?.id);
+      console.log('[TRACE ClientLayout] User:', session?.user?.email);
       if (session?.user) {
-        const { data: slugResult } = await resolveClientSlug(session.user.id);
-        const resolvedSlug = slugResult ?? undefined;
+        const { data: slugResult, error } = await resolveClientSlug(session.user.id);
+        console.log('[TRACE ClientLayout] resolveClientSlug result:', { slugResult, error });
 
-        setClientProfile({
+        if (error) {
+          console.error('[ClientLayout] Failed to resolve client slug:', error.message);
+          throw error;
+        }
+
+        if (!slugResult) {
+          const err = new Error('Reseller slug is missing - cannot initialize client profile');
+          console.error('[ClientLayout]', err.message);
+          throw err;
+        }
+
+        const profile = {
           name: session.user.user_metadata?.name ?? session.user.email?.split('@')[0] ?? 'Client',
           email: session.user.email ?? '',
-          resellerSlug: resolvedSlug,
+          resellerSlug: slugResult,
           lastLogin: session.user.last_sign_in_at ?? undefined,
-        });
+        };
+        console.log('[TRACE ClientLayout] Setting clientProfile:', profile);
+        setClientProfile(profile);
       }
     });
   }, []);
@@ -38,23 +53,23 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
-    const handler = (event: Event) => {
-      if (!(event instanceof MessageEvent)) return;
-      let payload: unknown;
-      try { payload = JSON.parse(event.data); } catch { return; }
-      if (
-        typeof payload === 'object' &&
-        payload !== null &&
-        'type' in payload &&
-        typeof (payload as Record<string, unknown>).type === 'string'
-      ) {
-        const type = (payload as Record<string, unknown>).type as string;
-        if (type === 'hannah:intent-command') {
-          const data = (payload as Record<string, unknown>).data as Record<string, unknown> | undefined;
-          const intentRaw = data?.intent;
-          if (typeof intentRaw === 'string') {
-            setCommandIntent(intentRaw as CommandIntent);
-          }
+    const handler = (event: MessageEvent) => {
+      let eventData = event.data;
+
+      // Handle both stringified and object payloads
+      if (typeof eventData === 'string') {
+        try {
+          eventData = JSON.parse(eventData);
+        } catch {
+          return; // Not valid JSON
+        }
+      }
+
+      if (eventData?.type === 'hannah:intent-command') {
+        const data = (eventData as Record<string, unknown>).data as Record<string, unknown> | undefined;
+        const intentRaw = data?.intent;
+        if (typeof intentRaw === 'string') {
+          setCommandIntent(intentRaw as CommandIntent);
         }
       }
     };
@@ -134,7 +149,7 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
       </main>
 
       {/* Overlay Controller */}
-      <OverlayController ref={overlayRef} commandIntent={commandIntent ?? undefined} onCommandClose={() => setCommandIntent(null)} />
+      <OverlayController ref={overlayRef} commandIntent={commandIntent ?? undefined} onCommandClose={() => setCommandIntent(null)} clientProfile={clientProfile} />
 
       {/* Footer branding — sits naturally in flex flow below content */}
       <div className="flex justify-center pb-4">

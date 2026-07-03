@@ -55,6 +55,27 @@ const ACTION_TYPE_TO_ZEEDER_ID: Record<string, ZeederActionId | null> = {
   SYSTEM_TELEMETRY: 'fetchTelemetry',
 };
 
+type CommandIntent = 'list_capabilities' | 'view_status' | 'get_help' | 'show_analytics';
+
+/**
+ * Map from `/api/ai/process-command` `actionType` values to CommandModal intent keys.
+ *
+ * This decouples AI action taxonomy from UI intent constants, allowing the AI
+ * to evolve independently. Unknown actionTypes fall back to a safe default.
+ */
+const ACTION_TYPE_TO_INTENT = new Map<string, CommandIntent | null>([
+  ['SYSTEM_HELP', 'list_capabilities'],
+  ['SYSTEM_EXPLAIN', 'list_capabilities'],
+  ['NO_MATCH', 'get_help'],
+  ['SYSTEM_NOTE', null],
+  ['SYSTEM_DISARM', null],
+]);
+
+/**
+ * Default intent for unrecognized actionTypes that still warrant a modal response.
+ */
+const DEFAULT_UNKNOWN_INTENT: CommandIntent | null = 'get_help';
+
 interface UseZeederVoiceOptions {
   /** Explicit reseller slug (e.g. "lastchaptermedia2016"). */
   resellerId?: string;
@@ -143,21 +164,88 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
   const processingRef = useRef(false);
 
   /**
+   * Play the AI summary response as speech via the TTS endpoint.
+   */
+  async function speakSummary(summary: string): Promise<void> {
+    try {
+      const ttsResponse = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: summary, voice: 'hannah' }),
+      });
+      if (!ttsResponse.ok) {
+        console.error('[ZEEDER-VOICE] TTS request failed');
+        return;
+      }
+      const audioBlob = await ttsResponse.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+      audio.onended = () => URL.revokeObjectURL(audioUrl);
+      await audio.play();
+    } catch {
+      console.error('[ZEEDER-VOICE] TTS playback failed');
+    }
+  }
+
+  /**
    * Send a natural-language transcript through the ZEEDER voice-action pipeline.
    *
    * @param text - The user's spoken command (free-form text).
    */
   const handleVoiceCommand = useCallback(
     async (text: string): Promise<void> => {
-      if (processingRef.current) {
+      console.log('[TRACE] handleVoiceCommand ENTRY');
+      console.log('[TRACE] text:', `"${text}"`);
+      console.log('[TRACE] text.length:', text.length);
+      console.log('[TRACE] text.trim().length:', text.trim().length);
+      console.log('[TRACE] clientProfile:', clientProfile);
+      console.log('[TRACE] resolvedResellerId:', resolvedResellerId);
+
+      const shouldSkipProcessing = processingRef.current;
+      console.log('[TRACE] processingRef.current:', shouldSkipProcessing);
+      if (shouldSkipProcessing) {
         console.warn('[ZEEDER-VOICE] handleVoiceCommand rejected — a command is already in flight.');
         return;
       }
 
-      if (!text || text.trim().length === 0) {
+      const isTextEmpty = !text || text.trim().length === 0;
+      console.log('[TRACE] isTextEmpty:', isTextEmpty);
+      if (isTextEmpty) {
         console.warn('[ZEEDER-VOICE] handleVoiceCommand called with empty text.');
         return;
       }
+
+      const isResellerIdMissing = !resolvedResellerId;
+      console.log('[TRACE] isResellerIdMissing:', isResellerIdMissing);
+      if (isResellerIdMissing) {
+        console.warn('[ZEEDER-VOICE] handleVoiceCommand rejected — resellerSlug is missing from clientProfile');
+        setExecutionState({
+          activeActionId: null,
+          startedAt: null,
+          completedAt: Date.now(),
+          error: 'Reseller not resolved.',
+        });
+        setMode('error');
+        setState(prev => ({ ...prev, isProcessing: false, error: 'Reseller not resolved.' }));
+        return;
+      }
+
+      const isInvalidSlugValue = isInvalidSlug(resolvedResellerId);
+      console.log('[TRACE] isInvalidSlug:', isInvalidSlugValue);
+      if (isInvalidSlugValue) {
+        console.warn('[ZEEDER-VOICE] handleVoiceCommand rejected — resellerSlug is an unresolved hydration artifact:', resolvedResellerId);
+        setExecutionState({
+          activeActionId: null,
+          startedAt: null,
+          completedAt: Date.now(),
+          error: 'Reseller not resolved.',
+        });
+        setMode('error');
+        setState(prev => ({ ...prev, isProcessing: false, error: 'Reseller not resolved.' }));
+        return;
+      }
+
+      console.log('[TRACE] PASSED ALL GUARDS - proceeding to API call');
 
       processingRef.current = true;
       setState(prev => ({ ...prev, isProcessing: true, error: null }));
@@ -234,6 +322,15 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
         // ── Step 2: Map AI actionType to ZEEDER action ID ──────────
         const mappedActionId = ACTION_TYPE_TO_ZEEDER_ID[data.actionType] ?? null;
 
+        // ── Post-Message Bridge: notify parent layout for non-dispatch actionTypes ──
+        const uiIntent = ACTION_TYPE_TO_INTENT.get(data.actionType) ?? DEFAULT_UNKNOWN_INTENT;
+        if (uiIntent && typeof window !== 'undefined') {
+          window.postMessage(
+            { type: 'hannah:intent-command', data: { intent: uiIntent } },
+            window.location.origin,
+          );
+        }
+
         if (!mappedActionId) {
           // The AI responded with a non-ZEEDER action (e.g. SYSTEM_HELP,
           // NO_MATCH, SINGLE, BULK). This is a successful response but
@@ -241,6 +338,9 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
           console.log(
             `[ZEEDER-VOICE] AI responded with non-ZEEDER actionType: "${data.actionType}" — ${data.summary ?? 'no summary'}`,
           );
+          if (data.summary) {
+            await speakSummary(data.summary);
+          }
           setState(prev => ({ ...prev, isProcessing: false }));
           return;
         }
@@ -262,12 +362,17 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
 
         await dispatch(mappedActionId, dispatchPayload);
 
+        if (data.summary) {
+          await speakSummary(data.summary);
+        }
+
         // ── Step 4: Reset state (idle) ──────────────────────────────
         setState(prev => ({ ...prev, isProcessing: false }));
         console.log(`[ZEEDER-VOICE] Action "${mappedActionId}" completed successfully.`);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'An unexpected error occurred.';
-        console.error(`[ZEEDER-VOICE] Unhandled error: ${message}`);
+        console.error(`[ZEEDER-VOICE] Unhandled error:`, err);
+        console.error(`[ZEEDER-VOICE] Error message: ${message}`);
         setState(prev => ({ ...prev, isProcessing: false, error: message }));
       } finally {
         processingRef.current = false;
@@ -283,6 +388,7 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
       _contextCapabilities,
       _conversationHistory,
       _agentMode,
+      clientProfile,
     ],
   );
 

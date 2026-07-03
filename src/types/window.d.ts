@@ -1,5 +1,3 @@
-import type { ZeederClientProfile } from '@/contexts/ZeederContext';
-
 export {};
 
 declare global {
