@@ -70,6 +70,28 @@ export type ClientAIPersona = z.infer<typeof ClientAIPersonaSchema>;
  * @property widgetBodyOpacity - Opacity of widget body (0-1 range)
  * @property widgetBodyBackground - CSS background for widget body
  */
+/**
+ * Widget position schema
+ */
+export const ClientWidgetPositionSchema = z.enum([
+  'bottom-right', 
+  'bottom-left', 
+  'top-right', 
+  'top-left'
+]);
+
+/**
+ * Background section configuration schema
+ */
+export const ClientBackgroundSectionSchema = z.object({
+  type: z.enum(['solid', 'gradient']),
+  colorStart: ClientHexColorSchema,
+  colorEnd: ClientHexColorSchema.optional(),
+  image: z.string().optional(),
+});
+
+export type ClientBackgroundSection = z.infer<typeof ClientBackgroundSectionSchema>;
+
 export const ClientBrandingSchema = z.object({
   primaryColor: ClientHexColorSchema.optional(),
   accentColor: ClientHexColorSchema.optional(),
@@ -81,6 +103,9 @@ export const ClientBrandingSchema = z.object({
     .max(1)
     .optional(),
   widgetBodyBackground: z.string().optional(),
+  widgetPosition: ClientWidgetPositionSchema.optional(),
+  headerConfig: ClientBackgroundSectionSchema.optional(),
+  footerConfig: ClientBackgroundSectionSchema.optional(),
 }).passthrough();
 
 export type ClientBranding = z.infer<typeof ClientBrandingSchema>;

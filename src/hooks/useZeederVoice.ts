@@ -360,15 +360,21 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
           dispatchPayload,
         );
 
-        await dispatch(mappedActionId, dispatchPayload);
+        const result = await dispatch(mappedActionId, dispatchPayload);
 
-        if (data.summary) {
-          await speakSummary(data.summary);
+        if (!result.success) {
+          const fallbackMessage = result.error ?? 'Sorry, I wasn\'t able to complete that.';
+          console.error(`[ZEEDER-VOICE] Action "${mappedActionId}" failed:`, result.error);
+          await speakSummary(fallbackMessage);
+          setState(prev => ({ ...prev, isProcessing: false }));
+        } else {
+          const spokenText = result.greeting ?? data.summary;
+          if (spokenText) {
+            await speakSummary(spokenText);
+          }
+          setState(prev => ({ ...prev, isProcessing: false }));
+          console.log(`[ZEEDER-VOICE] Action "${mappedActionId}" completed successfully.`);
         }
-
-        // ── Step 4: Reset state (idle) ──────────────────────────────
-        setState(prev => ({ ...prev, isProcessing: false }));
-        console.log(`[ZEEDER-VOICE] Action "${mappedActionId}" completed successfully.`);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'An unexpected error occurred.';
         console.error(`[ZEEDER-VOICE] Unhandled error:`, err);

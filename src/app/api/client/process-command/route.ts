@@ -18,6 +18,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getAuthenticatedUser } from '@/lib/auth/server';
 import { z } from 'zod';
 import { zeederActionRegistry, isZeederActionId, type ZeederActionId } from '@/lib/zeeder/action-registry';
 
@@ -146,6 +147,11 @@ export const dynamic = 'force-dynamic';
  * ```
  */
 export async function POST(request: NextRequest): Promise<NextResponse<ZeederCommandResponse>> {
+  const { userId, error: authError } = await getAuthenticatedUser();
+  if (authError || !userId) {
+    return NextResponse.json({ success: false, actionId: null, payload: {}, summary: 'Unauthorized', error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     // ── Parse & Validate ─────────────────────────────────────────────
     const body: unknown = await request.json();

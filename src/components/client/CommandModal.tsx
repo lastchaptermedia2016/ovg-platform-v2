@@ -46,7 +46,7 @@ export function CommandModal({ open, intent, onClose, clientProfile }: CommandMo
         <div className="sticky top-0 z-10 flex flex-col gap-1 p-3 bg-slate-950/80 backdrop-blur-md border-b border-white/5">
           <div className="flex justify-between items-center">
             <span className="text-white/90 text-sm font-semibold">Command List</span>
-            <button onClick={onClose} className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-slate-900/50 border border-white/10 text-zinc-400 hover:text-white hover:border-cyan-500/30 transition-all" aria-label="Close">
+            <button onClick={onClose} className="relative z-[9999] inline-flex items-center justify-center w-8 h-8 rounded-lg bg-slate-900/50 border border-white/10 text-zinc-400 hover:text-white hover:border-cyan-500/30 transition-all pointer-events-auto" aria-label="Close">
               <X size={18} />
             </button>
           </div>

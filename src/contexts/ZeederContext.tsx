@@ -79,8 +79,9 @@ export interface ZeederContextValue {
    *
    * @param actionId - The registered action identifier.
    * @param payload  - Arbitrary key-value payload forwarded to the handler.
+   * @returns The action result including success status, greeting, and error info.
    */
-  dispatch: (actionId: ZeederActionId, payload: Record<string, unknown>) => Promise<void>;
+  dispatch: (actionId: ZeederActionId, payload: Record<string, unknown>) => Promise<{ success: boolean; greeting?: string; error?: string }>;
 }
 
 // ──────────────────────────── Context Instance ───────────────────────────
@@ -131,12 +132,12 @@ export function ZeederProvider({
   }, [clientProfile]);
 
   const dispatch = useCallback(
-    async (actionId: ZeederActionId, payload: Record<string, unknown>): Promise<void> => {
+    async (actionId: ZeederActionId, payload: Record<string, unknown>): Promise<{ success: boolean; greeting?: string; error?: string }> => {
       if (dispatchInFlight.current) {
         console.warn(
           `[ZeederContext] dispatch("${actionId}") rejected — an action is already in flight.`,
         );
-        return;
+        return { success: false, error: 'An action is already in flight.' };
       }
 
       const entry = zeederActionRegistry.get(actionId);
@@ -149,7 +150,7 @@ export function ZeederProvider({
           error: `Unknown action "${actionId}"`,
         });
         setMode('error');
-        return;
+        return { success: false, error: `Unknown action "${actionId}"` };
       }
 
       dispatchInFlight.current = true;
@@ -179,7 +180,7 @@ export function ZeederProvider({
             error: result.error ?? 'Action returned a non-success result.',
           });
           setMode('error');
-          return;
+          return { success: false, error: result.error ?? 'Action returned a non-success result.' };
         }
 
         // Check if the handler indicated it needs further user input
@@ -195,6 +196,8 @@ export function ZeederProvider({
           completedAt: Date.now(),
           error: null,
         });
+
+        return { success: true, greeting: result.greeting };
       } catch (err: unknown) {
         const message =
           err instanceof Error ? err.message : 'An unexpected error occurred during dispatch.';
@@ -205,6 +208,7 @@ export function ZeederProvider({
           error: message,
         });
         setMode('error');
+        return { success: false, error: message };
       } finally {
         dispatchInFlight.current = false;
       }

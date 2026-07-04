@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createAuthClient, getAuthenticatedUser } from '@/lib/auth/server';
-import { safeParseClientWidgetStudio } from '@/lib/schemas/client-config.schema';
+import { getAuthenticatedUser } from '@/lib/auth/server';
 import { z } from 'zod';
+import { dispatchAction, ActionContext, ActionResult } from '@/lib/actionRegistry';
+import { safeParseClientWidgetStudio } from '@/lib/schemas/client-config.schema';
+import { checkTenantAiExecutePermission } from '@/lib/checkTenantAiExecutePermission';
 
 /**
  * Client Studio Config Update Route
@@ -15,6 +17,7 @@ import { z } from 'zod';
 const ClientUpdateRequestSchema = z.object({
   tenantId: z.string().uuid('Invalid tenant ID'),
   studioConfig: z.record(z.unknown()).optional(),
+  source: z.enum(['manual', 'hannah']).optional().default('manual'),
 });
 
 export async function POST(request: NextRequest) {
@@ -52,47 +55,51 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { tenantId, studioConfig } = validation.data;
+    const { tenantId, studioConfig, source } = validation.data;
 
     // ────────────────────────────────────────────────────────────
-    // STEP 3: Validate Studio Config
+    // STEP 2.5: Permission check for hannah-triggered updates
     // ────────────────────────────────────────────────────────────
-    const studioValidation = safeParseClientWidgetStudio(studioConfig);
+    if (source === 'hannah') {
+      const hasPermission = await checkTenantAiExecutePermission(tenantId);
+      if (!hasPermission) {
+        console.warn('[ClientUpdateStudio] Hannah lacks canExecute permission for tenant:', tenantId);
+        return NextResponse.json(
+          { success: false, error: 'AI does not have permission to modify configuration for this account' },
+          { status: 403 }
+        );
+      }
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // STEP 3: Validate studioConfig with safeParseClientWidgetStudio
+    // ────────────────────────────────────────────────────────────
+    const studioValidation = safeParseClientWidgetStudio(studioConfig ?? {});
     if (!studioValidation.success) {
       return NextResponse.json(
-        { success: false, error: 'Invalid studio config', details: studioValidation.error.flatten() },
+        { success: false, error: 'Invalid studio configuration', details: studioValidation.error.flatten() },
         { status: 400 }
       );
     }
 
-    // ────────────────────────────────────────────────────────────
-    // STEP 4: Update Database (Placeholder for now)
-    // ────────────────────────────────────────────────────────────
-    const supabase = await createAuthClient();
+    const validatedParams = studioValidation.data;
 
-    const { error: updateError } = await supabase
-      .from('tenants')
-      .update({
-        widget_config: {
-          widget_studio: studioValidation.data,
-        },
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', tenantId)
-      .single();
+    // ────────────────────────────────────────────────────────────
+    // STEP 4: Dispatch action via ActionRegistry
+    // ────────────────────────────────────────────────────────────
+    const ctx: ActionContext = {
+      userId,
+      tenantId,
+      source,
+    };
 
-    if (updateError) {
-      console.error('[ClientUpdateStudio] Update failed:', updateError);
-      return NextResponse.json(
-        { success: false, error: 'Failed to update configuration' },
-        { status: 500 }
-      );
-    }
+    const result: ActionResult = await dispatchAction('updateStudioConfig', validatedParams, ctx);
 
     return NextResponse.json({
-      success: true,
-      studioConfig: studioValidation.data,
+      success: result.success,
+      studioConfig: validatedParams,
       updatedAt: new Date().toISOString(),
+      error: result.error,
     });
 
   } catch (error) {

@@ -107,14 +107,71 @@ export const zeederActionRegistry = new Map<ZeederActionId, ZeederActionEntry>([
       handler: async (payload: Record<string, unknown>): Promise<ZeederActionResult> => {
         const clientName = getClientName(payload);
 
-        // ── Placeholder — wire to real BrandingStudio logic when available ──
-        console.log('[ZEEDER:updateBranding] Received payload:', payload);
+        // ── Wire to real BrandingStudio logic via update-studio-config API ──
+        const { resolveTenantId } = await import('@/lib/resolveTenantId');
+        const { translateVoicePayloadToStudioConfig } = await import('@/lib/translateVoicePayloadToStudioConfig');
 
-        return {
-          success: true,
-          data: { applied: true },
-          greeting: `Branding updated for ${clientName}.`,
-        };
+        // Get current user from browser-safe supabase client
+        const supabase = await (await import('@/lib/supabase/client')).createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+
+        if (!user?.id) {
+          return {
+            success: false,
+            error: 'Unable to resolve current user session.',
+          };
+        }
+
+        const tenantResult = await resolveTenantId(user.id);
+        if (tenantResult.error || !tenantResult.data) {
+          return {
+            success: false,
+            error: tenantResult.error?.message ?? 'Failed to resolve tenant ID.',
+          };
+        }
+
+        const tenantId = tenantResult.data;
+        const { studioConfig, unmapped } = translateVoicePayloadToStudioConfig(payload);
+
+        if (Object.keys(unmapped).length > 0) {
+          console.log('[updateBranding] Unmapped voice fields (no persistence path):', unmapped);
+        }
+
+        if (Object.keys(studioConfig).length === 0) {
+          return {
+            success: false,
+            error: 'No valid branding configuration extracted from voice command.',
+          };
+        }
+
+        try {
+          const response = await fetch('/api/client/update-studio-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tenantId, studioConfig, source: 'hannah' }),
+          });
+
+          const result = await response.json();
+
+          if (!response.ok) {
+            return {
+              success: false,
+              error: result.error ?? 'Failed to update branding configuration.',
+            };
+          }
+
+          return {
+            success: true,
+            data: { applied: result.success },
+            greeting: `Branding updated for ${clientName}.`,
+          };
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'Network error during branding update.';
+          return {
+            success: false,
+            error: msg,
+          };
+        }
       },
     },
   ],

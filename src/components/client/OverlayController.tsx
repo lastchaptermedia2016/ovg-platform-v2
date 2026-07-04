@@ -29,7 +29,7 @@ interface OverlayControllerProps {
 export const OverlayController = forwardRef<
   { openBranding: () => void; openPersona: () => void; openCommands: () => void },
   OverlayControllerProps
->(function OverlayController({ defaultView = null, commandIntent, onCommandClose, clientProfile }, ref) {
+>(function OverlayController({ defaultView = null, commandIntent, onCommandClose: _onCommandClose, clientProfile }, ref) {
   const [view, setView] = useState<OverlayView>(defaultView);
   const [commandIntentState, setCommandIntent] = useState<CommandIntent | null>(null);
   const [isMounted, setIsMounted] = useState(false);
@@ -90,7 +90,7 @@ export const OverlayController = forwardRef<
       <CommandModal
         open
         intent={commandIntentState}
-        onClose={onCommandClose ?? handleCommandClose}
+        onClose={handleCommandClose}
         clientProfile={clientProfile}
       />
     );

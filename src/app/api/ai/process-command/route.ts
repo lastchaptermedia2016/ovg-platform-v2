@@ -6,6 +6,11 @@ import { resolveResellerId } from '@/lib/db/resolve-reseller';
 import { buildDeploymentOfficerPrompt } from '@/core/ai/system-prompts';
 import { buildCapabilitiesSummary, type StudioCapabilitiesMap } from '@/core/ai/studio-capabilities';
 import { matchHelpIntent } from '@/lib/ai/help-matrix';
+import { getAuthenticatedUser } from '@/lib/auth/server';
+import { checkTenantAiExecutePermission } from '@/lib/checkTenantAiExecutePermission';
+import { translateVoicePayloadToStudioConfig } from '@/lib/translateVoicePayloadToStudioConfig';
+import { dispatchUpdateStudioConfig } from '@/lib/actionRegistry';
+import type { ClientWidgetStudio } from '@/lib/schemas/client-config.schema';
 
 // â”€â”€ Hybrid Routing Interfaces â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export interface ActivePageContext {
@@ -514,6 +519,46 @@ Output ONLY valid JSON.`;
         },
       });
     }
+
+    // 🔷 SYSTEM_UPDATE_BRANDING: Use proper branding flow with permission check and nested structure
+    if (actionType === 'SYSTEM_UPDATE_BRANDING') {
+      const { userId, error: authError } = await getAuthenticatedUser();
+      if (authError || !userId) {
+        return NextResponse.json({ success: false, error: 'Unauthorized', actionType, targetIds }, { status: 401 });
+      }
+
+      if (!targetIds || targetIds.length === 0) {
+        return NextResponse.json({ success: false, error: 'SYSTEM_UPDATE_BRANDING requires a target tenantId', actionType }, { status: 400 });
+      }
+
+      const tenantId = targetIds[0];
+      const hasPermission = await checkTenantAiExecutePermission(tenantId);
+      if (!hasPermission) {
+        return NextResponse.json({ success: false, error: 'AI does not have permission to modify configuration for this account', actionType, targetIds }, { status: 403 });
+      }
+
+      const { studioConfig } = translateVoicePayloadToStudioConfig(payload);
+
+      if (Object.keys(studioConfig).length === 0) {
+        return NextResponse.json({ success: false, error: 'No valid branding configuration extracted from voice command', actionType, targetIds }, { status: 400 });
+      }
+
+      try {
+        const result = await dispatchUpdateStudioConfig(studioConfig as ClientWidgetStudio, { userId, tenantId, source: 'hannah' });
+        return NextResponse.json({
+          success: result.success,
+          actionType,
+          targetIds,
+          payload: studioConfig,
+          summary: summary || 'Branding updated.',
+          ...(result.error && { error: result.error }),
+        });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Failed to update branding.';
+        return NextResponse.json({ success: false, error: msg, actionType, targetIds }, { status: 500 });
+      }
+    }
+
     // Guard: targetIds must be present for SINGLE/BULK (enforced by schema but TS needs narrowing)
     if (!targetIds || targetIds.length === 0) {
       return NextResponse.json(

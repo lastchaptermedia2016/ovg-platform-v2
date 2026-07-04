@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import { Loader2, Save, Settings2 } from "lucide-react";
 import type { WidgetConfig } from "@/lib/schemas/tenant-config.schema";
 import { createClient } from "@/lib/supabase/client";
+import { resolveTenantId } from "@/lib/resolveTenantId";
 
 // ────────────────────────────────────────────────────────────────────
 // Persona Form State Interface
@@ -72,18 +73,11 @@ export default function AIPersonaSettings() {
           throw new Error("Unauthenticated");
         }
 
-        // Resolve the tenant for this user via user_tenants
-        const { data: member } = await supabase
-          .from("user_tenants")
-          .select("tenant_id")
-          .eq("user_id", user.id)
-          .maybeSingle<{ tenant_id: string }>();
-
-        if (!member?.tenant_id) {
-          throw new Error("No tenant association found");
+        // Resolve the tenant for this user via resolveTenantId (user_resellers → tenants)
+        const { data: resolvedTenantId, error: tenantIdErr } = await resolveTenantId(user.id);
+        if (tenantIdErr || !resolvedTenantId) {
+          throw new Error(tenantIdErr?.message || "No tenant association found");
         }
-
-        const resolvedTenantId: string = member.tenant_id;
         setTenantId(resolvedTenantId);
 
         const { data, error: fetchErr } = await supabase

@@ -1,6 +1,8 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
+import { createClient as createSupabaseClient } from '@/lib/supabase/client';
+import { resolveTenantId } from '@/lib/resolveTenantId';
 
 /**
  * Branding configuration interface
@@ -14,10 +16,9 @@ interface BrandingConfig {
 
 /**
  * Component props interface
- * Allows optional tenantId and callback on save
+ * Allows optional callback on save
  */
 interface BrandingStudioProps {
-  tenantId?: string;
   onSave?: (config: BrandingConfig) => void;
 }
 
@@ -43,7 +44,7 @@ interface BackgroundSectionConfig {
  * BrandingStudio Component
  * Self-contained component for managing branding configurations
  * - Handles its own state and error management
- * - Does not import from reseller, master, or other isolated directories
+ * - Resolves tenantId internally via user_resellers → tenants chain
  * - Uses Tailwind CSS for styling matching project design system
  * - Defensive error handling with console logging
  */
@@ -54,7 +55,28 @@ const defaultBackground: BackgroundSectionConfig = {
   image: '',
 };
 
-export function BrandingStudio({ tenantId = 'client-tenant-id', onSave }: BrandingStudioProps) {
+export function BrandingStudio({ onSave }: BrandingStudioProps) {
+  const [tenantId, setTenantId] = useState<string | null>(null);
+  const [tenantIdError, setTenantIdError] = useState<string | null>(null);
+
+  // Resolve tenantId on mount
+  useEffect(() => {
+    const supabase = createSupabaseClient();
+    supabase.auth.getSession().then(async ({ data }) => {
+      const session = data.session;
+      if (session?.user) {
+        const { data: tenantIdResult, error } = await resolveTenantId(session.user.id);
+        if (error) {
+          setTenantIdError(error.message);
+          console.error('[BrandingStudio] Failed to resolve tenantId:', error.message);
+        } else {
+          setTenantId(tenantIdResult);
+          console.log('[BrandingStudio] Resolved tenantId:', tenantIdResult);
+        }
+      }
+    });
+  }, []);
+
   const [config, setConfig] = useState<BrandingConfig & { headerConfig?: BackgroundSectionConfig; footerConfig?: BackgroundSectionConfig }>({
     primaryColor: '#1A73E8',
     logoUrl: '',
@@ -111,6 +133,16 @@ export function BrandingStudio({ tenantId = 'client-tenant-id', onSave }: Brandi
     setIsLoading(true);
     setFeedback(null);
 
+    // Check if tenantId is resolved
+    if (!tenantId) {
+      setFeedback({
+        type: 'error',
+        message: tenantIdError || 'Unable to resolve tenant ID. Please refresh the page.',
+      });
+      setIsLoading(false);
+      return;
+    }
+
     try {
       // Client-side validation
       if (!isValidHexColor(config.primaryColor)) {
@@ -125,7 +157,7 @@ export function BrandingStudio({ tenantId = 'client-tenant-id', onSave }: Brandi
         if (!isValidHexColor(config.headerConfig.colorStart)) {
           throw new Error('Invalid header start color');
         }
-        if (config.headerConfig.type === 'gradient' && !isValidHexColor(config.headerConfig.colorEnd)) {
+        if (config.headerConfig.type === 'gradient' && config.headerConfig.colorEnd && !isValidHexColor(config.headerConfig.colorEnd)) {
           throw new Error('Invalid header end color');
         }
         if (config.headerConfig.image && !isValidUrl(config.headerConfig.image)) {
@@ -137,7 +169,7 @@ export function BrandingStudio({ tenantId = 'client-tenant-id', onSave }: Brandi
         if (!isValidHexColor(config.footerConfig.colorStart)) {
           throw new Error('Invalid footer start color');
         }
-        if (config.footerConfig.type === 'gradient' && !isValidHexColor(config.footerConfig.colorEnd)) {
+        if (config.footerConfig.type === 'gradient' && config.footerConfig.colorEnd && !isValidHexColor(config.footerConfig.colorEnd)) {
           throw new Error('Invalid footer end color');
         }
         if (config.footerConfig.image && !isValidUrl(config.footerConfig.image)) {
@@ -145,12 +177,33 @@ export function BrandingStudio({ tenantId = 'client-tenant-id', onSave }: Brandi
         }
       }
 
+      // Transform config to match ClientWidgetStudioSchema shape: { branding: {...} }
+      const studioConfig = {
+        branding: {
+          primaryColor: config.primaryColor,
+          logoUrl: config.logoUrl || undefined,
+          widgetPosition: config.widgetPosition,
+          headerConfig: config.headerConfig ? {
+            type: config.headerConfig.type,
+            colorStart: config.headerConfig.colorStart,
+            colorEnd: config.headerConfig.colorEnd || undefined,
+            image: config.headerConfig.image || undefined,
+          } : undefined,
+          footerConfig: config.footerConfig ? {
+            type: config.footerConfig.type,
+            colorStart: config.footerConfig.colorStart,
+            colorEnd: config.footerConfig.colorEnd || undefined,
+            image: config.footerConfig.image || undefined,
+          } : undefined,
+        },
+      };
+
       const response = await fetch('/api/client/update-studio-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tenantId,
-          studioConfig: config,
+          studioConfig,
         }),
       });
 
@@ -187,7 +240,7 @@ export function BrandingStudio({ tenantId = 'client-tenant-id', onSave }: Brandi
     } finally {
       setIsLoading(false);
     }
-  }, [config, tenantId, onSave]);
+  }, [config, tenantId, tenantIdError, onSave]);
 
   /**
    * Clears feedback message
