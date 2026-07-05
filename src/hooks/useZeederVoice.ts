@@ -28,7 +28,7 @@
 
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { isInvalidSlug } from '@/lib/utils/guard';
 import { useZeeder } from '@/contexts/ZeederContext';
 import { isZeederActionId, type ZeederActionId } from '@/lib/zeeder/action-registry';
@@ -160,8 +160,24 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
     clientProfile?.resellerSlug?.trim() ??
     null;
 
+  const clientProfileRef = useRef(clientProfile);
+  useEffect(() => {
+    clientProfileRef.current = clientProfile;
+  }, [clientProfile]);
+
   // Guard against concurrent invocations
   const processingRef = useRef(false);
+
+  async function pollForProfile(ref: React.MutableRefObject<typeof clientProfile>, timeoutMs: number) {
+    const intervalMs = 150;
+    let waited = 0;
+    while (waited < timeoutMs) {
+      if (ref.current?.resellerSlug) return ref.current;
+      await new Promise(resolve => setTimeout(resolve, intervalMs));
+      waited += intervalMs;
+    }
+    return ref.current;
+  }
 
   /**
    * Play the AI summary response as speech via the TTS endpoint.
@@ -194,6 +210,8 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
    */
   const handleVoiceCommand = useCallback(
     async (text: string): Promise<void> => {
+      let currentResellerId = resolvedResellerId;
+
       console.log('[TRACE] handleVoiceCommand ENTRY');
       console.log('[TRACE] text:', `"${text}"`);
       console.log('[TRACE] text.length:', text.length);
@@ -215,7 +233,19 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
         return;
       }
 
-      const isResellerIdMissing = !resolvedResellerId;
+      // Deterministic override: when clientProfile has not yet hydrated,
+      // poll for it instead of immediately rejecting.
+      if (!clientProfileRef.current?.resellerSlug) {
+        console.warn('[ZEEDER-VOICE] Profile not yet loaded, polling...');
+        const hydrated = await pollForProfile(clientProfileRef, 2000);
+        if (!hydrated?.resellerSlug) {
+          console.error('[ZEEDER-VOICE] handleVoiceCommand rejected — resellerSlug is missing');
+          return;
+        }
+        currentResellerId = hydrated.resellerSlug;
+      }
+
+      const isResellerIdMissing = !currentResellerId;
       console.log('[TRACE] isResellerIdMissing:', isResellerIdMissing);
       if (isResellerIdMissing) {
         console.warn('[ZEEDER-VOICE] handleVoiceCommand rejected — resellerSlug is missing from clientProfile');
@@ -230,10 +260,10 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
         return;
       }
 
-      const isInvalidSlugValue = isInvalidSlug(resolvedResellerId);
+      const isInvalidSlugValue = isInvalidSlug(currentResellerId || '');
       console.log('[TRACE] isInvalidSlug:', isInvalidSlugValue);
       if (isInvalidSlugValue) {
-        console.warn('[ZEEDER-VOICE] handleVoiceCommand rejected — resellerSlug is an unresolved hydration artifact:', resolvedResellerId);
+        console.warn('[ZEEDER-VOICE] handleVoiceCommand rejected — resellerSlug is an unresolved hydration artifact:', currentResellerId);
         setExecutionState({
           activeActionId: null,
           startedAt: null,
@@ -251,8 +281,7 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
       setState(prev => ({ ...prev, isProcessing: true, error: null }));
 
       try {
-        // ── Guard: block if resellerSlug is missing from context ──
-        if (!resolvedResellerId) {
+        if (!currentResellerId) {
           console.warn('[ZEEDER-VOICE] handleVoiceCommand rejected — resellerSlug is missing from clientProfile');
           setExecutionState({
             activeActionId: null,
@@ -265,9 +294,8 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
           return;
         }
 
-        // ── Guard: block if resellerSlug is an unresolved hydration artifact ──
-        if (isInvalidSlug(resolvedResellerId)) {
-          console.warn('[ZEEDER-VOICE] handleVoiceCommand rejected — resellerSlug is an unresolved hydration artifact:', resolvedResellerId);
+        if (isInvalidSlug(currentResellerId || '')) {
+          console.warn('[ZEEDER-VOICE] handleVoiceCommand rejected — resellerSlug is an unresolved hydration artifact:', currentResellerId);
           setExecutionState({
             activeActionId: null,
             startedAt: null,
@@ -281,14 +309,14 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
 
         // ── Step 1: POST to the Groq-powered AI process-command API ──
         // Payload mirrors the /reseller `useVoiceCommand` configuration exactly.
-        console.log('[ZEEDER-VOICE] Identity resolved as:', resolvedResellerId);
+        console.log('[ZEEDER-VOICE] Identity resolved as:', currentResellerId);
         console.log(`[ZEEDER-VOICE] Sending text to /api/ai/process-command: "${text.slice(0, 80)}..."`);
 
         const response = await fetch('/api/ai/process-command', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            resellerId: resolvedResellerId,
+            resellerId: currentResellerId,
             userCommand: text,
             currentConfig: _currentConfig ?? {},
             contextCapabilities: _contextCapabilities,

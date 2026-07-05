@@ -392,7 +392,7 @@ Output ONLY valid JSON.`;
       throw new Error('AI response does not match required schema');
     }
 
-    const { actionType, targetIds, clientName, contextKey, payload, summary, confidenceScore } = aiValidation.data;
+    let { actionType, targetIds, clientName, contextKey, payload, summary, confidenceScore } = aiValidation.data;
 
     // ðŸ”· Confidence Threshold: If the AI is unsure (< 0.85), demote actionable types to SYSTEM_NOTE
     // This prevents conversational filler from triggering ARMED state.
@@ -520,6 +520,14 @@ Output ONLY valid JSON.`;
       });
     }
 
+    // Deterministic override: when exactly one tenant exists for this reseller,
+    // do not trust the AI's targetIds selection — it has been observed returning
+    // the reseller_id instead of the tenant's own id. There is only one valid
+    // target in this case, so bypass the AI's choice entirely.
+    if (allTenants.length === 1) {
+      targetIds = [allTenants[0].id];
+    }
+
     // 🔷 SYSTEM_UPDATE_BRANDING: Use proper branding flow with permission check and nested structure
     if (actionType === 'SYSTEM_UPDATE_BRANDING') {
       const { userId, error: authError } = await getAuthenticatedUser();
@@ -538,6 +546,8 @@ Output ONLY valid JSON.`;
       }
 
       const { studioConfig } = translateVoicePayloadToStudioConfig(payload);
+      console.log('%c[ProcessCommand] 🔍 Raw AI payload:', 'color: #f59e0b; font-weight: bold;', JSON.stringify(payload, null, 2));
+      console.log('%c[ProcessCommand] 🔍 Translated studioConfig:', 'color: #f59e0b; font-weight: bold;', JSON.stringify(studioConfig, null, 2));
 
       if (Object.keys(studioConfig).length === 0) {
         return NextResponse.json({ success: false, error: 'No valid branding configuration extracted from voice command', actionType, targetIds }, { status: 400 });

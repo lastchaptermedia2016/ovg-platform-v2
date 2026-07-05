@@ -131,10 +131,16 @@ export const zeederActionRegistry = new Map<ZeederActionId, ZeederActionEntry>([
         }
 
         const tenantId = tenantResult.data;
-        const { studioConfig, unmapped } = translateVoicePayloadToStudioConfig(payload);
+        let studioConfig: Record<string, unknown>;
 
-        if (Object.keys(unmapped).length > 0) {
-          console.log('[updateBranding] Unmapped voice fields (no persistence path):', unmapped);
+        if (payload.branding && typeof payload.branding === 'object') {
+          studioConfig = { branding: payload.branding };
+        } else {
+          const result = translateVoicePayloadToStudioConfig(payload);
+          if (Object.keys(result.unmapped).length > 0) {
+            console.log('[updateBranding] Unmapped voice fields (no persistence path):', result.unmapped);
+          }
+          studioConfig = result.studioConfig;
         }
 
         if (Object.keys(studioConfig).length === 0) {
