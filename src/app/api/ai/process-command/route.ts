@@ -392,7 +392,8 @@ Output ONLY valid JSON.`;
       throw new Error('AI response does not match required schema');
     }
 
-    let { actionType, targetIds, clientName, contextKey, payload, summary, confidenceScore } = aiValidation.data;
+    const { actionType, clientName, contextKey, payload, summary, confidenceScore } = aiValidation.data;
+    let { targetIds } = aiValidation.data;
 
     // ðŸ”· Confidence Threshold: If the AI is unsure (< 0.85), demote actionable types to SYSTEM_NOTE
     // This prevents conversational filler from triggering ARMED state.

@@ -60,7 +60,7 @@ export const URLSchema = z
  * }
  */
 export const BackgroundSettingsSchema = z.object({
-  type: z.enum(['solid', 'gradient']).optional(),
+  type: z.enum(['solid', 'gradient', 'image', 'none']).optional(),
   colorStart: HexColorSchema.optional(),
   colorEnd: HexColorSchema.optional(),
   image: URLSchema.nullable().optional(),

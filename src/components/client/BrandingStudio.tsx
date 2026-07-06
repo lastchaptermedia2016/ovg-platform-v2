@@ -3,63 +3,45 @@
 import { useState, useCallback, useEffect } from 'react';
 import { createClient as createSupabaseClient } from '@/lib/supabase/client';
 import { resolveTenantId } from '@/lib/resolveTenantId';
+import { useStudioDraft, isImageMode } from '@/contexts/StudioDraftContext';
 
-/**
- * Branding configuration interface
- * Defines the structure for studio-level customization settings
- */
 interface BrandingConfig {
   primaryColor: string;
   logoUrl: string;
   widgetPosition: 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left';
 }
 
-/**
- * Component props interface
- * Allows optional callback on save
- */
 interface BrandingStudioProps {
   onSave?: (config: BrandingConfig) => void;
 }
 
-/**
- * Feedback state interface
- * Tracks UI feedback messages
- */
 interface Feedback {
   type: 'success' | 'error';
   message: string;
 }
 
-type BackgroundType = 'solid' | 'gradient';
+export type BackgroundConfig = {
+  type: 'none' | 'solid' | 'image';
+  image?: string;
+  colorStart?: string;
+};
 
-interface BackgroundSectionConfig {
-  type: BackgroundType;
-  colorStart: string;
-  colorEnd: string;
-  image: string;
-}
+export type StudioDraft = {
+  primaryColor: string;
+  logoUrl: string;
+  widgetPosition: string;
+  header: BackgroundConfig;
+  footer: BackgroundConfig;
+};
 
-/**
- * BrandingStudio Component
- * Self-contained component for managing branding configurations
- * - Handles its own state and error management
- * - Resolves tenantId internally via user_resellers → tenants chain
- * - Uses Tailwind CSS for styling matching project design system
- * - Defensive error handling with console logging
- */
-const defaultBackground: BackgroundSectionConfig = {
-  type: 'solid',
-  colorStart: '#1A73E8',
-  colorEnd: '#34A853',
-  image: '',
+const defaultBackground: BackgroundConfig = {
+  type: 'none',
 };
 
 export function BrandingStudio({ onSave }: BrandingStudioProps) {
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [tenantIdError, setTenantIdError] = useState<string | null>(null);
 
-  // Resolve tenantId on mount
   useEffect(() => {
     const supabase = createSupabaseClient();
     supabase.auth.getSession().then(async ({ data }) => {
@@ -77,29 +59,17 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
     });
   }, []);
 
-  const [config, setConfig] = useState<BrandingConfig & { headerConfig?: BackgroundSectionConfig; footerConfig?: BackgroundSectionConfig }>({
-    primaryColor: '#1A73E8',
-    logoUrl: '',
-    widgetPosition: 'bottom-right',
-    headerConfig: undefined,
-    footerConfig: undefined,
-  });
+  const { draft: draftConfig, setDraft: setDraftConfig } = useStudioDraft();
 
   const [isLoading, setIsLoading] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
 
-  /**
-   * Validates hex color format
-   */
   const isValidHexColor = (color: string): boolean => {
-    return /^#[0-9A-F]{6}$/i.test(color);
+    return /^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{8})$/.test(color);
   };
 
-  /**
-   * Validates URL format
-   */
   const isValidUrl = (url: string): boolean => {
-    if (!url) return true; // URL is optional
+    if (!url) return true;
     try {
       new URL(url);
       return true;
@@ -108,32 +78,26 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
     }
   };
 
-  const updateSection = (
-    key: 'headerConfig' | 'footerConfig',
-    patch: Partial<BackgroundSectionConfig> | undefined
+  const updateBackground = (
+    key: 'header' | 'footer',
+    patch: Partial<BackgroundConfig> | undefined
   ) => {
-    setConfig((prev) => ({
+    setDraftConfig((prev) => ({
       ...prev,
       [key]: patch
         ? {
-            type: patch.type ?? prev[key]?.type ?? defaultBackground.type,
-            colorStart: patch.colorStart ?? prev[key]?.colorStart ?? defaultBackground.colorStart,
-            colorEnd: patch.colorEnd ?? prev[key]?.colorEnd ?? defaultBackground.colorEnd,
-            image: patch.image ?? prev[key]?.image ?? defaultBackground.image,
+            type: patch.type ?? prev[key].type,
+            image: patch.image ?? prev[key].image,
+            colorStart: patch.colorStart ?? prev[key].colorStart,
           }
-        : undefined,
+        : defaultBackground,
     }));
   };
 
-  /**
-   * Handles form submission and API call
-   * Posts configuration to /api/client/update-studio-config
-   */
   const handleSave = useCallback(async () => {
     setIsLoading(true);
     setFeedback(null);
 
-    // Check if tenantId is resolved
     if (!tenantId) {
       setFeedback({
         type: 'error',
@@ -144,57 +108,47 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
     }
 
     try {
-      // Client-side validation
-      if (!isValidHexColor(config.primaryColor)) {
+      if (!isValidHexColor(draftConfig.primaryColor)) {
         throw new Error('Invalid primary color format. Use hex color (e.g., #FF0000)');
       }
 
-      if (!isValidUrl(config.logoUrl)) {
+      if (!isValidUrl(draftConfig.logoUrl)) {
         throw new Error('Invalid logo URL. Please enter a valid URL or leave empty');
       }
 
-      if (config.headerConfig) {
-        if (!isValidHexColor(config.headerConfig.colorStart)) {
-          throw new Error('Invalid header start color');
-        }
-        if (config.headerConfig.type === 'gradient' && config.headerConfig.colorEnd && !isValidHexColor(config.headerConfig.colorEnd)) {
-          throw new Error('Invalid header end color');
-        }
-        if (config.headerConfig.image && !isValidUrl(config.headerConfig.image)) {
-          throw new Error('Invalid header background image URL');
-        }
+      if (isImageMode(draftConfig.header) && draftConfig.header.image && !isValidUrl(draftConfig.header.image)) {
+        throw new Error('Invalid header background image URL');
       }
 
-      if (config.footerConfig) {
-        if (!isValidHexColor(config.footerConfig.colorStart)) {
-          throw new Error('Invalid footer start color');
-        }
-        if (config.footerConfig.type === 'gradient' && config.footerConfig.colorEnd && !isValidHexColor(config.footerConfig.colorEnd)) {
-          throw new Error('Invalid footer end color');
-        }
-        if (config.footerConfig.image && !isValidUrl(config.footerConfig.image)) {
-          throw new Error('Invalid footer background image URL');
-        }
+      if (isImageMode(draftConfig.footer) && draftConfig.footer.image && !isValidUrl(draftConfig.footer.image)) {
+        throw new Error('Invalid footer background image URL');
       }
 
-      // Transform config to match ClientWidgetStudioSchema shape: { branding: {...} }
+      const buildHeaderConfig = (): { type?: string; image?: string; colorStart?: string } | undefined => {
+        if (draftConfig.header.type === 'none') return undefined;
+        return {
+          type: draftConfig.header.type,
+          image: draftConfig.header.image || undefined,
+          colorStart: draftConfig.header.colorStart || undefined,
+        };
+      };
+
+      const buildFooterConfig = (): { type?: string; image?: string; colorStart?: string } | undefined => {
+        if (draftConfig.footer.type === 'none') return undefined;
+        return {
+          type: draftConfig.footer.type,
+          image: draftConfig.footer.image || undefined,
+          colorStart: draftConfig.footer.colorStart || undefined,
+        };
+      };
+
       const studioConfig = {
         branding: {
-          primaryColor: config.primaryColor,
-          logoUrl: config.logoUrl || undefined,
-          widgetPosition: config.widgetPosition,
-          headerConfig: config.headerConfig ? {
-            type: config.headerConfig.type,
-            colorStart: config.headerConfig.colorStart,
-            colorEnd: config.headerConfig.colorEnd || undefined,
-            image: config.headerConfig.image || undefined,
-          } : undefined,
-          footerConfig: config.footerConfig ? {
-            type: config.footerConfig.type,
-            colorStart: config.footerConfig.colorStart,
-            colorEnd: config.footerConfig.colorEnd || undefined,
-            image: config.footerConfig.image || undefined,
-          } : undefined,
+          primaryColor: draftConfig.primaryColor,
+          logoUrl: draftConfig.logoUrl || undefined,
+          widgetPosition: draftConfig.widgetPosition,
+          headerConfig: buildHeaderConfig(),
+          footerConfig: buildFooterConfig(),
         },
       };
 
@@ -226,9 +180,8 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
         message: 'Configuration saved successfully!',
       });
 
-      // Call optional callback
       if (onSave) {
-        onSave(config);
+        onSave(draftConfig as BrandingConfig);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to save configuration';
@@ -240,11 +193,8 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [config, tenantId, tenantIdError, onSave]);
+  }, [draftConfig, tenantId, tenantIdError, onSave]);
 
-  /**
-   * Clears feedback message
-   */
   const clearFeedback = useCallback(() => {
     setFeedback(null);
   }, []);
@@ -255,9 +205,7 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
         Branding Studio
       </h2>
 
-      {/* Form Inputs */}
       <div className="space-y-5">
-        {/* Primary Color Input */}
         <div>
           <label className="block text-sm font-medium text-zinc-300 mb-2 font-agrandir">
             Primary Color
@@ -265,9 +213,9 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
           <div className="flex gap-3 items-center">
             <input
               type="color"
-              value={config.primaryColor}
+              value={draftConfig.primaryColor}
               onChange={(e) => {
-                setConfig({ ...config, primaryColor: e.target.value });
+                setDraftConfig({ ...draftConfig, primaryColor: e.target.value });
                 clearFeedback();
               }}
               className="w-16 h-10 rounded-lg cursor-pointer border border-white/10 hover:border-cyan-500/50 transition-colors"
@@ -275,9 +223,9 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
             />
             <input
               type="text"
-              value={config.primaryColor}
+              value={draftConfig.primaryColor}
               onChange={(e) => {
-                setConfig({ ...config, primaryColor: e.target.value });
+                setDraftConfig({ ...draftConfig, primaryColor: e.target.value });
                 clearFeedback();
               }}
               placeholder="#1A73E8"
@@ -288,7 +236,6 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
           <p className="text-xs text-zinc-500 mt-1">Enter a hex color code (e.g., #FF0000)</p>
         </div>
 
-        {/* Logo URL Input */}
         <div>
           <label className="block text-sm font-medium text-zinc-300 mb-2 font-agrandir">
             Logo URL
@@ -296,9 +243,9 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
           <input
             type="text"
             placeholder="https://example.com/logo.png"
-            value={config.logoUrl}
+            value={draftConfig.logoUrl}
             onChange={(e) => {
-              setConfig({ ...config, logoUrl: e.target.value });
+              setDraftConfig({ ...draftConfig, logoUrl: e.target.value });
               clearFeedback();
             }}
             className="w-full px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm"
@@ -307,89 +254,69 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
           <p className="text-xs text-zinc-500 mt-1">Optional: provide a direct URL to your logo image</p>
         </div>
 
-        {/* Header Background */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="rounded-xl border border-white/10 bg-slate-900/40 p-4">
             <p className="text-xs font-semibold text-white mb-3">Header Background</p>
             <div className="space-y-3">
               <select
-                value={config.headerConfig?.type ?? ''}
+                value={draftConfig.header.type}
                 onChange={(e) => {
-                  const value = e.target.value as BackgroundType | '';
-                  updateSection('headerConfig', value ? { type: value } : undefined);
+                  const value = e.target.value as BackgroundConfig['type'];
+                  updateBackground('header', value === 'none' ? undefined : { type: value });
                   clearFeedback();
                 }}
                 className="w-full px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm"
                 aria-label="Header background type"
               >
-                <option value="">None</option>
-                <option value="solid">Solid</option>
-                <option value="gradient">Gradient</option>
+                <option value="none">None</option>
+                <option value="solid">Solid Color</option>
+                <option value="image">Image URL</option>
               </select>
 
-              {config.headerConfig && (
+              {draftConfig.header.type !== 'none' && (
                 <>
-                  <div className="flex gap-3 items-center">
-                    <input
-                      type="color"
-                      value={config.headerConfig.colorStart}
-                      onChange={(e) => {
-                        updateSection('headerConfig', { colorStart: e.target.value });
-                        clearFeedback();
-                      }}
-                      className="w-10 h-10 rounded-lg cursor-pointer border border-white/10"
-                      aria-label="Header start color picker"
-                    />
-                    <input
-                      type="text"
-                      value={config.headerConfig.colorStart}
-                      onChange={(e) => {
-                        updateSection('headerConfig', { colorStart: e.target.value });
-                        clearFeedback();
-                      }}
-                      placeholder="#1A73E8"
-                      className="flex-1 px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm font-mono"
-                      aria-label="Header start color"
-                    />
-                  </div>
-
-                  {config.headerConfig.type === 'gradient' && (
+                  {isImageMode(draftConfig.header) ? (
+                    <>
+                      <label className="block text-sm font-medium text-zinc-300 mb-2 font-agrandir">
+                        Background Image URL
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="https://cdn.example.com/header-bg.jpg"
+                        value={draftConfig.header.image ?? ''}
+                        onChange={(e) => {
+                          updateBackground('header', { image: e.target.value });
+                          clearFeedback();
+                        }}
+                        className="w-full px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm"
+                        aria-label="Header background image URL"
+                      />
+                    </>
+                  ) : (
                     <div className="flex gap-3 items-center">
                       <input
                         type="color"
-                        value={config.headerConfig.colorEnd}
+                        value={draftConfig.header.colorStart ?? '#1A73E8'}
                         onChange={(e) => {
-                          updateSection('headerConfig', { colorEnd: e.target.value });
+                          updateBackground('header', { colorStart: e.target.value });
                           clearFeedback();
                         }}
                         className="w-10 h-10 rounded-lg cursor-pointer border border-white/10"
-                        aria-label="Header end color picker"
+                        aria-label="Header color picker"
                       />
                       <input
                         type="text"
-                        value={config.headerConfig.colorEnd}
+                        value={draftConfig.header.colorStart ?? ''}
                         onChange={(e) => {
-                          updateSection('headerConfig', { colorEnd: e.target.value });
+                          updateBackground('header', { colorStart: e.target.value });
                           clearFeedback();
                         }}
-                        placeholder="#34A853"
+                        placeholder="#1A73E8"
                         className="flex-1 px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm font-mono"
-                        aria-label="Header end color"
+                        aria-label="Header color value"
                       />
                     </div>
                   )}
-
-                  <input
-                    type="text"
-                    placeholder="https://cdn.example.com/header-bg.jpg"
-                    value={config.headerConfig.image ?? ''}
-                    onChange={(e) => {
-                      updateSection('headerConfig', { image: e.target.value });
-                      clearFeedback();
-                    }}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm"
-                    aria-label="Header background image URL"
-                  />
                 </>
               )}
             </div>
@@ -399,99 +326,79 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
             <p className="text-xs font-semibold text-white mb-3">Footer Background</p>
             <div className="space-y-3">
               <select
-                value={config.footerConfig?.type ?? ''}
+                value={draftConfig.footer.type}
                 onChange={(e) => {
-                  const value = e.target.value as BackgroundType | '';
-                  updateSection('footerConfig', value ? { type: value } : undefined);
+                  const value = e.target.value as BackgroundConfig['type'];
+                  updateBackground('footer', value === 'none' ? undefined : { type: value });
                   clearFeedback();
                 }}
                 className="w-full px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm"
                 aria-label="Footer background type"
               >
-                <option value="">None</option>
-                <option value="solid">Solid</option>
-                <option value="gradient">Gradient</option>
+                <option value="none">None</option>
+                <option value="solid">Solid Color</option>
+                <option value="image">Image URL</option>
               </select>
 
-              {config.footerConfig && (
+              {draftConfig.footer.type !== 'none' && (
                 <>
-                  <div className="flex gap-3 items-center">
-                    <input
-                      type="color"
-                      value={config.footerConfig.colorStart}
-                      onChange={(e) => {
-                        updateSection('footerConfig', { colorStart: e.target.value });
-                        clearFeedback();
-                      }}
-                      className="w-10 h-10 rounded-lg cursor-pointer border border-white/10"
-                      aria-label="Footer start color picker"
-                    />
-                    <input
-                      type="text"
-                      value={config.footerConfig.colorStart}
-                      onChange={(e) => {
-                        updateSection('footerConfig', { colorStart: e.target.value });
-                        clearFeedback();
-                      }}
-                      placeholder="#1A73E8"
-                      className="flex-1 px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm font-mono"
-                      aria-label="Footer start color"
-                    />
-                  </div>
-
-                  {config.footerConfig.type === 'gradient' && (
+                  {isImageMode(draftConfig.footer) ? (
+                    <>
+                      <label className="block text-sm font-medium text-zinc-300 mb-2 font-agrandir">
+                        Background Image URL
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="https://cdn.example.com/footer-bg.jpg"
+                        value={draftConfig.footer.image ?? ''}
+                        onChange={(e) => {
+                          updateBackground('footer', { image: e.target.value });
+                          clearFeedback();
+                        }}
+                        className="w-full px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm"
+                        aria-label="Footer background image URL"
+                      />
+                    </>
+                  ) : (
                     <div className="flex gap-3 items-center">
                       <input
                         type="color"
-                        value={config.footerConfig.colorEnd}
+                        value={draftConfig.footer.colorStart ?? '#1A73E8'}
                         onChange={(e) => {
-                          updateSection('footerConfig', { colorEnd: e.target.value });
+                          updateBackground('footer', { colorStart: e.target.value });
                           clearFeedback();
                         }}
                         className="w-10 h-10 rounded-lg cursor-pointer border border-white/10"
-                        aria-label="Footer end color picker"
+                        aria-label="Footer color picker"
                       />
                       <input
                         type="text"
-                        value={config.footerConfig.colorEnd}
+                        value={draftConfig.footer.colorStart ?? ''}
                         onChange={(e) => {
-                          updateSection('footerConfig', { colorEnd: e.target.value });
+                          updateBackground('footer', { colorStart: e.target.value });
                           clearFeedback();
                         }}
-                        placeholder="#34A853"
+                        placeholder="#1A73E8"
                         className="flex-1 px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm font-mono"
-                        aria-label="Footer end color"
+                        aria-label="Footer color value"
                       />
                     </div>
                   )}
-
-                  <input
-                    type="text"
-                    placeholder="https://cdn.example.com/footer-bg.jpg"
-                    value={config.footerConfig.image ?? ''}
-                    onChange={(e) => {
-                      updateSection('footerConfig', { image: e.target.value });
-                      clearFeedback();
-                    }}
-                    className="w-full px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm"
-                    aria-label="Footer background image URL"
-                  />
                 </>
               )}
             </div>
           </div>
         </div>
 
-        {/* Widget Position Select */}
         <div>
           <label className="block text-sm font-medium text-zinc-300 mb-2 font-agrandir">
             Widget Position
           </label>
           <select
-            value={config.widgetPosition}
+            value={draftConfig.widgetPosition}
             onChange={(e) => {
-              setConfig({
-                ...config,
+              setDraftConfig({
+                ...draftConfig,
                 widgetPosition: e.target.value as BrandingConfig['widgetPosition'],
               });
               clearFeedback();
@@ -508,7 +415,6 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
         </div>
       </div>
 
-      {/* Feedback Messages */}
       {feedback && (
         <div
           className={`mt-5 p-4 rounded-lg flex items-start gap-3 ${
@@ -534,7 +440,6 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
         </div>
       )}
 
-      {/* Save Button */}
       <button
         onClick={handleSave}
         disabled={isLoading}
@@ -544,7 +449,6 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
         {isLoading ? 'Saving...' : 'Save Configuration'}
       </button>
 
-      {/* Helper Text */}
       <p className="text-xs text-zinc-500 mt-3 text-center">
         Changes will be applied immediately across your widget
       </p>

@@ -30,7 +30,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { isInvalidSlug } from '@/lib/utils/guard';
-import { useZeeder } from '@/contexts/ZeederContext';
+import { useZeeder, type ZeederClientProfile } from '@/contexts/ZeederContext';
 import { isZeederActionId, type ZeederActionId } from '@/lib/zeeder/action-registry';
 
 // ──────────────────────────── Types ─────────────────────────────────────
@@ -91,6 +91,22 @@ interface UseZeederVoiceOptions {
     timestamp: number;
   }>;
   agentMode?: 'conversational' | 'executor';
+}
+
+// ──────────────────────────── Helpers ────────────────────────────────────
+
+async function pollForProfile(
+  ref: React.RefObject<ZeederClientProfile | null>,
+  timeoutMs: number
+): Promise<ZeederClientProfile | null> {
+  const intervalMs = 150;
+  let waited = 0;
+  while (waited < timeoutMs) {
+    if (ref.current?.resellerSlug) return ref.current;
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+    waited += intervalMs;
+  }
+  return ref.current;
 }
 
 // ──────────────────────────── Hook ──────────────────────────────────────
@@ -167,17 +183,6 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
 
   // Guard against concurrent invocations
   const processingRef = useRef(false);
-
-  async function pollForProfile(ref: React.MutableRefObject<typeof clientProfile>, timeoutMs: number) {
-    const intervalMs = 150;
-    let waited = 0;
-    while (waited < timeoutMs) {
-      if (ref.current?.resellerSlug) return ref.current;
-      await new Promise(resolve => setTimeout(resolve, intervalMs));
-      waited += intervalMs;
-    }
-    return ref.current;
-  }
 
   /**
    * Play the AI summary response as speech via the TTS endpoint.

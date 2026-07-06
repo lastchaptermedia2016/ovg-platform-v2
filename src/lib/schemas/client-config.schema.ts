@@ -84,10 +84,10 @@ export const ClientWidgetPositionSchema = z.enum([
  * Background section configuration schema
  */
 export const ClientBackgroundSectionSchema = z.object({
-  type: z.enum(['solid', 'gradient']),
-  colorStart: ClientHexColorSchema,
+  type: z.enum(['solid', 'gradient', 'image', 'none']).optional(),
+  colorStart: ClientHexColorSchema.optional(),
   colorEnd: ClientHexColorSchema.optional(),
-  image: z.string().optional(),
+  image: ClientURLSchema.nullable().optional(),
 });
 
 export type ClientBackgroundSection = z.infer<typeof ClientBackgroundSectionSchema>;
