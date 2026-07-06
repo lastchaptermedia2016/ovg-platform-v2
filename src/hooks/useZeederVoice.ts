@@ -31,6 +31,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { isInvalidSlug } from '@/lib/utils/guard';
 import { useZeeder, type ZeederClientProfile } from '@/contexts/ZeederContext';
+import { useStudioDraft } from '@/contexts/StudioDraftContext';
 import { isZeederActionId, type ZeederActionId } from '@/lib/zeeder/action-registry';
 
 // ──────────────────────────── Types ─────────────────────────────────────
@@ -156,6 +157,10 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
   clearError: () => void;
 } {
   const { dispatch, clientProfile, setMode, setExecutionState } = useZeeder();
+  // Bridge to the Studio's single source of truth for persona state. This is
+  // the Architect's "unified dispatcher": persona changes never touch the
+  // disconnected ZeederContext — they flow straight into StudioDraftProvider.
+  const { dispatchStudioAction } = useStudioDraft();
   const [state, setState] = useState<ZeederVoiceState>({
     isProcessing: false,
     error: null,
@@ -355,6 +360,48 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
         // ── Step 2: Map AI actionType to ZEEDER action ID ──────────
         const mappedActionId = ACTION_TYPE_TO_ZEEDER_ID[data.actionType] ?? null;
 
+        // ── Unified Dispatcher: Persona bridge ─────────────────────
+        // A persona-mode change (carried in aiPersona.personaMode, e.g. from a
+        // SYSTEM_UPDATE_BRANDING payload that included persona) is routed
+        // directly into the StudioDraftProvider — NEVER through ZeederContext.
+        const rawPersonaMode =
+          (data.payload as { aiPersona?: { personaMode?: unknown } } | undefined)?.aiPersona
+            ?.personaMode;
+        const personaMode =
+          rawPersonaMode === 'sales' || rawPersonaMode === 'concierge'
+            ? rawPersonaMode
+            : null;
+
+        if (personaMode) {
+          dispatchStudioAction({ type: 'UPDATE_PERSONA', mode: personaMode });
+          const spoken =
+            data.summary
+              ? `${data.summary} I've updated the draft to ${personaMode} mode — please click Save to commit these changes.`
+              : `I've updated the draft to ${personaMode} mode — please click Save to commit these changes.`;
+          await speakSummary(spoken);
+          setState(prev => ({ ...prev, isProcessing: false }));
+          console.log(`[ZEEDER-VOICE] Routed persona change → "${personaMode}" via StudioDraftProvider.`);
+          return;
+        }
+
+        // Misrecognized persona mode (e.g. "concious"): do NOT fall through to the
+        // ZeederContext DB-writing dispatch (Path A — no silent commit). Clarify and
+        // return instead of producing a 400 from an invalid aiPersona payload.
+        if (
+          rawPersonaMode !== undefined &&
+          rawPersonaMode !== null &&
+          rawPersonaMode !== 'sales' &&
+          rawPersonaMode !== 'concierge'
+        ) {
+          const spoken = `I didn't catch a valid persona mode. Please say "sales" or "concierge".`;
+          await speakSummary(spoken);
+          setState(prev => ({ ...prev, isProcessing: false }));
+          console.warn(
+            `[ZEEDER-VOICE] Rejected invalid personaMode "${String(rawPersonaMode)}" — clarified instead of dispatching.`
+          );
+          return;
+        }
+
         // ── Post-Message Bridge: notify parent layout for non-dispatch actionTypes ──
         const uiIntent = ACTION_TYPE_TO_INTENT.get(data.actionType) ?? DEFAULT_UNKNOWN_INTENT;
         if (uiIntent && typeof window !== 'undefined') {
@@ -421,6 +468,7 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
       dispatch,
       setMode,
       setExecutionState,
+      dispatchStudioAction,
       resolvedResellerId,
       _currentConfig,
       _tenantContext,

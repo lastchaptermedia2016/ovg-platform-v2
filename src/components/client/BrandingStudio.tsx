@@ -3,7 +3,8 @@
 import { useState, useCallback, useEffect } from 'react';
 import { createClient as createSupabaseClient } from '@/lib/supabase/client';
 import { resolveTenantId } from '@/lib/resolveTenantId';
-import { useStudioDraft, isImageMode } from '@/contexts/StudioDraftContext';
+import { useStudioDraft, isImageMode, toCanonicalBranding } from '@/contexts/StudioDraftContext';
+import type { CanonicalBranding } from '@/lib/schemas/tenant-config.canonical';
 
 interface BrandingConfig {
   primaryColor: string;
@@ -124,32 +125,10 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
         throw new Error('Invalid footer background image URL');
       }
 
-      const buildHeaderConfig = (): { type?: string; image?: string; colorStart?: string } | undefined => {
-        if (draftConfig.header.type === 'none') return undefined;
-        return {
-          type: draftConfig.header.type,
-          image: draftConfig.header.image || undefined,
-          colorStart: draftConfig.header.colorStart || undefined,
-        };
-      };
-
-      const buildFooterConfig = (): { type?: string; image?: string; colorStart?: string } | undefined => {
-        if (draftConfig.footer.type === 'none') return undefined;
-        return {
-          type: draftConfig.footer.type,
-          image: draftConfig.footer.image || undefined,
-          colorStart: draftConfig.footer.colorStart || undefined,
-        };
-      };
+      const canonicalBranding: Partial<CanonicalBranding> = toCanonicalBranding(draftConfig);
 
       const studioConfig = {
-        branding: {
-          primaryColor: draftConfig.primaryColor,
-          logoUrl: draftConfig.logoUrl || undefined,
-          widgetPosition: draftConfig.widgetPosition,
-          headerConfig: buildHeaderConfig(),
-          footerConfig: buildFooterConfig(),
-        },
+        branding: canonicalBranding,
       };
 
       const response = await fetch('/api/client/update-studio-config', {

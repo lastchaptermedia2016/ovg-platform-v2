@@ -2,9 +2,15 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { WidgetPreview } from '@/components/studio/WidgetPreview';
+import { VoiceMicIndicator } from '@/components/studio/VoiceMicIndicator';
+import { CapabilitiesModal } from '@/components/studio/CapabilitiesModal';
+import { CapabilitiesBridge } from '@/components/studio/CapabilitiesBridge';
 import { StudioDraftProvider } from '@/contexts/StudioDraftContext';
+import { VoiceProvider } from '@/providers/voice-provider';
+import { createClient } from '@/lib/supabase/client';
+import type { AuthContext } from '@/lib/actions/auth-middleware';
 
 const navItems = [
   {
@@ -19,11 +25,91 @@ const navItems = [
   },
 ];
 
+/**
+ * Resolve the caller's AuthContext on the client. We best-effort a tenantId so
+ * the ActionRegistry can run authorization; if it can't be resolved the voice
+ * layer still proposes drafts (the draft is never committed without a valid
+ * context). Kept lightweight and failure-tolerant.
+ */
+function useClientAuthContext(): AuthContext | null {
+  const [authContext, setAuthContext] = useState<AuthContext | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const supabase = createClient();
+      const { data: userData } = await supabase.auth.getUser();
+      const user = userData.user;
+      if (!user || cancelled) return;
+
+      let tenantId = '';
+      try {
+        const { data: link } = await supabase
+          .from('user_resellers')
+          .select('reseller_id')
+          .eq('user_id', user.id)
+          .maybeSingle();
+        const resellerId = link?.reseller_id ?? user.user_metadata?.reseller_id;
+        if (resellerId) {
+          const { data: tenant } = await supabase
+            .from('tenants')
+            .select('id')
+            .eq('reseller_id', resellerId)
+            .limit(1)
+            .maybeSingle();
+          tenantId = tenant?.id ?? '';
+        }
+      } catch {
+        tenantId = '';
+      }
+
+      if (!cancelled) {
+        setAuthContext({
+          userId: user.id,
+          tenantId,
+          role: user.user_metadata?.role,
+        });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return authContext;
+}
+
 export default function StudioLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const authContext = useClientAuthContext();
+  const supabase = createClient();
+  const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
 
   return (
     <StudioDraftProvider>
+      {authContext ? (
+        <VoiceProvider
+          authContext={authContext}
+          supabase={supabase}
+          onTriggerUI={(trigger) => {
+            if (trigger === 'OPEN_CAPABILITIES') setCapabilitiesOpen(true);
+          }}
+        >
+          <StudioShell pathname={pathname}>{children}</StudioShell>
+          <VoiceMicIndicator />
+          <CapabilitiesBridge onOpen={() => setCapabilitiesOpen(true)} />
+          <CapabilitiesModal open={capabilitiesOpen} onClose={() => setCapabilitiesOpen(false)} />
+        </VoiceProvider>
+      ) : (
+        <StudioShell pathname={pathname}>{children}</StudioShell>
+      )}
+    </StudioDraftProvider>
+  );
+}
+
+function StudioShell({ pathname, children }: { pathname: string; children: ReactNode }) {
+  return (
     <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-6 md:py-10">
       <div className="mb-6">
         <p className="text-[10px] font-semibold uppercase tracking-widest text-cyan-400 font-agrandir">
@@ -83,6 +169,5 @@ export default function StudioLayout({ children }: { children: ReactNode }) {
         </div>
       </div>
     </div>
-    </StudioDraftProvider>
   );
 }

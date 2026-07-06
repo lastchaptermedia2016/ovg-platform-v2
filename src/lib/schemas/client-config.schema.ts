@@ -46,11 +46,16 @@ export const ClientURLSchema = z
  * @property personality - Predefined personality archetype
  * @property conversationStyle - Custom instructions for conversation tone/style
  */
+// name/voiceId are optional. We accept an empty string as an "unset" state
+// (toCanonicalAIPersona may emit voiceId: '') rather than failing validation,
+// so persona-only saves from the voice bridge and the manual Save button both
+// succeed without requiring a voice selection. The server treats '' as unset.
 export const ClientAIPersonaSchema = z.object({
-  name: z.string().min(1, 'Persona name is required'),
-  voiceId: z.string().min(1, 'Voice ID is required'),
-  personality: z.enum(['professional', 'friendly', 'minimalist', 'direct']),
+  name: z.string().optional(),
+  voiceId: z.string().optional(),
+  personality: z.enum(['professional', 'friendly', 'minimalist', 'direct']).optional(),
   conversationStyle: z.string().optional(),
+  personaMode: z.enum(['sales', 'concierge']).optional(),
 }).passthrough();
 
 export type ClientAIPersona = z.infer<typeof ClientAIPersonaSchema>;

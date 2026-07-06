@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { useRef, useState, useEffect } from 'react';
 import { OverlayController } from '@/components/client/OverlayController';
 import { ZeederProvider, type ZeederClientProfile } from '@/contexts/ZeederContext';
+import { StudioDraftProvider } from '@/contexts/StudioDraftContext';
 import SystemMicButton from '@/components/ui/zeeder/SystemMicButton';
 import { createClient as createSupabaseClient } from '@/lib/supabase/client';
 import { resolveClientSlug } from '@/lib/db/resolve-client-slug';
@@ -79,6 +80,7 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
   }, []);
 
   return (
+    <StudioDraftProvider>
     <ZeederProvider clientProfile={clientProfile ?? undefined}>
     <div className="font-agrandir antialiased text-white min-h-screen bg-transparent overflow-x-hidden flex flex-col">
       {/* Fixed Background Matrix — binary/code matrix bleed with deep dark preservation */}
@@ -164,5 +166,6 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
       </div>
     </div>
     </ZeederProvider>
+    </StudioDraftProvider>
   );
 }

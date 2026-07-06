@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { Loader2, Save, Settings2 } from "lucide-react";
 import type { WidgetConfig } from "@/lib/schemas/tenant-config.schema";
+import type { CanonicalAIPersona } from "@/lib/schemas/tenant-config.canonical";
 import { createClient } from "@/lib/supabase/client";
 import { resolveTenantId } from "@/lib/resolveTenantId";
 
@@ -123,7 +124,7 @@ export default function AIPersonaSettings() {
 
   // Derive studioConfig payload for API
   const buildStudioConfigPayload = useCallback(
-    (persona: PersonaFormState) => {
+    (persona: PersonaFormState): { aiPersona: Partial<CanonicalAIPersona> } => {
       return {
         aiPersona: {
           name: persona.name,

@@ -1,37 +1,22 @@
-import type { ClientWidgetStudio } from '@/lib/schemas/client-config.schema';
-
-/**
- * Result of translating a voice payload into a ClientWidgetStudio shape.
- */
-export interface VoiceTranslationResult {
-  /** The partial studio config with fields mapped to their schema homes. */
-  studioConfig: Partial<ClientWidgetStudio>;
-  /** Fields that had no persistence path in the schema, logged for awareness. */
-  unmapped: Record<string, unknown>;
-}
+import type { CanonicalWidgetConfig } from '@/lib/schemas/tenant-config.canonical';
 
 /**
  * Translate a SYSTEM_UPDATE_BRANDING voice payload (theme/ui/behavior shape)
- * into a partial ClientWidgetStudioSchema-shaped object.
+ * into a partial CanonicalWidgetConfig-shaped object.
  *
  * Only includes fields that exist in the input — no defaults are invented
  * for missing fields.
  *
- * KNOWN GAPS (not bugs):
- * - ui.* (aiInsightBadge, aiDesignMirror, customCss, etc.) currently have
- *   no persistence path. They are returned in `unmapped` for awareness.
- * - behavior.* (prompt, tone) map to aiPersona but the translate is a
- *   no-op today since there's no voice-driven persona change flow.
- *
  * @param voicePayload - The raw payload from the LLM (theme/ui/behavior shape).
- * @returns The translated partial studio config and any unmapped fields.
+ * @returns The translated partial canonical widget config.
  */
 export function translateVoicePayloadToStudioConfig(
   voicePayload: Record<string, unknown>
-): VoiceTranslationResult {
+): { studioConfig: Partial<CanonicalWidgetConfig> } {
   const theme = voicePayload.theme as Record<string, unknown> | undefined;
   const ui = voicePayload.ui as Record<string, unknown> | undefined;
   const behavior = voicePayload.behavior as Record<string, unknown> | undefined;
+  const aiPersonaRaw = voicePayload.aiPersona as Record<string, unknown> | undefined;
 
   const branding: Record<string, unknown> = {};
 
@@ -60,14 +45,54 @@ export function translateVoicePayloadToStudioConfig(
     }
   }
 
-  const studioConfig: Partial<ClientWidgetStudio> = {};
-  if (Object.keys(branding).length > 0) {
-    studioConfig.branding = branding as ClientWidgetStudio['branding'];
+  const aiPersona: Record<string, unknown> = {};
+
+  // Map behavior.prompt -> aiPersona.systemPrompt
+  if (behavior) {
+    if (behavior.prompt !== undefined) aiPersona.systemPrompt = behavior.prompt;
+    if (behavior.tone !== undefined) {
+      const mappedTemperature = mapToneToTemperature(behavior.tone);
+      if (mappedTemperature !== undefined) aiPersona.temperature = mappedTemperature;
+    }
   }
 
-  const unmapped: Record<string, unknown> = {};
-  if (ui) unmapped.ui = ui;
-  if (behavior) unmapped.behavior = behavior;
+  // Map aiPersona.personaMode (emitted by the LLM for "switch to concierge/sales").
+  // This is the field the StudioDraftProvider's persona toggle reads.
+  if (aiPersonaRaw?.personaMode !== undefined) {
+    aiPersona.personaMode = aiPersonaRaw.personaMode;
+  }
 
-  return { studioConfig, unmapped };
+  const features: Record<string, unknown> = {};
+
+  // Map ui.* -> features
+  if (ui) {
+    if (ui.aiInsightBadge !== undefined) features.aiInsightBadge = ui.aiInsightBadge;
+    if (ui.aiDesignMirror !== undefined) features.aiDesignMirror = ui.aiDesignMirror;
+    if (ui.customCss !== undefined) features.customCss = ui.customCss;
+    if (ui.customCssCode !== undefined) features.customCssCode = ui.customCssCode;
+  }
+
+  const studioConfig: Partial<CanonicalWidgetConfig> = {};
+
+  if (Object.keys(branding).length > 0) {
+    studioConfig.branding = branding as CanonicalWidgetConfig['branding'];
+  }
+  if (Object.keys(aiPersona).length > 0) {
+    studioConfig.aiPersona = aiPersona as CanonicalWidgetConfig['aiPersona'];
+  }
+  if (Object.keys(features).length > 0) {
+    studioConfig.features = features as CanonicalWidgetConfig['features'];
+  }
+
+  return { studioConfig };
+}
+
+function mapToneToTemperature(tone: unknown): number | undefined {
+  if (typeof tone === 'number') return tone;
+  if (typeof tone !== 'string') return undefined;
+  const lower = tone.toLowerCase();
+  if (lower.includes('precise') || lower.includes('formal') || lower.includes('deterministic')) return 0.2;
+  if (lower.includes('balanced') || lower.includes('default') || lower.includes('moderate')) return 0.5;
+  if (lower.includes('creative') || lower.includes('casual') || lower.includes('playful')) return 1.0;
+  return undefined;
 }

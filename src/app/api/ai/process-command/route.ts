@@ -554,6 +554,28 @@ Output ONLY valid JSON.`;
         return NextResponse.json({ success: false, error: 'No valid branding configuration extracted from voice command', actionType, targetIds }, { status: 400 });
       }
 
+      // ── Persona-only guard (Path A: explicit Save) ──────────────────────────
+      // A voice command that changes ONLY the persona mode ("switch to concierge")
+      // must NOT auto-commit to Supabase — the client updates the StudioDraft and
+      // waits for the user's explicit "Save". If studioConfig carries nothing but
+      // aiPersona.personaMode, short-circuit the DB write and flag requiresSave.
+      const isPersonaOnly =
+        Object.keys(studioConfig).length === 1 &&
+        !!studioConfig.aiPersona &&
+        Object.keys(studioConfig.aiPersona as Record<string, unknown>).length === 1 &&
+        'personaMode' in (studioConfig.aiPersona as Record<string, unknown>);
+      if (isPersonaOnly) {
+        console.log('%c[ProcessCommand] 🔷 Persona-only intent — skipping DB commit (client holds draft, requires Save)', 'color: #3b82f6; font-weight: bold;');
+        return NextResponse.json({
+          success: true,
+          actionType,
+          targetIds: [],
+          payload: studioConfig,
+          requiresSave: true,
+          summary: summary || 'Persona mode updated in the draft.',
+        });
+      }
+
       try {
         const result = await dispatchUpdateStudioConfig(studioConfig as ClientWidgetStudio, { userId, tenantId, source: 'hannah' });
         return NextResponse.json({

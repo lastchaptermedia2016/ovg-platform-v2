@@ -136,11 +136,7 @@ export const zeederActionRegistry = new Map<ZeederActionId, ZeederActionEntry>([
         if (payload.branding && typeof payload.branding === 'object') {
           studioConfig = { branding: payload.branding };
         } else {
-          const result = translateVoicePayloadToStudioConfig(payload);
-          if (Object.keys(result.unmapped).length > 0) {
-            console.log('[updateBranding] Unmapped voice fields (no persistence path):', result.unmapped);
-          }
-          studioConfig = result.studioConfig;
+          studioConfig = translateVoicePayloadToStudioConfig(payload).studioConfig;
         }
 
         if (Object.keys(studioConfig).length === 0) {

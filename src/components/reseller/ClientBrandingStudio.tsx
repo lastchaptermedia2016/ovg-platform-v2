@@ -17,6 +17,7 @@ import { createHarmoniousGreeting, VisualStyle } from '@/lib/voice-visual-harmon
 import { isInvalidSlug } from '@/lib/utils/guard';
 import { type IncomingAIAction } from '@/hooks/use-voice-command';
 import { useHannah } from '@/contexts/HannahContext';
+import type { CanonicalBranding, CanonicalFeatures } from '@/lib/schemas/tenant-config.canonical';
 
 interface ClientWithBranding extends ClientType {
   industry?: string;
@@ -576,12 +577,12 @@ export function ClientBrandingStudio({
         widgetBodyOpacity: config.widgetBodyOpacity,
         widgetBodyBackground: config.widgetBodyBackground,
         customCssCode: config.customCssCode,
-      },
+      } as Partial<CanonicalBranding>,
       features: {
         aiInsightBadge: config.aiInsightBadge,
         aiDesignMirror: config.aiDesignMirror,
         customCss: config.customCss,
-      },
+      } as Partial<CanonicalFeatures>,
     };
 
     try {
