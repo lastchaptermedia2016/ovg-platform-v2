@@ -7,7 +7,6 @@ import { WidgetPreview } from '@/components/studio/WidgetPreview';
 import { VoiceMicIndicator } from '@/components/studio/VoiceMicIndicator';
 import { CapabilitiesModal } from '@/components/studio/CapabilitiesModal';
 import { CapabilitiesBridge } from '@/components/studio/CapabilitiesBridge';
-import { StudioDraftProvider } from '@/contexts/StudioDraftContext';
 import { VoiceProvider } from '@/providers/voice-provider';
 import { createClient } from '@/lib/supabase/client';
 import type { AuthContext } from '@/lib/actions/auth-middleware';
@@ -87,7 +86,7 @@ export default function StudioLayout({ children }: { children: ReactNode }) {
   const [capabilitiesOpen, setCapabilitiesOpen] = useState(false);
 
   return (
-    <StudioDraftProvider>
+    <>
       {authContext ? (
         <VoiceProvider
           authContext={authContext}
@@ -104,7 +103,7 @@ export default function StudioLayout({ children }: { children: ReactNode }) {
       ) : (
         <StudioShell pathname={pathname}>{children}</StudioShell>
       )}
-    </StudioDraftProvider>
+    </>
   );
 }
 

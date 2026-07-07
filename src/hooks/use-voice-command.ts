@@ -6,6 +6,7 @@ import { useCommandDeck } from '@/contexts/CommandDeckContext';
 import { transcodeBlobToWav } from '@/utils/audio/transcode-to-wav';
 import { createClient as createBrowserClient } from '@/lib/supabase/client';
 import type { RealtimeChannel } from '@supabase/supabase-js';
+import { getSpeechRecognition, type SpeechRecognitionInstance, type SpeechRecognitionResultEvent } from '@/types/voice-parser';
 
 interface UseVoiceCommandReturn {
   /** True while the mic is actively capturing audio. */
@@ -24,6 +25,8 @@ interface UseVoiceCommandReturn {
   aiResponse: string;
   /** Latest error message, if any. */
   error: string | null;
+  /** Live interim transcript from Web Speech API while recording. */
+  interimTranscript: string;
   /** Wall-clock start time of the current press (used for the 500ms tap guard). */
   recordingStartedAtRef: MutableRefObject<number | null>;
   /** Strict PTT: Begin audio capture on mousedown / touchstart. */
@@ -113,6 +116,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   const [transcript, setTranscript] = useState('');
   const [aiResponse, setAiResponse] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [interimTranscript, setInterimTranscript] = useState('');
 
   const [isRecording, setIsRecording] = useState(false);
   const recordingStartedAtRef = useRef<number | null>(null);
@@ -157,7 +161,11 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
 
   const [ttsPlaying, setTtsPlaying] = useState(false);
 
+  const interimTranscriptRef = useRef('');
+  const speechRecognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+
   const monitorVolumeRef = useRef<() => void>(() => {});
+  const startSpeechRecognitionRef = useRef<() => void>(() => {});
   const tenantContextRef = useRef(options.tenantContext);
   const contextCapabilitiesRef = useRef(options.contextCapabilities);
   useEffect(() => { contextCapabilitiesRef.current = options.contextCapabilities; }, [options.contextCapabilities]);
@@ -211,6 +219,79 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     []
   );
 
+  const startSpeechRecognition = useCallback(() => {
+    const SpeechRecognitionAPI = getSpeechRecognition();
+    if (!SpeechRecognitionAPI) {
+      console.warn('[VoiceCommand] 🚫 Web Speech API not available — interim transcript disabled');
+      return;
+    }
+
+    if (speechRecognitionRef.current) {
+      try { speechRecognitionRef.current.abort(); } catch { /* ignore */ }
+      speechRecognitionRef.current = null;
+    }
+
+    const recognition = new SpeechRecognitionAPI();
+    recognition.lang = 'en-US';
+    recognition.interimResults = true;
+    recognition.continuous = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event: SpeechRecognitionResultEvent) => {
+      let interim = '';
+      for (let i = event.results.length - 1; i >= 0; i--) {
+        const result = event.results[i];
+        if (result.isFinal) {
+          setInterimTranscript('');
+          interimTranscriptRef.current = '';
+          return;
+        }
+        interim = result[0]?.transcript ?? '';
+        if (interim) break;
+      }
+      setInterimTranscript(interim);
+      interimTranscriptRef.current = interim;
+    };
+
+    recognition.onerror = (event) => {
+      console.warn('[VoiceCommand] 🚫 Speech recognition error:', event.error ?? 'unknown');
+      if (event.error === 'no-speech' || event.error === 'aborted') return;
+      setInterimTranscript('');
+      interimTranscriptRef.current = '';
+    };
+
+    recognition.onend = () => {
+      if (isRecordingRef.current && !stoppedByUserRef.current) {
+        try {
+          recognition.start();
+          speechRecognitionRef.current = recognition;
+          return;
+        } catch {
+          // ignore restart failure
+        }
+      }
+      speechRecognitionRef.current = null;
+      setInterimTranscript('');
+      interimTranscriptRef.current = '';
+    };
+
+    try {
+      recognition.start();
+      speechRecognitionRef.current = recognition;
+    } catch (err) {
+      console.warn('[VoiceCommand] 🚫 Failed to start speech recognition:', err);
+    }
+  }, []);
+
+  const stopSpeechRecognition = useCallback(() => {
+    if (speechRecognitionRef.current) {
+      try { speechRecognitionRef.current.abort(); } catch { /* ignore */ }
+      speechRecognitionRef.current = null;
+    }
+    setInterimTranscript('');
+    interimTranscriptRef.current = '';
+  }, []);
+
   const cleanup = useCallback(() => {
     if (mediaRecorderRef.current?.state !== 'inactive') {
       mediaRecorderRef.current?.stop();
@@ -234,8 +315,12 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
 
+    stopSpeechRecognition();
+
     setVolumeLevel(0);
-  }, []);
+    setInterimTranscript('');
+    interimTranscriptRef.current = '';
+  }, [stopSpeechRecognition]);
 
   const abort = useCallback(() => {
     cleanup();
@@ -244,7 +329,8 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     setIsRecording(false);
     setTtsPlaying(false);
     abortControllerRef.current?.abort();
-  }, [cleanup]);
+    stopSpeechRecognition();
+  }, [cleanup, stopSpeechRecognition]);
 
   const monitorVolume = useCallback(() => {
     if (!analyserRef.current) return;
@@ -267,8 +353,13 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     monitorVolumeRef.current = monitorVolume;
   }, [monitorVolume]);
 
+  useEffect(() => {
+    startSpeechRecognitionRef.current = startSpeechRecognition;
+  }, [startSpeechRecognition]);
+
   useEffect(() => { tenantContextRef.current = options.tenantContext; }, [options.tenantContext]);
   useEffect(() => { resellerIdRef.current = options.resellerId; }, [options.resellerId]);
+
   const conversationHistoryRef = useRef(_conversationHistory);
   const agentModeRef = useRef(_agentMode);
   useEffect(() => { conversationHistoryRef.current = _conversationHistory; }, [_conversationHistory]);
@@ -447,6 +538,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
           tenantContext: { tenantId: currentContext.tenantId, category: currentContext.category || 'GENERAL' },
           conversationHistory: conversationHistoryRef.current,
           agentMode: agentModeRef.current,
+          source: 'voice-ptt',
         }),
         signal,
       });
@@ -670,6 +762,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       mediaRecorderRef.current = mediaRecorder;
       mediaRecorder.start(100);
       monitorVolumeRef.current();
+      startSpeechRecognitionRef.current();
 
     } catch (err: unknown) {
       setIsRecording(false);
@@ -826,6 +919,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     transcript,
     aiResponse,
     error,
+    interimTranscript,
     recordingStartedAtRef,
     startListening,
     startRecording,

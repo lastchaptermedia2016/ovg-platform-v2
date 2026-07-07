@@ -34,6 +34,58 @@ import {
   type MapperResult,
   type StudioDraftLike,
 } from './intent-mapper';
+import type { CanonicalBranding, LayerConfig, CanonicalBackgroundSection } from '../schemas/tenant-config.canonical';
+import { getBrandingTheme } from './branding-concierge';
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Branding Schema Alignment Helpers
+// ──────────────────────────────────────────────────────────────────────────────
+
+export interface EffectiveBranding {
+  header: LayerConfig | null;
+  footer: LayerConfig | null;
+  widgetBody: LayerConfig | null;
+}
+
+function canonicalSectionToLayer(section: CanonicalBackgroundSection | undefined): LayerConfig | null {
+  if (!section) return null;
+  const type = section.type;
+  if (!type || type === 'none') return null;
+  const value =
+    type === 'solid'
+      ? section.colorStart ?? null
+      : type === 'gradient'
+        ? `linear-gradient(135deg, ${section.colorStart ?? '#1A73E8'}, ${section.colorEnd ?? '#0A2540'})`
+        : type === 'image'
+          ? section.image ?? null
+          : null;
+  if (!value) return null;
+  return {
+    type,
+    value,
+    opacity: section.opacity ?? 1,
+    backdropBlur: false,
+  };
+}
+
+export function getEffectiveBranding(branding: CanonicalBranding | undefined): EffectiveBranding {
+  if (!branding) return { header: null, footer: null, widgetBody: null };
+
+  const header = branding.header ?? canonicalSectionToLayer(branding.headerConfig);
+  const footer = branding.footer ?? canonicalSectionToLayer(branding.footerConfig);
+
+  let widgetBody = branding.widgetBody;
+  if (!widgetBody && (branding.widgetBodyOpacity !== undefined || branding.widgetBodyBackground)) {
+    widgetBody = {
+      type: 'solid',
+      value: branding.widgetBodyBackground ?? null,
+      opacity: branding.widgetBodyOpacity ?? 1,
+      backdropBlur: false,
+    };
+  }
+
+  return { header: header ?? null, footer: footer ?? null, widgetBody: widgetBody ?? null };
+}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // System Prompt (structured template — the AI's "Co-worker" identity)
@@ -311,6 +363,8 @@ export interface OrchestratorContext {
    * accessibility" when the user requests a dark/compliant header). Default true.
    */
   learnFromPlan?: boolean;
+  /** Latest canonical branding for contextual awareness. */
+  branding?: CanonicalBranding;
 }
 
 /** Signals the UI should open a surface. The AI stays "dumb" to the UI — it
@@ -332,19 +386,31 @@ export type OrchestratedPlan =
 export class CognitiveOrchestrator {
   private preferences: UserPreferenceHistory;
   private readonly learn: boolean;
+  private branding?: CanonicalBranding;
   // Memo cache for contrast checks: "colorA|colorB" -> ratio (latency guard).
   private contrastCache = new Map<string, number | null>();
 
   constructor(context?: OrchestratorContext) {
     this.preferences = context?.preferences ?? new UserPreferenceHistory();
     this.learn = context?.learnFromPlan ?? true;
+    this.branding = context?.branding;
   }
 
   /**
    * Produce an explained, critiqued plan. This is the single entry point the
    * Conversational AI calls. It never executes — it proposes + explains + flags.
    */
-  plan(input: { utterance: string; draft?: StudioDraftLike; currentRoute?: string }): OrchestratedPlan {
+  plan(input: { utterance: string; draft?: StudioDraftLike; currentRoute?: string; branding?: CanonicalBranding }): OrchestratedPlan {
+    const effectiveBranding = getEffectiveBranding(input.branding ?? this.branding);
+
+    const hasBranding =
+      effectiveBranding.header !== null ||
+      effectiveBranding.footer !== null ||
+      effectiveBranding.widgetBody !== null;
+    if (hasBranding) {
+      console.log('[Orchestrator] Updated branding context:', effectiveBranding);
+    }
+
     const base = mapIntentToActions({
       utterance: input.utterance,
       draft: input.draft ?? undefined,
@@ -375,7 +441,7 @@ export class CognitiveOrchestrator {
     }
 
     const intents = base.intents.map((intent) =>
-      this.explain(intent, input.draft, input.currentRoute)
+      this.explain(intent, input.draft, input.currentRoute, effectiveBranding)
     );
 
     // Critique each intent (memoized internally) and collect flags.
@@ -463,10 +529,30 @@ export class CognitiveOrchestrator {
   private explain(
     intent: ActionIntent,
     draft: StudioDraftLike | undefined,
-    route: string | undefined
+    route: string | undefined,
+    effectiveBranding: EffectiveBranding
   ): ActionIntent {
     const branding = intent.payload.branding;
     const reasons: string[] = [];
+
+    if (intent.actionId === 'APPLY_BRANDING_THEME') {
+      const theme = getBrandingTheme(intent.payload.branding?.primaryColor ?? '');
+      const themeName = theme?.label ?? 'custom';
+      reasons.push(`I'm applying the ${themeName} theme as a complete branding refresh.`);
+      if (branding?.primaryColor) {
+        reasons.push(`Primary color set to ${branding.primaryColor}.`);
+      }
+      if (branding?.header) {
+        const h = branding.header;
+        reasons.push(`Header: ${h.type}${h.value ? ` (${h.value})` : ''}, opacity ${h.opacity}.`);
+      }
+      if (branding?.widgetBody) {
+        const w = branding.widgetBody;
+        reasons.push(`Widget body: ${w.opacity} opacity, backdrop blur ${w.backdropBlur ? 'on' : 'off'}.`);
+      }
+      reasons.push('You can tweak individual settings before saving.');
+      return { ...intent, explanation: reasons.join(' ') };
+    }
 
     const header = branding?.headerConfig;
     if (header?.type === 'solid' && header.colorStart) {
@@ -505,14 +591,25 @@ export class CognitiveOrchestrator {
       reasons.push("I'm applying this change because it matches what you asked for.");
     }
 
-    // Prefer an explicit prior preference mention if present.
+    const currentPersona = draft?.personaMode;
     const nestedMode = intent.payload.aiPersona?.personaMode;
     const directMode = (intent.payload as { mode?: 'sales' | 'concierge' }).mode;
     const personaMode = nestedMode ?? directMode;
-    if (personaMode && draft?.personaMode && personaMode !== draft.personaMode) {
+    if (personaMode && currentPersona && personaMode !== currentPersona) {
       reasons.push(
-        `I'm switching the persona mode to "${personaMode}" as you requested — different from the current "${draft.personaMode}". This updates the draft; click Save to commit it.`
+        `I'm switching the persona mode to "${personaMode}" as you requested — different from the current "${currentPersona}". This updates the draft; click Save to commit it.`
       );
+    } else if (personaMode && !currentPersona) {
+      reasons.push(`I'm setting the persona mode to "${personaMode}".`);
+    }
+
+    if (effectiveBranding.header) {
+      const h = effectiveBranding.header;
+      reasons.push(`Current header style: ${h.type}${h.value ? ` (${h.value})` : ''}, opacity ${h.opacity}.`);
+    }
+    if (effectiveBranding.widgetBody) {
+      const w = effectiveBranding.widgetBody;
+      reasons.push(`Widget body transparency: ${w.opacity} opacity, backdrop blur ${w.backdropBlur ? 'on' : 'off'}.`);
     }
 
     return { ...intent, explanation: reasons.join(' ') };
@@ -567,7 +664,7 @@ export class CognitiveOrchestrator {
  * orchestrator (no persisted memory) for one-shot use.
  */
 export function orchestrate(
-  input: { utterance: string; draft?: StudioDraftLike; currentRoute?: string },
+  input: { utterance: string; draft?: StudioDraftLike; currentRoute?: string; branding?: CanonicalBranding },
   context?: OrchestratorContext
 ): OrchestratedPlan {
   const orch = new CognitiveOrchestrator({

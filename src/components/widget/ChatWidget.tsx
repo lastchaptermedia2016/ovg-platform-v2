@@ -9,6 +9,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { useVoiceCommand } from "@/hooks/use-voice-command";
 import { useWidgetPresence } from "@/hooks/useWidgetPresence";
+import { generateBrandingCSS } from "@/lib/branding/css-generator";
+import type { CanonicalBranding } from "@/lib/schemas/tenant-config.canonical";
+import "./widget.css";
 
 interface WidgetConfig {
   logo?: string;
@@ -44,22 +47,19 @@ interface WidgetMessage {
   role: "user" | "assistant";
   text: string;
   timestamp: number;
+  action?: {
+    type: 'APPLY_BRANDING_THEME';
+    payload: Record<string, unknown>;
+  };
 }
 
 interface ChatWidgetProps {
   tenantId: string;
+  branding?: CanonicalBranding | null;
 }
 
-const ChatWidget = ({ tenantId }: ChatWidgetProps) => {
+const ChatWidget = ({ tenantId, branding }: ChatWidgetProps) => {
   const presenceStatus = useWidgetPresence(tenantId);
-
-  const {
-    isRecording,
-    startListening,
-    stopListeningAndProcess,
-  } = useVoiceCommand({
-    tenantContext: { tenantId },
-  });
 
   const [config] = useState<WidgetConfig>(defaultConfig);
   const [isOpen, setIsOpen] = useState(false);
@@ -98,6 +98,54 @@ const ChatWidget = ({ tenantId }: ChatWidgetProps) => {
       localStorage.setItem("ovgweb_chat_messages", JSON.stringify([initialGreeting]));
       return [initialGreeting];
     }
+  });
+
+  const handleVoiceTranscript = useCallback((text: string) => {
+    if (!text.trim()) return;
+    const userMsg: WidgetMessage = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      text: text.trim(),
+      timestamp: Date.now(),
+    };
+    setMessages((prev) => {
+      const next = [...prev, userMsg];
+      localStorage.setItem('ovgweb_chat_messages', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const handleVoiceAIResponse = useCallback((text: string) => {
+    if (!text.trim()) return;
+    const aiMsg: WidgetMessage = {
+      id: crypto.randomUUID(),
+      role: 'assistant',
+      text: text.trim(),
+      timestamp: Date.now(),
+    };
+    setMessages((prev) => {
+      const next = [...prev, aiMsg];
+      localStorage.setItem('ovgweb_chat_messages', JSON.stringify(next));
+      return next;
+    });
+    setIsTyping(false);
+  }, []);
+
+  const handleVoiceError = useCallback((errorMsg: string) => {
+    console.error('[ChatWidget] Voice error:', errorMsg);
+    setIsTyping(false);
+  }, []);
+
+  const {
+    isRecording,
+    startListening,
+    stopListeningAndProcess,
+    interimTranscript,
+  } = useVoiceCommand({
+    tenantContext: { tenantId },
+    onTranscript: handleVoiceTranscript,
+    onAIResponse: handleVoiceAIResponse,
+    onError: handleVoiceError,
   });
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -143,7 +191,18 @@ const ChatWidget = ({ tenantId }: ChatWidgetProps) => {
     }
   }, [hasConsent]);
 
-  const sendMessageDirect = useCallback(async (userInputText: string) => {
+  const refreshConfiguration = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/tenants/${tenantId}`);
+      if (!response.ok) return;
+      const _data = await response.json();
+      console.log('[ChatWidget] Configuration refreshed');
+    } catch (e) {
+      console.error('[ChatWidget] Refresh failed:', e);
+    }
+  }, [tenantId]);
+
+  const sendMessageDirect = useCallback(async (userInputText: string, source: 'text' | 'voice-ptt' = 'text') => {
     if (!userInputText.trim()) return;
 
     const userMsg: WidgetMessage = {
@@ -160,14 +219,27 @@ const ChatWidget = ({ tenantId }: ChatWidgetProps) => {
     setIsTyping(true);
 
     try {
+      const currentConfig = branding
+        ? {
+            branding,
+            primaryColor: branding.primaryColor,
+            accentColor: branding.accentColor,
+            logoUrl: branding.logoUrl,
+            header: branding.header,
+            footer: branding.footer,
+            widgetBody: branding.widgetBody,
+          }
+        : {};
+
       const response = await fetch("/api/ai/process-command", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           resellerId: tenantId,
           userCommand: userInputText,
-          currentConfig: {},
+          currentConfig,
           tenantContext: { tenantId },
+          source,
         }),
       });
 
@@ -176,28 +248,45 @@ const ChatWidget = ({ tenantId }: ChatWidgetProps) => {
       const data = await response.json();
       const aiText = data.response || data.summary || "I'm here to help.";
 
+      const isBrandingTheme = data.actionType === 'SYSTEM_APPLY_BRANDING_THEME';
       const aiMsg: WidgetMessage = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
         text: aiText,
         timestamp: Date.now(),
+        ...(isBrandingTheme && data.payload
+          ? { action: { type: 'APPLY_BRANDING_THEME', payload: data.payload } }
+          : {}),
       };
 
       const finalMsgs = [...newMsgs, aiMsg];
       setMessages(finalMsgs);
       localStorage.setItem("ovgweb_chat_messages", JSON.stringify(finalMsgs));
 
-      if (data.payload && typeof data.payload === "object") {
+      if (data.payload && typeof data.payload === "object" && !isBrandingTheme) {
         console.log("📦 [Jill Capture] Booking payload:", data.payload);
         setShowSyncBadge(true);
         setTimeout(() => setShowSyncBadge(false), 4500);
+      }
+
+      if (isBrandingTheme && data.payload?.branding) {
+        window.dispatchEvent(new CustomEvent('branding-concierge:apply', {
+          detail: { branding: data.payload.branding },
+        }));
+      }
+
+      if (
+        data.actionType === 'SYSTEM_UPDATE_BRANDING' ||
+        (data.payload && typeof data.payload === 'object' && 'branding' in data.payload && !isBrandingTheme)
+      ) {
+        refreshConfiguration();
       }
     } catch (e) {
       console.error("AI Error:", e);
     } finally {
       setIsTyping(false);
     }
-  }, [messages, tenantId]);
+  }, [messages, tenantId, branding, refreshConfiguration]);
 
   const handleMicClick = useCallback(() => {
     if (isRecording) {
@@ -237,6 +326,24 @@ const ChatWidget = ({ tenantId }: ChatWidgetProps) => {
     return () => clearTimeout(timer);
   }, [isOpen, showConsent]);
 
+  // Inject branding CSS variables into the document.
+  // If this widget ever moves into a Shadow DOM root, update the
+  // appendChild target from document.head to that shadow root.
+  useEffect(() => {
+    const styleId = "zeeder-branding-styles";
+    const css = branding ? generateBrandingCSS(branding) : "";
+
+    let styleEl = document.getElementById(styleId) as HTMLStyleElement | null;
+
+    if (!styleEl) {
+      styleEl = document.createElement("style");
+      styleEl.id = styleId;
+      document.head.appendChild(styleEl);
+    }
+
+    styleEl.textContent = css;
+  }, [branding]);
+
   return (
     <>
       {/* ===== PEEK TEASER ===== */}
@@ -259,7 +366,7 @@ const ChatWidget = ({ tenantId }: ChatWidgetProps) => {
             <button
               onClick={handleOpenChat}
               className="mt-3 text-sm font-semibold hover:opacity-80 transition-opacity"
-              style={{ color: config.primaryColor }}
+              style={{ color: "var(--w-primary, #0097b2)" }}
             >
               Chat with us →
             </button>
@@ -294,7 +401,7 @@ const ChatWidget = ({ tenantId }: ChatWidgetProps) => {
               <button
                 onClick={resetChat}
                 className="text-sm font-semibold hover:opacity-80 transition-opacity"
-                style={{ color: config.primaryColor }}
+                style={{ color: "var(--w-primary, #0097b2)" }}
               >
                 Reset Chat →
               </button>
@@ -322,7 +429,7 @@ const ChatWidget = ({ tenantId }: ChatWidgetProps) => {
               <div className="flex items-center gap-3 mb-4">
                 <div
                   className="h-10 w-10 rounded-full flex items-center justify-center"
-                  style={{ backgroundColor: config.primaryColor }}
+                  style={{ backgroundColor: "var(--w-primary, #0097b2)" }}
                 >
                   <ShieldCheck className="h-5 w-5 text-white" />
                 </div>
@@ -347,7 +454,7 @@ const ChatWidget = ({ tenantId }: ChatWidgetProps) => {
                 </Button>
                 <Button
                   className="flex-1 text-white font-semibold"
-                  style={{ backgroundColor: config.primaryColor }}
+                  style={{ backgroundColor: "var(--w-primary, #0097b2)" }}
                   onClick={() => {
                     greetedRef.current = true;
                     handleAcceptConsent();
@@ -365,15 +472,15 @@ const ChatWidget = ({ tenantId }: ChatWidgetProps) => {
       {/* ===== MAIN CHAT WINDOW ===== */}
       {isOpen && (
         <div
-          className="fixed z-[9999]
+          className="fixed z-[9999] widget-body
                      bottom-[max(1.5rem,env(safe-area-inset-bottom))]
                      right-[max(1rem,env(safe-area-inset-right))]
                      w-[94vw] max-w-[380px] sm:max-w-[420px]
                      rounded-3xl border-2 overflow-hidden shadow-2xl bg-transparent"
-          style={{ borderColor: config.primaryColor }}
+          style={{ borderColor: "var(--w-primary, #0097b2)" }}
         >
           {/* Header */}
-          <div className="relative p-5 flex justify-between items-center overflow-hidden">
+          <div className="relative widget-header p-5 flex justify-between items-center overflow-hidden">
             <div className="absolute inset-0 bg-black/40" />
             <div className="relative flex items-center gap-3">
               <Image
@@ -399,7 +506,7 @@ const ChatWidget = ({ tenantId }: ChatWidgetProps) => {
             <div className="relative flex items-center gap-2">
               <Button
                 className="h-8 w-8 rounded-full text-white shrink-0"
-                style={{ backgroundColor: config.primaryColor }}
+                style={{ backgroundColor: "var(--w-primary, #0097b2)" }}
                 onClick={() => {
                   const next = !voiceEnabled;
                   setVoiceEnabled(next);
@@ -409,10 +516,10 @@ const ChatWidget = ({ tenantId }: ChatWidgetProps) => {
               >
                 {voiceEnabled ? <Volume2 className="h-4 w-4 text-white" /> : <VolumeX className="h-4 w-4 text-white" />}
               </Button>
-              <Button className="h-8 w-8 rounded-full text-white shrink-0" style={{ backgroundColor: config.primaryColor }} onClick={() => setShowResetConfirm(true)}>
+              <Button className="h-8 w-8 rounded-full text-white shrink-0" style={{ backgroundColor: "var(--w-primary, #0097b2)" }} onClick={() => setShowResetConfirm(true)}>
                 <RefreshCw className="h-4 w-4 text-white" />
               </Button>
-              <Button className="h-8 w-8 rounded-full text-white shrink-0" style={{ backgroundColor: config.primaryColor }} onClick={() => setIsOpen(false)}>
+              <Button className="h-8 w-8 rounded-full text-white shrink-0" style={{ backgroundColor: "var(--w-primary, #0097b2)" }} onClick={() => setIsOpen(false)}>
                 <X className="h-4 w-4 text-white" />
               </Button>
             </div>
@@ -439,6 +546,7 @@ const ChatWidget = ({ tenantId }: ChatWidgetProps) => {
             {messages.map((msg) => {
               const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
               const isUser = msg.role === "user";
+              const isBrandingAction = msg.action?.type === 'APPLY_BRANDING_THEME';
               return (
                 <div key={msg.id} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
                   <div
@@ -449,6 +557,24 @@ const ChatWidget = ({ tenantId }: ChatWidgetProps) => {
                     }`}
                   >
                     <span className="font-light">{msg.text}</span>
+                    {isBrandingAction && (
+                      <div className="mt-3 flex gap-2">
+                        <button
+                          onClick={() => window.dispatchEvent(new CustomEvent('branding-concierge:confirm'))}
+                          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-white/30 bg-white/90 text-gray-800 hover:bg-white transition-colors shadow-sm"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          onClick={() => {
+                            setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+                          }}
+                          className="px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-300 bg-transparent text-gray-600 hover:bg-gray-100 transition-colors"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
+                    )}
                     <span className="ml-2 inline-flex items-end float-right text-[9px] text-amber-600/70 mt-1.5 pl-2 leading-none whitespace-nowrap font-mono">
                       {time}
                     </span>
@@ -466,6 +592,16 @@ const ChatWidget = ({ tenantId }: ChatWidgetProps) => {
                 </div>
                 <div className="mt-2 h-1 rounded-full overflow-hidden">
                   <div className="h-full w-full animate-pulse bg-gradient-to-r from-pink-400 via-amber-400 to-pink-400 bg-[length:200%_100%]"></div>
+                </div>
+              </div>
+            )}
+
+            {isRecording && interimTranscript && (
+              <div className="px-2 py-2">
+                <div className="flex justify-end">
+                  <div className="max-w-[75%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed backdrop-blur-md border-b-2 bg-gradient-to-br from-pink-100/60 to-pink-50/60 text-amber-800 rounded-tr-sm border-b-pink-400 shadow-lg shadow-pink-100/30 italic opacity-80">
+                    <span className="font-light">{interimTranscript}</span>
+                  </div>
                 </div>
               </div>
             )}
@@ -494,7 +630,7 @@ const ChatWidget = ({ tenantId }: ChatWidgetProps) => {
           </div>
 
           {/* Input / Footer Area */}
-          <div className="relative p-4 border-t border-gray-300/50 overflow-hidden">
+          <div className="relative widget-footer p-4 border-t border-gray-300/50 overflow-hidden">
             <div className="absolute inset-0 bg-black/40" />
 
             <div className="relative flex gap-2 items-center">
@@ -519,7 +655,7 @@ const ChatWidget = ({ tenantId }: ChatWidgetProps) => {
               {/* Send Button */}
               <Button
                 onClick={() => sendMessageDirect(input)}
-                style={{ backgroundColor: config.primaryColor }}
+                style={{ backgroundColor: "var(--w-primary, #0097b2)" }}
                 className="text-white px-4 shrink-0"
               >
                 <Send className="h-4 w-4" />
@@ -533,8 +669,8 @@ const ChatWidget = ({ tenantId }: ChatWidgetProps) => {
       {!isOpen && !showConsent && (
         <button
           onClick={handleOpenChat}
-          className="fixed bottom-6 right-6 z-[10000] h-14 w-14 rounded-full shadow-2xl hover:scale-110 transition-all flex items-center justify-center"
-          style={{ background: `linear-gradient(to bottom right, ${config.primaryColor}, #ff69b4)` }}
+          className="fixed bottom-6 right-6 z-[10000] h-14 w-14 rounded-full shadow-2xl hover:scale-110 transition-all flex items-center justify-center widget-bubble"
+          style={{ background: `linear-gradient(to bottom right, var(--w-primary, #0097b2), #ff69b4)` }}
         >
           <MessageCircle className="h-6 w-6 text-white" />
         </button>

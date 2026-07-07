@@ -1,0 +1,20 @@
+.widget-body {
+  background: rgba(var(--w-body-bg-rgb, 255, 255, 255), var(--w-body-bg-opacity, 0));
+  backdrop-filter: blur(var(--w-body-backdrop-blur, 0px));
+}
+
+.widget-header {
+  background: var(--w-header-bg, transparent);
+  opacity: var(--w-header-opacity, 1);
+  backdrop-filter: blur(var(--w-header-backdrop-blur, 0px));
+}
+
+.widget-footer {
+  background: var(--w-footer-bg, transparent);
+  opacity: var(--w-footer-opacity, 1);
+  backdrop-filter: blur(var(--w-footer-backdrop-blur, 0px));
+}
+
+.widget-bubble {
+  background: var(--w-primary, #0097b2);
+}

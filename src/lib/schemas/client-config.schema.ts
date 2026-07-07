@@ -97,10 +97,24 @@ export const ClientBackgroundSectionSchema = z.object({
 
 export type ClientBackgroundSection = z.infer<typeof ClientBackgroundSectionSchema>;
 
+/**
+ * Layered branding configuration (client edition).
+ * Mirrors LayerConfigSchema in the canonical schema so client payloads validate
+ * the same shape, without importing the canonical module (kept independent).
+ */
+export const ClientLayerConfigSchema = z.object({
+  type: z.enum(['none', 'solid', 'gradient', 'image']),
+  value: z.string().nullable(),
+  opacity: z.number().min(0.1).max(1.0),
+  backdropBlur: z.boolean(),
+});
+
+export type ClientLayerConfig = z.infer<typeof ClientLayerConfigSchema>;
+
 export const ClientBrandingSchema = z.object({
   primaryColor: ClientHexColorSchema.optional(),
   accentColor: ClientHexColorSchema.optional(),
-  logoUrl: ClientURLSchema.nullable().optional(),
+  logoUrl: z.string().url().or(z.string().startsWith('/')).or(z.literal('')).nullable().optional(),
   customButtonStyles: z.record(z.string()).optional(),
   widgetBodyOpacity: z
     .number()
@@ -111,6 +125,9 @@ export const ClientBrandingSchema = z.object({
   widgetPosition: ClientWidgetPositionSchema.optional(),
   headerConfig: ClientBackgroundSectionSchema.optional(),
   footerConfig: ClientBackgroundSectionSchema.optional(),
+  header: ClientLayerConfigSchema.optional(),
+  footer: ClientLayerConfigSchema.optional(),
+  widgetBody: ClientLayerConfigSchema.optional(),
 }).passthrough();
 
 export type ClientBranding = z.infer<typeof ClientBrandingSchema>;

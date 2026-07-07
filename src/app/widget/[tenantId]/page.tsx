@@ -6,6 +6,8 @@ import { getTenantBySlug } from "@/core/tenant/db";
 import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import WidgetPresence from "./WidgetPresence";
+import { migrateLegacyBranding } from "@/lib/schemas/tenant-config.canonical";
+import type { CanonicalBranding } from "@/lib/schemas/tenant-config.canonical";
 
 export default async function WidgetPage({
   params,
@@ -42,9 +44,17 @@ export default async function WidgetPage({
     ? (JSON.parse(rawBranding) as Record<string, unknown>)
     : null;
 
+  const canonicalConfig = rawBranding
+    ? migrateLegacyBranding(JSON.parse(rawBranding) as Partial<import("@/lib/schemas/tenant-config.canonical").CanonicalWidgetConfig>)
+    : null;
+
+  const canonicalBranding: CanonicalBranding | null =
+    canonicalConfig?.branding ?? null;
+
   // Live verification logging
   console.log("✅ LIVE TENANT DATA:", tenant);
   console.log("🎨 RESELLER BRANDING:", resellerBranding);
+  console.log("🔧 CANONICAL BRANDING:", canonicalBranding);
 
   return (
     <TenantProvider>
@@ -56,7 +66,7 @@ export default async function WidgetPage({
         name={tenant.name}
       />
       <WidgetPresence tenantId={tenantId} />
-      <ChatWidget tenantId={tenantId} />
+      <ChatWidget tenantId={tenantId} branding={canonicalBranding} />
     </TenantProvider>
   );
 }

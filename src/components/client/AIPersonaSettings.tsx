@@ -2,7 +2,6 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { Loader2, Save, Settings2 } from "lucide-react";
-import type { WidgetConfig } from "@/lib/schemas/tenant-config.schema";
 import type { CanonicalAIPersona } from "@/lib/schemas/tenant-config.canonical";
 import { createClient } from "@/lib/supabase/client";
 import { resolveTenantId } from "@/lib/resolveTenantId";
@@ -93,19 +92,41 @@ export default function AIPersonaSettings() {
           return;
         }
 
-        const config = data.widget_config as WidgetConfig;
-        const persona = config.ai_settings
+        const config = data.widget_config as Record<string, unknown>;
+        // Hydrate from the canonical aiPersona key; fall back to legacy
+        // ai_settings so pre-existing tenants don't lose their config.
+        const aiPersona = (config.aiPersona ?? config.ai_settings) as
+          | Record<string, unknown>
+          | undefined;
+
+        const conversationStyleRaw = aiPersona?.conversationStyle as
+          | Record<string, unknown>
+          | string
+          | undefined;
+        const conversationStyleText =
+          typeof conversationStyleRaw === "string"
+            ? conversationStyleRaw
+            : typeof conversationStyleRaw === "object" &&
+              conversationStyleRaw !== null &&
+              "text" in conversationStyleRaw
+            ? ((conversationStyleRaw as Record<string, unknown>).text as string) ?? ""
+            : "";
+        const conversationStyleCapabilities =
+          typeof conversationStyleRaw === "object" &&
+          conversationStyleRaw !== null &&
+          "actionCapabilities" in conversationStyleRaw
+            ? (conversationStyleRaw as Record<string, unknown>).actionCapabilities
+            : undefined;
+
+        const persona = aiPersona
           ? {
-              name: config.ai_settings.name ?? "",
-              voiceId: config.ai_settings.voiceId ?? "",
-              personality: config.ai_settings.personality ?? "professional",
-              conversationStyle: typeof config.ai_settings.conversationStyle === "string" ? config.ai_settings.conversationStyle : "",
+              name: (aiPersona.name as string) ?? "",
+              voiceId: (aiPersona.voiceId as string) ?? "",
+              personality: (aiPersona.personality as PersonaFormState["personality"]) ?? "professional",
+              conversationStyle: conversationStyleText,
               actionCapabilities:
-                typeof config.ai_settings.conversationStyle === "object" &&
-                config.ai_settings.conversationStyle !== null &&
-                "actionCapabilities" in config.ai_settings.conversationStyle
-                  ? (config.ai_settings.conversationStyle as Record<string, unknown>).actionCapabilities as PersonaFormState["actionCapabilities"]
-                  : undefined,
+                (conversationStyleCapabilities as PersonaFormState["actionCapabilities"]) ??
+                (aiPersona.actionCapabilities as PersonaFormState["actionCapabilities"] | undefined),
             }
           : DEFAULT_PERSONA;
 

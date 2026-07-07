@@ -3,7 +3,10 @@ import { createAuthClient } from '@/lib/auth/server';
 /**
  * Check whether the AI has permission to execute actions for a given tenant.
  *
- * Looks up the canExecute flag nested inside tenants.widget_config at path:
+ * Primary read path (canonical):
+ *   widget_config.aiPersona.conversationStyle.actionCapabilities.canExecute
+ *
+ * Fallback read path (deprecation window only):
  *   widget_config.widget_studio.aiPersona.conversationStyle.actionCapabilities.canExecute
  *
  * ⚠️ FRAGILITY WARNING: If AIPersonaSettings.tsx's save shape ever changes,
@@ -13,6 +16,41 @@ import { createAuthClient } from '@/lib/auth/server';
  * @param tenantId - The tenant UUID to check.
  * @returns true if canExecute is explicitly true; false otherwise (fail-closed).
  */
+function readCanExecute(widgetConfig: Record<string, unknown>, tenantId: string): boolean {
+  const readFrom = (persona: Record<string, unknown> | undefined): boolean => {
+    if (!persona) return false;
+    const conversationStyle = persona.conversationStyle as
+      | Record<string, unknown>
+      | string
+      | undefined;
+    if (typeof conversationStyle === 'object' && conversationStyle !== null) {
+      const actionCapabilities = conversationStyle.actionCapabilities as
+        | Record<string, unknown>
+        | undefined;
+      if (actionCapabilities?.canExecute === true) return true;
+    }
+    const topLevel = persona.actionCapabilities as Record<string, unknown> | undefined;
+    return topLevel?.canExecute === true;
+  };
+
+  // Canonical path (client portal + reseller portal)
+  const canonicalPersona = widgetConfig.aiPersona as Record<string, unknown> | undefined;
+  if (readFrom(canonicalPersona)) return true;
+
+  // Legacy fallback during deprecation window
+  const widgetStudio = widgetConfig.widget_studio as Record<string, unknown> | undefined;
+  const legacyPersona = widgetStudio?.aiPersona as Record<string, unknown> | undefined;
+  if (readFrom(legacyPersona)) {
+    console.warn(
+      '[checkTenantAiExecutePermission] LEGACY widget_studio fallback hit for tenant:',
+      tenantId
+    );
+    return true;
+  }
+
+  return false;
+}
+
 export async function checkTenantAiExecutePermission(tenantId: string): Promise<boolean> {
   const supabase = await createAuthClient();
 
@@ -29,13 +67,7 @@ export async function checkTenantAiExecutePermission(tenantId: string): Promise<
 
   try {
     const widgetConfig = data.widget_config as Record<string, unknown>;
-    const widgetStudio = widgetConfig.widget_studio as Record<string, unknown> | undefined;
-    const aiPersona = widgetStudio?.aiPersona as Record<string, unknown> | undefined;
-    const conversationStyle = aiPersona?.conversationStyle as Record<string, unknown> | undefined;
-    const actionCapabilities = conversationStyle?.actionCapabilities as Record<string, unknown> | undefined;
-    const canExecute = actionCapabilities?.canExecute;
-
-    return canExecute === true;
+    return readCanExecute(widgetConfig, tenantId);
   } catch {
     // Malformed JSONB — fail closed
     return false;

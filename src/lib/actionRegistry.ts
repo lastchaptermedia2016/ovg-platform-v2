@@ -128,18 +128,33 @@ export async function dispatchUpdateStudioConfig(
   }
 
   const currentConfig = (currentTenant?.widget_config as Record<string, unknown> | null) ?? {};
-  const currentStudio = (currentConfig.widget_studio as Record<string, unknown> | undefined) ?? {};
 
-  // Deep merge partial params into existing studio config
-  const mergedStudio = deepMerge(currentStudio, params);
+  // widget_config.widget_studio is RETIRED as a write target. Each incoming
+  // studio section is deep-merged into its canonical top-level key so that the
+  // client portal and reseller portal share one source of truth.
+  const nextConfig: Record<string, unknown> = { ...currentConfig };
+
+  if (params.branding !== undefined) {
+    const currentBranding = (currentConfig.branding as Record<string, unknown> | undefined) ?? {};
+    nextConfig.branding = deepMerge(currentBranding, params.branding as Record<string, unknown>);
+  }
+
+  if (params.aiPersona !== undefined) {
+    const currentPersona = (currentConfig.aiPersona as Record<string, unknown> | undefined) ?? {};
+    nextConfig.aiPersona = deepMerge(currentPersona, params.aiPersona as Record<string, unknown>);
+  }
+
+  // Deprecation monitoring: warn if any legacy widget_studio-specific keys
+  // are still being submitted so the cleanup can be tracked.
+  const legacyKeys = Object.keys(params).filter((key) => key === 'widget_studio');
+  if (legacyKeys.length > 0) {
+    console.warn('[dispatchUpdateStudioConfig] LEGACY widget_studio payload ignored:', legacyKeys);
+  }
 
   const { error } = await supabase
     .from('tenants')
     .update({
-      widget_config: {
-        ...currentConfig,
-        widget_studio: mergedStudio,
-      },
+      widget_config: nextConfig,
       updated_at: new Date().toISOString(),
     })
     .eq('id', ctx.tenantId)

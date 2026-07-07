@@ -1,9 +1,11 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { createClient as createSupabaseClient } from '@/lib/supabase/client';
 import { resolveTenantId } from '@/lib/resolveTenantId';
-import { useStudioDraft, isImageMode, toCanonicalBranding } from '@/contexts/StudioDraftContext';
+import { useStudioDraft, toCanonicalBranding } from '@/contexts/StudioDraftContext';
+import type { LayerDraft } from '@/contexts/StudioDraftContext';
+import { LayerControls } from '@/components/client/studio/LayerControls';
 import type { CanonicalBranding } from '@/lib/schemas/tenant-config.canonical';
 
 interface BrandingConfig {
@@ -20,24 +22,6 @@ interface Feedback {
   type: 'success' | 'error';
   message: string;
 }
-
-export type BackgroundConfig = {
-  type: 'none' | 'solid' | 'image';
-  image?: string;
-  colorStart?: string;
-};
-
-export type StudioDraft = {
-  primaryColor: string;
-  logoUrl: string;
-  widgetPosition: string;
-  header: BackgroundConfig;
-  footer: BackgroundConfig;
-};
-
-const defaultBackground: BackgroundConfig = {
-  type: 'none',
-};
 
 export function BrandingStudio({ onSave }: BrandingStudioProps) {
   const [tenantId, setTenantId] = useState<string | null>(null);
@@ -79,19 +63,13 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
     }
   };
 
-  const updateBackground = (
-    key: 'header' | 'footer',
-    patch: Partial<BackgroundConfig> | undefined
+  const updateLayer = (
+    key: 'header' | 'footer' | 'widgetBody',
+    patch: Partial<LayerDraft>
   ) => {
     setDraftConfig((prev) => ({
       ...prev,
-      [key]: patch
-        ? {
-            type: patch.type ?? prev[key].type,
-            image: patch.image ?? prev[key].image,
-            colorStart: patch.colorStart ?? prev[key].colorStart,
-          }
-        : defaultBackground,
+      [key]: { ...prev[key], ...patch },
     }));
   };
 
@@ -117,12 +95,16 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
         throw new Error('Invalid logo URL. Please enter a valid URL or leave empty');
       }
 
-      if (isImageMode(draftConfig.header) && draftConfig.header.image && !isValidUrl(draftConfig.header.image)) {
+      if (draftConfig.header.type === 'image' && draftConfig.header.value && !isValidUrl(draftConfig.header.value)) {
         throw new Error('Invalid header background image URL');
       }
 
-      if (isImageMode(draftConfig.footer) && draftConfig.footer.image && !isValidUrl(draftConfig.footer.image)) {
+      if (draftConfig.footer.type === 'image' && draftConfig.footer.value && !isValidUrl(draftConfig.footer.value)) {
         throw new Error('Invalid footer background image URL');
+      }
+
+      if (draftConfig.widgetBody.type === 'image' && draftConfig.widgetBody.value && !isValidUrl(draftConfig.widgetBody.value)) {
+        throw new Error('Invalid widget body background image URL');
       }
 
       const canonicalBranding: Partial<CanonicalBranding> = toCanonicalBranding(draftConfig);
@@ -173,6 +155,20 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
       setIsLoading(false);
     }
   }, [draftConfig, tenantId, tenantIdError, onSave]);
+
+  const handleSaveRef = useRef<() => Promise<void>>(async () => {});
+
+  useEffect(() => {
+    handleSaveRef.current = handleSave;
+  }, [handleSave]);
+
+  useEffect(() => {
+    const handler = () => {
+      handleSaveRef.current();
+    };
+    window.addEventListener('branding-concierge:confirm', handler);
+    return () => window.removeEventListener('branding-concierge:confirm', handler);
+  }, []);
 
   const clearFeedback = useCallback(() => {
     setFeedback(null);
@@ -233,140 +229,32 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
           <p className="text-xs text-zinc-500 mt-1">Optional: provide a direct URL to your logo image</p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="rounded-xl border border-white/10 bg-slate-900/40 p-4">
-            <p className="text-xs font-semibold text-white mb-3">Header Background</p>
-            <div className="space-y-3">
-              <select
-                value={draftConfig.header.type}
-                onChange={(e) => {
-                  const value = e.target.value as BackgroundConfig['type'];
-                  updateBackground('header', value === 'none' ? undefined : { type: value });
-                  clearFeedback();
-                }}
-                className="w-full px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm"
-                aria-label="Header background type"
-              >
-                <option value="none">None</option>
-                <option value="solid">Solid Color</option>
-                <option value="image">Image URL</option>
-              </select>
-
-              {draftConfig.header.type !== 'none' && (
-                <>
-                  {isImageMode(draftConfig.header) ? (
-                    <>
-                      <label className="block text-sm font-medium text-zinc-300 mb-2 font-agrandir">
-                        Background Image URL
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="https://cdn.example.com/header-bg.jpg"
-                        value={draftConfig.header.image ?? ''}
-                        onChange={(e) => {
-                          updateBackground('header', { image: e.target.value });
-                          clearFeedback();
-                        }}
-                        className="w-full px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm"
-                        aria-label="Header background image URL"
-                      />
-                    </>
-                  ) : (
-                    <div className="flex gap-3 items-center">
-                      <input
-                        type="color"
-                        value={draftConfig.header.colorStart ?? '#1A73E8'}
-                        onChange={(e) => {
-                          updateBackground('header', { colorStart: e.target.value });
-                          clearFeedback();
-                        }}
-                        className="w-10 h-10 rounded-lg cursor-pointer border border-white/10"
-                        aria-label="Header color picker"
-                      />
-                      <input
-                        type="text"
-                        value={draftConfig.header.colorStart ?? ''}
-                        onChange={(e) => {
-                          updateBackground('header', { colorStart: e.target.value });
-                          clearFeedback();
-                        }}
-                        placeholder="#1A73E8"
-                        className="flex-1 px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm font-mono"
-                        aria-label="Header color value"
-                      />
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-white/10 bg-slate-900/40 p-4">
-            <p className="text-xs font-semibold text-white mb-3">Footer Background</p>
-            <div className="space-y-3">
-              <select
-                value={draftConfig.footer.type}
-                onChange={(e) => {
-                  const value = e.target.value as BackgroundConfig['type'];
-                  updateBackground('footer', value === 'none' ? undefined : { type: value });
-                  clearFeedback();
-                }}
-                className="w-full px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm"
-                aria-label="Footer background type"
-              >
-                <option value="none">None</option>
-                <option value="solid">Solid Color</option>
-                <option value="image">Image URL</option>
-              </select>
-
-              {draftConfig.footer.type !== 'none' && (
-                <>
-                  {isImageMode(draftConfig.footer) ? (
-                    <>
-                      <label className="block text-sm font-medium text-zinc-300 mb-2 font-agrandir">
-                        Background Image URL
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="https://cdn.example.com/footer-bg.jpg"
-                        value={draftConfig.footer.image ?? ''}
-                        onChange={(e) => {
-                          updateBackground('footer', { image: e.target.value });
-                          clearFeedback();
-                        }}
-                        className="w-full px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm"
-                        aria-label="Footer background image URL"
-                      />
-                    </>
-                  ) : (
-                    <div className="flex gap-3 items-center">
-                      <input
-                        type="color"
-                        value={draftConfig.footer.colorStart ?? '#1A73E8'}
-                        onChange={(e) => {
-                          updateBackground('footer', { colorStart: e.target.value });
-                          clearFeedback();
-                        }}
-                        className="w-10 h-10 rounded-lg cursor-pointer border border-white/10"
-                        aria-label="Footer color picker"
-                      />
-                      <input
-                        type="text"
-                        value={draftConfig.footer.colorStart ?? ''}
-                        onChange={(e) => {
-                          updateBackground('footer', { colorStart: e.target.value });
-                          clearFeedback();
-                        }}
-                        placeholder="#1A73E8"
-                        className="flex-1 px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm font-mono"
-                        aria-label="Footer color value"
-                      />
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
+        <div className="space-y-4">
+          <LayerControls
+            title="Header"
+            layer={draftConfig.header}
+            onChange={(layer) => {
+              updateLayer('header', layer);
+              clearFeedback();
+            }}
+          />
+          <LayerControls
+            title="Footer"
+            layer={draftConfig.footer}
+            onChange={(layer) => {
+              updateLayer('footer', layer);
+              clearFeedback();
+            }}
+          />
+          <LayerControls
+            title="Widget Body"
+            layer={draftConfig.widgetBody}
+            allowBlur
+            onChange={(layer) => {
+              updateLayer('widgetBody', layer);
+              clearFeedback();
+            }}
+          />
         </div>
 
         <div>

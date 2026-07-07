@@ -6,6 +6,7 @@ import { resolveResellerId } from '@/lib/db/resolve-reseller';
 import { buildDeploymentOfficerPrompt } from '@/core/ai/system-prompts';
 import { buildCapabilitiesSummary, type StudioCapabilitiesMap } from '@/core/ai/studio-capabilities';
 import { matchHelpIntent } from '@/lib/ai/help-matrix';
+import { getBrandingTheme } from '@/lib/ai/branding-concierge';
 import { getAuthenticatedUser } from '@/lib/auth/server';
 import { checkTenantAiExecutePermission } from '@/lib/checkTenantAiExecutePermission';
 import { translateVoicePayloadToStudioConfig } from '@/lib/translateVoicePayloadToStudioConfig';
@@ -53,6 +54,7 @@ const ProcessCommandSchema = z.object({
   resellerId: z.string().min(1), // Reseller slug (e.g. "lastchaptermedia2016")
   userCommand: z.string().min(1).max(2000),
   text: z.string().optional(), // Fallback from hybrid voice route
+  source: z.enum(['text', 'voice-ptt']).optional(), // Input modality for prompt adaptation
   context: z.object({
     currentPath: z.string(),
   }).optional(), // Active page context from hybrid voice route
@@ -109,7 +111,7 @@ const StructuredPayloadSchema = z.object({
 // SYSTEM_BULK_CONFIRM / SYSTEM_BULK_CANCEL / SYSTEM_FILTER_GRID are structural payloads
 // that bypass database writes (see short-circuit guard in POST handler).
 const AIResponseSchema = z.object({
-  actionType: z.enum(['SINGLE', 'BULK', 'NO_MATCH', 'DELETE_CLIENT', 'SYSTEM_BULK_CONFIRM', 'SYSTEM_BULK_CANCEL', 'SYSTEM_FILTER_GRID', 'SYSTEM_UPDATE_BRANDING', 'SYSTEM_HELP', 'SYSTEM_NOTE', 'SYSTEM_DISARM', 'SYSTEM_EXPLAIN', 'SYSTEM_TELEMETRY']),
+  actionType: z.enum(['SINGLE', 'BULK', 'NO_MATCH', 'DELETE_CLIENT', 'SYSTEM_BULK_CONFIRM', 'SYSTEM_BULK_CANCEL', 'SYSTEM_FILTER_GRID', 'SYSTEM_UPDATE_BRANDING', 'SYSTEM_HELP', 'SYSTEM_NOTE', 'SYSTEM_DISARM', 'SYSTEM_EXPLAIN', 'SYSTEM_TELEMETRY', 'SYSTEM_APPLY_BRANDING_THEME']),
   targetIds: z.array(z.string().uuid()).optional(),
   clientName: z.string().optional(),
   contextKey: z.string().optional(), // Relevant capability key for SYSTEM_EXPLAIN
@@ -224,7 +226,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { resellerId, text, context, currentConfig, tenantContext, contextCapabilities } = validationResult.data;
+    const { resellerId, text, context, currentConfig, tenantContext, contextCapabilities, source } = validationResult.data;
     let { userCommand } = validationResult.data;
     if (text && text.trim().length > 0) {
       userCommand = text;
@@ -313,8 +315,32 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // â”€â”€ Pre-LLM Intent Detection: Fast-path for branding theme requests â”€â”€â”€â”€
+    // Map natural language theme requests to pre-defined branding payloads
+    // without hitting the LLM. This provides instant, consistent theme application.
+    const brandingTheme = getBrandingTheme(userCommand.trim());
+    if (brandingTheme) {
+      console.log('%c[ProcessCommand] ðŸ”· Pre-LLM SYSTEM_APPLY_BRANDING_THEME â€” theme detected', 'color: #3b82f6; font-weight: bold;', { theme: brandingTheme.key });
+      return NextResponse.json({
+        success: true,
+        actionType: 'SYSTEM_APPLY_BRANDING_THEME',
+        targetIds: [],
+        hasAudio: false,
+        payload: {
+          theme: brandingTheme.key,
+          branding: brandingTheme.branding,
+        },
+        summary: `I've prepared the ${brandingTheme.label} theme for you. Review the changes in the studio and click Confirm to apply them.`,
+        metadata: {
+          processedAt: new Date().toISOString(),
+          resellerId,
+          model: 'pre-llm-theme-intent',
+        },
+      });
+    }
+
     // Build the system prompt dynamically from capabilities
-    const SYSTEM_PROMPT = buildDeploymentOfficerPrompt(contextCapabilities as unknown as StudioCapabilitiesMap | undefined);
+    const SYSTEM_PROMPT = buildDeploymentOfficerPrompt(contextCapabilities as unknown as StudioCapabilitiesMap | undefined, source === 'voice-ptt' ? 'voice-ptt' : undefined);
 
     // ── Live telemetry fast-path ─────────────────────────────────────────
     // If the user asks for success/performance/health metrics, query the
@@ -407,6 +433,7 @@ Output ONLY valid JSON.`;
       actionType !== 'SYSTEM_BULK_CANCEL' &&
       actionType !== 'SYSTEM_FILTER_GRID' &&
       actionType !== 'SYSTEM_EXPLAIN' &&
+      actionType !== 'SYSTEM_APPLY_BRANDING_THEME' &&
       confidenceScore !== undefined &&
       confidenceScore < 0.85
     ) {
@@ -503,7 +530,7 @@ Output ONLY valid JSON.`;
     // These are emitted by the MACRO COMMAND DICTIONARY in DEPLOYMENT_OFFICER when the user
     // speaks confirmation ("yes", "confirm"), cancellation ("no", "cancel"), or grid filter intents.
     // They carry empty targetIds and must NOT reach the DB update layer.
-    if (actionType === 'SYSTEM_BULK_CONFIRM' || actionType === 'SYSTEM_BULK_CANCEL' || actionType === 'SYSTEM_FILTER_GRID' || actionType === 'SYSTEM_HELP' || actionType === 'SYSTEM_NOTE' || actionType === 'SYSTEM_DISARM') {
+    if (actionType === 'SYSTEM_BULK_CONFIRM' || actionType === 'SYSTEM_BULK_CANCEL' || actionType === 'SYSTEM_FILTER_GRID' || actionType === 'SYSTEM_HELP' || actionType === 'SYSTEM_NOTE' || actionType === 'SYSTEM_DISARM' || actionType === 'SYSTEM_APPLY_BRANDING_THEME') {
       console.log('%c[ProcessCommand] 🔷 SYSTEM_ macro command recognized:', 'color: #3b82f6; font-weight: bold;', { actionType, payload, contextKey });
       return NextResponse.json({
         success: true,

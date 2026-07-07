@@ -28,6 +28,7 @@ import {
   type CanonicalFeatures,
 } from '../schemas/tenant-config.canonical';
 import { PersonaModeSchema, type ActionId } from '../actions/registry';
+import { getBrandingTheme, type BrandingTheme } from './branding-concierge';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Studio draft context (read-only observation input — mirrors StudioDraftContext)
@@ -79,6 +80,8 @@ type IntentStep = {
   features?: Partial<CanonicalFeatures>;
   /** Resolved persona mode for an UPDATE_PERSONA step. */
   personaMode?: 'sales' | 'concierge';
+  /** Resolved branding theme for an APPLY_BRANDING_THEME step. */
+  theme?: BrandingTheme;
   preview: string;
 };
 
@@ -190,6 +193,19 @@ export function mapIntentToActions(input: MapIntentInput): MapperResult {
       features: { customCss: true },
       preview: `turn on custom CSS support`,
     });
+  }
+
+  // ── Branding theme directive ───────────────────────────────────────────────
+  // Recognizes high-level theme requests ("make it legal", "modern theme", etc.)
+  // and maps them to a pre-defined CanonicalBranding payload.
+  const theme = getBrandingTheme(input.utterance);
+  if (theme) {
+    steps.push({
+      actionId: 'APPLY_BRANDING_THEME',
+      branding: theme.branding,
+      preview: `apply the ${theme.label} theme`,
+    });
+    (steps[steps.length - 1] as IntentStep & { theme?: BrandingTheme }).theme = theme;
   }
 
   // ── Persona mode directive ────────────────────────────────────────────────

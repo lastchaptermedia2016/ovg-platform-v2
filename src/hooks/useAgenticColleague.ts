@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { useStudioDraft } from '@/contexts/StudioDraftContext';
+import { useStudioDraft, gradientValue } from '@/contexts/StudioDraftContext';
 import { type MapperResult, type ActionIntent } from '@/lib/ai/intent-mapper';
 import {
   CognitiveOrchestrator,
@@ -200,24 +200,36 @@ export function useAgenticColleague(options: UseAgenticColleagueOptions): UseAge
       const next = { ...current };
       for (const intent of intents) {
         const branding = intent.payload.branding;
-        const headerType = branding?.headerConfig?.type;
-        if (headerType && headerType !== 'none') {
-          // StudioDraft only models solid/image; map canonical 'gradient' to solid.
-          const mapped = headerType === 'gradient' ? 'solid' : headerType;
+        const header = branding?.headerConfig;
+        if (header?.type && header.type !== 'none') {
           next.header = {
-            type: mapped,
-            image: branding.headerConfig?.image ?? undefined,
-            colorStart: branding.headerConfig?.colorStart ?? undefined,
+            type: header.type,
+            value:
+              header.type === 'image'
+                ? (header.image ?? null)
+                : header.type === 'gradient'
+                  ? gradientValue(header.colorStart ?? '#1A73E8', header.colorEnd ?? '#0A2540')
+                  : (header.colorStart ?? null),
+            opacity: header.opacity ?? 1,
+            backdropBlur: false,
           };
         }
-        const footerType = branding?.footerConfig?.type;
-        if (footerType && footerType !== 'none') {
-          const mappedF = footerType === 'gradient' ? 'solid' : footerType;
+        const footer = branding?.footerConfig;
+        if (footer?.type && footer.type !== 'none') {
           next.footer = {
-            type: mappedF,
-            image: branding.footerConfig?.image ?? undefined,
-            colorStart: branding.footerConfig?.colorStart ?? undefined,
+            type: footer.type,
+            value:
+              footer.type === 'image'
+                ? (footer.image ?? null)
+                : footer.type === 'gradient'
+                  ? gradientValue(footer.colorStart ?? '#1A73E8', footer.colorEnd ?? '#0A2540')
+                  : (footer.colorStart ?? null),
+            opacity: footer.opacity ?? 1,
+            backdropBlur: false,
           };
+        }
+        if (typeof branding?.widgetBodyOpacity === 'number') {
+          next.widgetBody = { ...next.widgetBody, opacity: branding.widgetBodyOpacity };
         }
         if (branding?.primaryColor) next.primaryColor = branding.primaryColor;
         if (branding?.logoUrl) next.logoUrl = branding.logoUrl;

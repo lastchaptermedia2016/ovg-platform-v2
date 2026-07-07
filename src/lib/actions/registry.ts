@@ -62,6 +62,7 @@ export const PersonaModeSchema = z.enum(['sales', 'concierge']);
 export type ActionPayloadMap = {
   UPDATE_WIDGET_CONFIG: CanonicalWidgetConfig;
   UPDATE_PERSONA: { mode: PersonaMode };
+  APPLY_BRANDING_THEME: CanonicalWidgetConfig;
 };
 
 export type ActionId = keyof ActionPayloadMap;

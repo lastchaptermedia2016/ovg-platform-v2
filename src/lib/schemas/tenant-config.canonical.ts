@@ -59,6 +59,25 @@ export const CanonicalBackgroundSectionSchema = z.object({
 export type CanonicalBackgroundSection = z.infer<typeof CanonicalBackgroundSectionSchema>;
 
 /**
+ * Layered branding configuration schema.
+ * Describes a single visual layer (header, footer, or widget body) with an
+ * optional background media, a real-time opacity, and an optional backdrop blur.
+ *
+ * @property type - Background kind: none | solid | gradient | image
+ * @property value - Hex color (solid), CSS gradient string (gradient), or URL (image). null when type is none.
+ * @property opacity - Layer opacity clamped to 0.1–1.0 (default 1.0).
+ * @property backdropBlur - Apply a frosted-glass backdrop blur (primarily the widget body).
+ */
+export const LayerConfigSchema = z.object({
+  type: z.enum(['none', 'solid', 'gradient', 'image']),
+  value: z.string().nullable(),
+  opacity: z.number().min(0.1).max(1.0).default(1.0),
+  backdropBlur: z.boolean().default(false),
+});
+
+export type LayerConfig = z.infer<typeof LayerConfigSchema>;
+
+/**
  * Widget body configuration schema.
  * Controls chat window transparency and background.
  */
@@ -108,7 +127,12 @@ export const CanonicalBrandingSchema = z.object({
   // Core brand colors
   primaryColor: CanonicalHexColorSchema.optional(),
   accentColor: CanonicalHexColorSchema.optional(),
-  logoUrl: CanonicalURLSchema.optional(),
+  logoUrl: z.string().url().or(z.string().startsWith('/')).or(z.literal('')).nullable().optional(),
+
+  // Layered branding (header / footer / widget body) with transparency + media.
+  header: LayerConfigSchema.optional(),
+  footer: LayerConfigSchema.optional(),
+  widgetBody: LayerConfigSchema.optional(),
 
   // Widget position
   widgetPosition: z.enum(['bottom-right', 'bottom-left', 'top-right', 'top-left']).optional(),
