@@ -40,3 +40,13 @@
 
 ## Phase 3: Verification
 - [ ] Run `npm run lint` and confirm 0 errors, 0 warnings
+
+---
+
+## Completed (Historical Log)
+
+These items are finalized and tracked here for audit continuity. They are intentionally kept out of the active To-Do lists above.
+
+- [x] **SYSTEM_HELP elevated to Zeeder Client UI modal** — `useZeederVoice` exposes `helpModalOpen` / `dismissHelpModal`; the `SYSTEM_HELP` branch triggers the modal while retaining TTS for accessibility. Rendered via `ClientHelpModal` (`src/components/client/ClientHelpModal.tsx`) mounted in `SystemMicButton`. Confined to the `/client` (Zeeder) surface; Reseller `clients/page.tsx` help popover untouched.
+- [x] **`system_tasks` queue + orchestrator worker** — Headless infrastructure commands (`SYSTEM_EXECUTE_BUILD`, `SYSTEM_SYNC_CRM`, `SYSTEM_RELOAD_ASSETS`) are persisted to `system_tasks` by `src/lib/audit/command-dispatcher.ts` and processed asynchronously by `src/lib/orchestrator/worker.ts` (handlers in `src/lib/orchestrator/`). Migration `supabase/migrations/016_create_system_tasks_table.sql` applied with service-role-only RLS.
+- [x] **Client-safe command taxonomy** — `SYSTEM_COMMANDS` / `SYSTEM_COMMAND` extracted into `src/lib/audit/command-types.ts` (no server-only imports); `feature-registry.ts` and `route.ts` repointed so `FEATURE_REGISTRY` is importable from `'use client'` components. Parity test `src/lib/audit/parity.audit.test.ts` green.

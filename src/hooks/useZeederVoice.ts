@@ -155,6 +155,10 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
   error: string | null;
   /** Reset the error state to null. */
   clearError: () => void;
+  /** True when the SYSTEM_HELP capabilities modal should be visible. */
+  helpModalOpen: boolean;
+  /** Dismiss (close) the SYSTEM_HELP capabilities modal. */
+  dismissHelpModal: () => void;
 } {
   const { dispatch, clientProfile, setMode, setExecutionState } = useZeeder();
   // Bridge to the Studio's single source of truth for persona state. This is
@@ -165,6 +169,7 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
     isProcessing: false,
     error: null,
   });
+  const [helpModalOpen, setHelpModalOpen] = useState(false);
 
   const {
     resellerId: _resellerId,
@@ -418,6 +423,14 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
           console.log(
             `[ZEEDER-VOICE] AI responded with non-ZEEDER actionType: "${data.actionType}" — ${data.summary ?? 'no summary'}`,
           );
+
+          // SYSTEM_HELP: elevate from speech-only to a visual capabilities modal.
+          // Voice output is retained for accessibility, but the primary output
+          // is the modal trigger owned by this hook's consumer.
+          if (data.actionType === 'SYSTEM_HELP') {
+            setHelpModalOpen(true);
+          }
+
           if (data.summary) {
             await speakSummary(data.summary);
           }
@@ -483,10 +496,16 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
     setState(prev => ({ ...prev, error: null }));
   }, []);
 
+  const dismissHelpModal = useCallback(() => {
+    setHelpModalOpen(false);
+  }, []);
+
   return {
     handleVoiceCommand,
     isProcessing: state.isProcessing,
     error: state.error,
     clearError,
+    helpModalOpen,
+    dismissHelpModal,
   };
 }

@@ -32,6 +32,7 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { useZeeder } from '@/contexts/ZeederContext';
 import { useZeederVoice } from '@/hooks/useZeederVoice';
+import { ClientHelpModal } from '@/components/client/ClientHelpModal';
 import { getSpeechRecognition, type SpeechRecognitionInstance, type SpeechRecognitionResultEvent, type SpeechRecognitionErrorEvent } from '@/types/voice-parser';
 
 // ──────────────────────────── Constants ─────────────────────────────────
@@ -52,9 +53,14 @@ const ERROR_VISIBLE_DURATION_MS = 3_000;
  *
  * @returns A styled `<button>` element.
  */
-export default function SystemMicButton() {
+interface SystemMicButtonProps {
+  onTranscriptChange?: (text: string) => void;
+  onRecordingStateChange?: (isRecording: boolean) => void;
+}
+
+export default function SystemMicButton({ onTranscriptChange, onRecordingStateChange }: SystemMicButtonProps) {
   const { mode } = useZeeder();
-  const { handleVoiceCommand, isProcessing, error: voiceError, clearError } = useZeederVoice();
+  const { handleVoiceCommand, isProcessing, error: voiceError, clearError, helpModalOpen, dismissHelpModal } = useZeederVoice();
 
   // ── Local state ────────────────────────────────────────────────────
   const [isListening, setIsListening] = useState(false);
@@ -101,9 +107,13 @@ export default function SystemMicButton() {
       return;
     }
 
+    // Clear previous transcript at the start of a new recording session
+    onTranscriptChange?.('');
+    onRecordingStateChange?.(true);
+
     const recognition = new SpeechRecognitionAPI();
     recognition.lang = 'en-US';
-    recognition.interimResults = false;
+    recognition.interimResults = true;
     recognition.continuous = false;
     recognition.maxAlternatives = 1;
 
@@ -113,24 +123,30 @@ export default function SystemMicButton() {
         resultsLength: results.length,
         result0Length: results[0]?.length,
         transcript: results[0]?.[0]?.transcript,
+        isFinal: results[0]?.isFinal,
       });
       if (results.length > 0 && results[0].length > 0 && results[0][0].transcript) {
-        transcriptRef.current = results[0][0].transcript.trim();
-        console.log('[TRACE] Transcript stored:', `"${transcriptRef.current}"`);
+        const captured = results[0][0].transcript.trim();
+        transcriptRef.current = captured;
+        onTranscriptChange?.(captured);
+        console.log('[TRACE] Transcript stored:', `"${captured}"`);
       }
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       console.error('[ZEEDER-VOICE] Speech recognition error:', event.error ?? 'unknown');
       setIsListening(false);
+      onRecordingStateChange?.(false);
     };
 
     recognition.onend = () => {
       console.log('[ZEEDER-VOICE] Speech recognition ended');
       setIsListening(false);
+      onRecordingStateChange?.(false);
       const transcript = transcriptRef.current;
       console.log('[ZEEDER-VOICE] Transcript captured:', transcript ? `"${transcript}"` : '(empty)');
-      transcriptRef.current = '';
+      // Note: Do NOT clear transcript here — let the parent decide when to clear
+      // This preserves the "Reseller Effect" where users can read their spoken text
 
       if (transcript) {
         console.log('[ZEEDER-VOICE] Calling handleVoiceCommand with transcript');
@@ -149,8 +165,9 @@ export default function SystemMicButton() {
       const message = err instanceof Error ? err.message : 'Failed to start speech recognition.';
       console.error('[ZEEDER-VOICE]', message);
       setIsListening(false);
+      onRecordingStateChange?.(false);
     }
-  }, [isListening, isProcessing, handleVoiceCommand]);
+  }, [isListening, isProcessing, handleVoiceCommand, onTranscriptChange, onRecordingStateChange]);
 
   // ── Stop speech recognition ────────────────────────────────────────
   const stopListening = useCallback(() => {
@@ -183,55 +200,62 @@ export default function SystemMicButton() {
   const iconColor = isListening ? 'text-black' : 'text-[#FFD700]';
 
   return (
-    <button
-      type="button"
-      onMouseDown={startListening}
-      onMouseUp={stopListening}
-      onMouseLeave={stopListening}
-      onTouchStart={startListening}
-      onTouchEnd={stopListening}
-      disabled={isExecuting}
-      aria-label={
-        isListening
-          ? 'Listening for voice command'
-          : isExecuting
-            ? 'Processing voice command'
-            : hasError
-              ? 'Voice command error — try again'
-              : 'Push to talk'
-      }
-      aria-pressed={isListening}
-      className={`
-        relative flex items-center justify-center
-        w-10 h-10 md:w-11 md:h-11
-        rounded-full
-        border ${borderColor}
-        ${bgColor}
-        ${glowClass}
-        transition-all duration-300 ease-out
-        focus:outline-none focus-visible:ring-2 focus-visible:ring-[#FFD700]/50 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950
-        disabled:opacity-60 disabled:cursor-not-allowed
-        cursor-pointer select-none
-        font-agrandir
-      `}
-    >
-      {/* ── Mic Icon ─────────────────────────────────────────────── */}
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className={`w-4 h-4 md:w-[18px] md:h-[18px] ${iconColor} transition-colors duration-300`}
-        aria-hidden="true"
+    <div className="relative flex flex-col items-center">
+      <button
+        type="button"
+        onMouseDown={startListening}
+        onMouseUp={stopListening}
+        onMouseLeave={stopListening}
+        onTouchStart={startListening}
+        onTouchEnd={stopListening}
+        disabled={isExecuting}
+        aria-label={
+          isListening
+            ? 'Listening for voice command'
+            : isExecuting
+              ? 'Processing voice command'
+              : hasError
+                ? 'Voice command error — try again'
+                : 'Push to talk'
+        }
+        aria-pressed={isListening}
+        className={`
+          relative flex items-center justify-center
+          w-10 h-10 md:w-11 md:h-11
+          rounded-full
+          border ${borderColor}
+          ${bgColor}
+          ${glowClass}
+          transition-all duration-300 ease-out
+          focus:outline-none focus-visible:ring-2 focus-visible:ring-[#FFD700]/50 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950
+          disabled:opacity-60 disabled:cursor-not-allowed
+          cursor-pointer select-none
+          font-agrandir
+        `}
       >
-        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-        <line x1="12" y1="19" x2="12" y2="23" />
-        <line x1="8" y1="23" x2="16" y2="23" />
-      </svg>
+        {/* ── Mic Icon ─────────────────────────────────────────────── */}
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.5}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className={`w-4 h-4 md:w-[18px] md:h-[18px] ${iconColor} transition-colors duration-300`}
+          aria-hidden="true"
+        >
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+          <line x1="12" y1="19" x2="12" y2="23" />
+          <line x1="8" y1="23" x2="16" y2="23" />
+        </svg>
+
+        {/* ── Processing spinner ring (visible only while executing) ── */}
+        {isExecuting && (
+          <span className="absolute inset-0 rounded-full border-2 border-transparent border-t-[#FFD700] animate-spin pointer-events-none" />
+        )}
+      </button>
 
       {/* ── "Listening..." label (visible only while capturing) ──── */}
       {isListening && (
@@ -240,10 +264,8 @@ export default function SystemMicButton() {
         </span>
       )}
 
-      {/* ── Processing spinner ring (visible only while executing) ── */}
-      {isExecuting && (
-        <span className="absolute inset-0 rounded-full border-2 border-transparent border-t-[#FFD700] animate-spin pointer-events-none" />
-      )}
-    </button>
+      {/* ── SYSTEM_HELP elevated to a visual UI modal ──────────── */}
+      <ClientHelpModal open={helpModalOpen} onClose={dismissHelpModal} />
+    </div>
   );
 }

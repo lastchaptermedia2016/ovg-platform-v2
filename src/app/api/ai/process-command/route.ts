@@ -110,8 +110,11 @@ const StructuredPayloadSchema = z.object({
 // Response schema for AI output - supports SINGLE, BULK, NO_MATCH, and SYSTEM_ macro commands
 // SYSTEM_BULK_CONFIRM / SYSTEM_BULK_CANCEL / SYSTEM_FILTER_GRID are structural payloads
 // that bypass database writes (see short-circuit guard in POST handler).
+import { SYSTEM_COMMANDS } from '@/lib/audit/command-types';
+export type { SYSTEM_COMMAND } from '@/lib/audit/command-types';
+
 const AIResponseSchema = z.object({
-  actionType: z.enum(['SINGLE', 'BULK', 'NO_MATCH', 'DELETE_CLIENT', 'SYSTEM_BULK_CONFIRM', 'SYSTEM_BULK_CANCEL', 'SYSTEM_FILTER_GRID', 'SYSTEM_UPDATE_BRANDING', 'SYSTEM_HELP', 'SYSTEM_NOTE', 'SYSTEM_DISARM', 'SYSTEM_EXPLAIN', 'SYSTEM_TELEMETRY', 'SYSTEM_APPLY_BRANDING_THEME']),
+  actionType: z.enum(SYSTEM_COMMANDS),
   targetIds: z.array(z.string().uuid()).optional(),
   clientName: z.string().optional(),
   contextKey: z.string().optional(), // Relevant capability key for SYSTEM_EXPLAIN
@@ -530,7 +533,7 @@ Output ONLY valid JSON.`;
     // These are emitted by the MACRO COMMAND DICTIONARY in DEPLOYMENT_OFFICER when the user
     // speaks confirmation ("yes", "confirm"), cancellation ("no", "cancel"), or grid filter intents.
     // They carry empty targetIds and must NOT reach the DB update layer.
-    if (actionType === 'SYSTEM_BULK_CONFIRM' || actionType === 'SYSTEM_BULK_CANCEL' || actionType === 'SYSTEM_FILTER_GRID' || actionType === 'SYSTEM_HELP' || actionType === 'SYSTEM_NOTE' || actionType === 'SYSTEM_DISARM' || actionType === 'SYSTEM_APPLY_BRANDING_THEME') {
+    if (actionType === 'SYSTEM_BULK_CONFIRM' || actionType === 'SYSTEM_BULK_CANCEL' || actionType === 'SYSTEM_FILTER_GRID' || actionType === 'SYSTEM_HELP' || actionType === 'SYSTEM_NOTE' || actionType === 'SYSTEM_DISARM' || actionType === 'SYSTEM_APPLY_BRANDING_THEME' || actionType === 'SYSTEM_EXECUTE_BUILD' || actionType === 'SYSTEM_SYNC_CRM' || actionType === 'SYSTEM_RELOAD_ASSETS') {
       console.log('%c[ProcessCommand] 🔷 SYSTEM_ macro command recognized:', 'color: #3b82f6; font-weight: bold;', { actionType, payload, contextKey });
       return NextResponse.json({
         success: true,

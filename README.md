@@ -70,6 +70,13 @@ The **OVG Platform** is now a fully-functional enterprise solution with advanced
 - **Instant Save** — Dual transaction for visuals + greeting
 - **Tenant-Level Config** — Per-tenant widget_config with greeting storage
 
+#### 6. **Zeeder Client AI Voice System & SYSTEM_HELP Modal**
+- **Zeeder Client Voice Bridge** — `useZeederVoice` connects the client-side `ZeederContext` state machine to the Groq-powered `/api/ai/process-command` endpoint (intentionally zero-dependency vs. the reseller domain).
+- **SYSTEM_HELP Elevated to UI** — `SYSTEM_HELP` is no longer speech-only. The `ClientHelpModal` (`src/components/client/ClientHelpModal.tsx`) renders the authoritative capability list from `FEATURE_REGISTRY`, triggered via `helpModalOpen` on the voice hook and mounted in `SystemMicButton`. Voice output is retained for accessibility; the modal is the primary surface.
+- **Client-Safe Command Taxonomy** — `SYSTEM_COMMANDS` / `SYSTEM_COMMAND` live in `src/lib/audit/command-types.ts` (no server-only imports) so the registry can be imported by `'use client'` components. `FEATURE_REGISTRY` (`src/lib/audit/feature-registry.ts`) is the single source of truth for AI capabilities, handlers, and auth requirements.
+- **System-Command Orchestrator** — Headless infrastructure commands (`SYSTEM_EXECUTE_BUILD`, `SYSTEM_SYNC_CRM`, `SYSTEM_RELOAD_ASSETS`) are queued into a `system_tasks` table and processed asynchronously by the orchestrator worker (`src/lib/orchestrator/worker.ts`) via handlers in `src/lib/orchestrator/`. The DB-backed `command-dispatcher.ts` branches critical commands to the queue and runs lightweight commands inline.
+- **Isolation** — All Zeeder Client changes are confined to the `/client` surface and never touch the Reseller system (`src/app/(dashboard)/reseller/**`).
+
 ### 🎯 Key Capabilities
 
 #### Voice Commands
@@ -192,10 +199,29 @@ components/reseller/
     └── UniversalCommandModal.tsx # Centralized voice/text command modal
 
 hooks/
-├── use-voice-command.ts          # Voice capture & AI pipeline
+├── use-voice-command.ts          # Voice capture & AI pipeline (reseller)
+├── use-zeeder-voice.ts           # ZEEDER client voice-action bridge
 ├── use-branding-studio.ts        # Branding state management
 ├── use-reseller.ts               # Reseller data fetching
 └── use-voice-command.ts          # Voice command orchestration
+
+components/client/                 # Zeeder Client surface
+├── ClientHelpModal.tsx           # SYSTEM_HELP visual capabilities modal
+└── studio/                        # Studio editing UI
+
+components/ui/zeeder/
+└── SystemMicButton.tsx           # Push-to-talk mic; mounts ClientHelpModal
+
+lib/audit/
+├── command-types.ts              # Client-safe SYSTEM_COMMANDS taxonomy
+├── feature-registry.ts           # Canonical AI capability registry
+└── command-dispatcher.ts         # DB-backed command routing (queue vs inline)
+
+lib/orchestrator/                  # Async headless infra command workers
+├── worker.ts                     # Pulls system_tasks and executes handlers
+├── build-pipeline.ts             # SYSTEM_EXECUTE_BUILD handler
+├── crm-sync.ts                   # SYSTEM_SYNC_CRM handler
+└── asset-reload.ts               # SYSTEM_RELOAD_ASSETS handler
 
 providers/
 └── reseller-provider.tsx         # Reseller context provider
@@ -248,6 +274,20 @@ user_resellers {
   role: text
   created_at: timestamp
 }
+
+-- System Tasks (headless infrastructure command queue)
+system_tasks {
+  id: uuid (PK, default gen_random_uuid())
+  command: text (NOT NULL)            # SYSTEM_COMMAND, e.g. SYSTEM_EXECUTE_BUILD
+  payload: jsonb                      # Opaque payload for the orchestrator handler
+  status: text (NOT NULL, default 'PENDING')
+                                       # CHECK: PENDING | PROCESSING | COMPLETED | FAILED
+  error_log: text                     # Error detail when status = FAILED
+  created_at: timestamptz (NOT NULL)
+  updated_at: timestamptz (NOT NULL)
+}
+-- Index: idx_system_tasks_status_created (status, created_at ASC)
+-- RLS: enabled; service_role only (dispatcher insert + worker update)
 ```
 
 ### 🔐 Security Features

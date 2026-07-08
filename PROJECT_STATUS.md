@@ -35,7 +35,29 @@
 
 ---
 
-## 2. Branding Implementation State
+## 2. System Tasks Queue (Headless Infrastructure Commands)
+
+### `system_tasks` Table (New, per `supabase/migrations/016_create_system_tasks_table.sql`)
+| Column | Type | Status |
+|--------|------|--------|
+| `id` | UUID PK (default `gen_random_uuid()`) | ✅ New: async task identity |
+| `command` | TEXT NOT NULL | ✅ New: the `SYSTEM_COMMAND` requested (e.g. `SYSTEM_EXECUTE_BUILD`) |
+| `payload` | JSONB | ✅ New: opaque payload forwarded to the orchestrator handler |
+| `status` | TEXT NOT NULL DEFAULT `PENDING` | ✅ New: CHECK `PENDING \| PROCESSING \| COMPLETED \| FAILED` |
+| `error_log` | TEXT | ✅ New: error detail when `status = FAILED` |
+| `created_at` | TIMESTAMPTZ NOT NULL | ✅ New |
+| `updated_at` | TIMESTAMPTZ NOT NULL | ✅ New |
+
+- **Index**: `idx_system_tasks_status_created (status, created_at ASC)` — worker pulls `PENDING` rows oldest-first.
+- **RLS**: Enabled; service-role only policy (`dispatcher` insert + `worker` update). Never exposed to anon/authenticated clients.
+- **Producer**: `src/lib/audit/command-dispatcher.ts` queues `SYSTEM_EXECUTE_BUILD`, `SYSTEM_SYNC_CRM`, `SYSTEM_RELOAD_ASSETS` via the admin Supabase client.
+- **Consumer**: `src/lib/orchestrator/worker.ts` executes the matching handler in `src/lib/orchestrator/` and transitions `PENDING → PROCESSING → COMPLETED \| FAILED`.
+
+**Verdict**: Isolated system-level queue; correct RLS posture, no client-exposed write path.
+
+---
+
+## 3. Branding Implementation State
 
 ### Tenant Branding
 - Uses `branding_colors: { primary, secondary }` JSONB on `tenants` table per `src/core/tenant/db.ts`
@@ -59,7 +81,7 @@
 
 ---
 
-## 3. Provisioning Engine Status
+## 4. Provisioning Engine Status
 
 ### Historical Behavior
 - Pre-refactor: Admin created auth users via `supabase.auth.signUp()` and linked to `user_resellers`
@@ -88,7 +110,7 @@
 
 ---
 
-## 4. Security Perimeter Status
+## 5. Security Perimeter Status
 
 ### Middleware Coverage
 | Path | Matcher | Auth Enforcement |
@@ -119,7 +141,7 @@
 
 ---
 
-## 5. Recommendations
+## 6. Recommendations
 
 1. **Schema Cleanup (Future)**
    - Deprecate `branding_color` and `accent_color` on `resellers` after full `branding_bag` adoption

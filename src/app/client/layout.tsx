@@ -15,6 +15,8 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
   const overlayRef = useRef<{ openBranding: () => void; openPersona: () => void; openCommands: () => void } | null>(null);
   const [commandIntent, setCommandIntent] = useState<CommandIntent>(null);
   const [clientProfile, setClientProfile] = useState<ZeederClientProfile | null>(null);
+  const [transcript, setTranscript] = useState('');
+  const [isRecording, setIsRecording] = useState(false);
 
   // ── Fetch authenticated client identity ────────────────────────────
   useEffect(() => {
@@ -132,7 +134,10 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
 
           {/* System Mic Button — ZEEDER PTT trigger */}
           <div className="flex items-center">
-            <SystemMicButton />
+            <SystemMicButton 
+              onTranscriptChange={setTranscript} 
+              onRecordingStateChange={setIsRecording} 
+            />
           </div>
 
           {/* Navigation status (far-right) */}
@@ -144,6 +149,15 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
           </div>
         </div>
       </header>
+
+      {/* STT Layer - Dedicated full-width container beneath header */}
+      <div className="w-full px-4 mt-2 h-5 flex items-center justify-center">
+        <span className={`text-[#0097b2]/60 text-[10px] font-mono uppercase tracking-tight italic transition-opacity duration-200 ${
+          transcript || isRecording ? 'opacity-100' : 'opacity-30'
+        }`}>
+          {transcript ? `Detected: "${transcript}"` : (isRecording ? 'Listening...' : '\u2009')}
+        </span>
+      </div>
 
       {/* Page Content — flex-1 pushes footer to bottom */}
       <main className="flex-1 w-full">
