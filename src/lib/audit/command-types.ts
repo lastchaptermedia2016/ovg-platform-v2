@@ -34,3 +34,16 @@ export const SYSTEM_COMMANDS = [
 ] as const;
 
 export type SYSTEM_COMMAND = (typeof SYSTEM_COMMANDS)[number];
+
+/**
+ * Strict partition of AI capability ownership across the platform's surfaces.
+ *
+ * - `client`         — user-facing Zeeder Client tools (branding, personas, help).
+ * - `reseller`       — Reseller admin tooling (telemetry, client grid, deletion).
+ * - `infrastructure` — headless background tasks executed by the orchestrator worker.
+ *
+ * Used by `FEATURE_REGISTRY` to enforce scope-based boundary integrity so the
+ * Client surface (e.g. `ClientHelpModal`) never surfaces Reseller or
+ * Infrastructure commands.
+ */
+export type FeatureScope = 'client' | 'reseller' | 'infrastructure';

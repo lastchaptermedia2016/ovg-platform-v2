@@ -56,27 +56,6 @@ const ACTION_TYPE_TO_ZEEDER_ID: Record<string, ZeederActionId | null> = {
   SYSTEM_TELEMETRY: 'fetchTelemetry',
 };
 
-type CommandIntent = 'list_capabilities' | 'view_status' | 'get_help' | 'show_analytics';
-
-/**
- * Map from `/api/ai/process-command` `actionType` values to CommandModal intent keys.
- *
- * This decouples AI action taxonomy from UI intent constants, allowing the AI
- * to evolve independently. Unknown actionTypes fall back to a safe default.
- */
-const ACTION_TYPE_TO_INTENT = new Map<string, CommandIntent | null>([
-  ['SYSTEM_HELP', 'list_capabilities'],
-  ['SYSTEM_EXPLAIN', 'list_capabilities'],
-  ['NO_MATCH', 'get_help'],
-  ['SYSTEM_NOTE', null],
-  ['SYSTEM_DISARM', null],
-]);
-
-/**
- * Default intent for unrecognized actionTypes that still warrant a modal response.
- */
-const DEFAULT_UNKNOWN_INTENT: CommandIntent | null = 'get_help';
-
 interface UseZeederVoiceOptions {
   /** Explicit reseller slug (e.g. "lastchaptermedia2016"). */
   resellerId?: string;
@@ -405,15 +384,6 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
             `[ZEEDER-VOICE] Rejected invalid personaMode "${String(rawPersonaMode)}" — clarified instead of dispatching.`
           );
           return;
-        }
-
-        // ── Post-Message Bridge: notify parent layout for non-dispatch actionTypes ──
-        const uiIntent = ACTION_TYPE_TO_INTENT.get(data.actionType) ?? DEFAULT_UNKNOWN_INTENT;
-        if (uiIntent && typeof window !== 'undefined') {
-          window.postMessage(
-            { type: 'hannah:intent-command', data: { intent: uiIntent } },
-            window.location.origin,
-          );
         }
 
         if (!mappedActionId) {

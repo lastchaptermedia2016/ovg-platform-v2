@@ -72,23 +72,76 @@ export async function dispatchAction<TParams = unknown, TResult = unknown>(
     throw new Error(`Invalid params for action "${actionId}": ${errorMessages}`);
   }
 
-  // Log to action_logs
+  // Log to action_logs and capture the created row id so we can backfill
+  // the outcome (success / duration / result) after execution.
+  let logId: string | null = null;
   try {
     const supabase = await createAuthClient();
-    await supabase.from('action_logs').insert({
-      action_id: actionId,
-      tenant_id: ctx.tenantId,
-      user_id: ctx.userId,
-      source: ctx.source,
-      params: rawParams as Record<string, unknown>,
-      result: null,
-    });
+    const { data, error } = await supabase
+      .from('action_logs')
+      .insert({
+        action_id: actionId,
+        tenant_id: ctx.tenantId,
+        user_id: ctx.userId,
+        source: ctx.source,
+        params: rawParams as Record<string, unknown>,
+        result: null,
+      })
+      .select('id')
+      .single();
+
+    if (error) {
+      console.error('[ActionRegistry] Failed to log action:', error);
+    } else {
+      logId = data?.id ?? null;
+    }
   } catch (err) {
     console.error('[ActionRegistry] Failed to log action:', err);
   }
 
-  // Execute
-  return def.execute(params, ctx) as Promise<TResult>;
+  // Execute with telemetry capture. The update is awaited so logs stay
+  // accurate; the UI thread is already behind an async dispatch boundary.
+  const start = performance.now();
+  let success = true;
+  let outcome: unknown;
+  try {
+    outcome = await def.execute(params, ctx);
+  } catch (execErr) {
+    success = false;
+    outcome = {
+      success: false,
+      error: execErr instanceof Error ? execErr.message : String(execErr),
+    };
+  }
+  const durationMs = Number((performance.now() - start).toFixed(2));
+
+  if (logId) {
+    try {
+      const supabase = await createAuthClient();
+      const { error: updateError } = await supabase
+        .from('action_logs')
+        .update({
+          success,
+          duration_ms: durationMs,
+          result: outcome as Record<string, unknown>,
+        })
+        .eq('id', logId);
+
+      if (updateError) {
+        console.error('[ActionRegistry] Failed to update action log:', updateError);
+      }
+    } catch (err) {
+      console.error('[ActionRegistry] Failed to update action log:', err);
+    }
+  }
+
+  // Re-throw on failure so callers observe the original error semantics.
+  if (!success) {
+    const errResult = outcome as { error?: string };
+    throw new Error(errResult?.error ?? `Action "${actionId}" failed`);
+  }
+
+  return outcome as TResult;
 }
 
 // ────────────────────────────────────────────────────────────────────

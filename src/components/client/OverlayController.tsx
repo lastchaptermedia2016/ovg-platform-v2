@@ -1,16 +1,12 @@
 'use client';
 
 import { useState, useCallback, useEffect, forwardRef, useImperativeHandle } from 'react';
-import { createPortal } from 'react-dom';
-import { X } from 'lucide-react';
-import { BrandingStudio } from '@/components/client/BrandingStudio';
-import AIPersonaSettings from '@/components/client/AIPersonaSettings';
 import { CommandModal } from '@/components/client/CommandModal';
 
 // ────────────────────────────────────────────────────────────────────
 // Types
 // ────────────────────────────────────────────────────────────────────
-type OverlayView = 'branding' | 'persona' | 'commands' | null;
+type OverlayView = 'commands' | null;
 type CommandIntent = 'list_capabilities' | 'view_status' | 'get_help' | 'show_analytics';
 
 interface OverlayControllerProps {
@@ -27,7 +23,7 @@ interface OverlayControllerProps {
 // Component
 // ────────────────────────────────────────────────────────────────────
 export const OverlayController = forwardRef<
-  { openBranding: () => void; openPersona: () => void; openCommands: () => void },
+  { openCommands: () => void },
   OverlayControllerProps
 >(function OverlayController({ defaultView = null, commandIntent, onCommandClose: _onCommandClose, clientProfile }, ref) {
   const [view, setView] = useState<OverlayView>(defaultView);
@@ -39,8 +35,6 @@ export const OverlayController = forwardRef<
     setIsMounted(true);
   }, []);
 
-  const openBranding = useCallback(() => setView('branding'), []);
-  const openPersona = useCallback(() => setView('persona'), []);
   const openCommands = useCallback(() => setView('commands'), []);
   const close = useCallback(() => {
     setView(null);
@@ -60,7 +54,7 @@ export const OverlayController = forwardRef<
     setCommandIntent(null);
   };
 
-  useImperativeHandle(ref, () => ({ openBranding, openPersona, openCommands }), [openBranding, openPersona, openCommands]);
+  useImperativeHandle(ref, () => ({ openCommands }), [openCommands]);
 
   // Keyboard shortcut: Escape to close
   useEffect(() => {
@@ -85,55 +79,13 @@ export const OverlayController = forwardRef<
   // Nothing to render if closed
   if (!view || !isMounted) return null;
 
-  if (view === 'commands') {
-    return (
-      <CommandModal
-        open
-        intent={commandIntentState}
-        onClose={handleCommandClose}
-        clientProfile={clientProfile}
-      />
-    );
-  }
-
-  const title = view === 'branding' ? 'Branding Studio' : 'AI Persona Settings';
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
-    >
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-        onClick={close}
-        aria-hidden="true"
-      />
-
-      {/* Modal Container */}
-      <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-slate-950/95 shadow-[0_0_50px_rgba(0,229,255,0.15)]">
-        {/* Close Button */}
-        <div className="sticky top-0 z-10 flex justify-between items-center p-3 bg-slate-950/80 backdrop-blur-md border-b border-white/5">
-          <span className="text-white/90 text-sm font-semibold">{title}</span>
-          <button
-            onClick={close}
-            className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-slate-900/50 border border-white/10 text-zinc-400 hover:text-white hover:border-cyan-500/30 transition-all"
-            aria-label="Close"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        {/* Content */}
-        <div className="p-4">
-          {view === 'branding' && <BrandingStudio />}
-          {view === 'persona' && <AIPersonaSettings />}
-        </div>
-      </div>
-    </div>,
-    document.body
+  return (
+    <CommandModal
+      open
+      intent={commandIntentState}
+      onClose={handleCommandClose}
+      clientProfile={clientProfile}
+    />
   );
 });
 

@@ -1,6 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
+import Link from 'next/link';
 import { useRef, useState, useEffect } from 'react';
 import { OverlayController } from '@/components/client/OverlayController';
 import { ZeederProvider, type ZeederClientProfile } from '@/contexts/ZeederContext';
@@ -12,7 +13,7 @@ import { resolveClientSlug } from '@/lib/db/resolve-client-slug';
 type CommandIntent = 'list_capabilities' | 'view_status' | 'get_help' | 'show_analytics' | null;
 
 export default function ClientLayout({ children }: { children: ReactNode }) {
-  const overlayRef = useRef<{ openBranding: () => void; openPersona: () => void; openCommands: () => void } | null>(null);
+  const overlayRef = useRef<{ openCommands: () => void } | null>(null);
   const [commandIntent, setCommandIntent] = useState<CommandIntent>(null);
   const [clientProfile, setClientProfile] = useState<ZeederClientProfile | null>(null);
   const [transcript, setTranscript] = useState('');
@@ -114,22 +115,22 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
             </span>
           </div>
 
-          {/* Settings triggers */}
+          {/* Settings triggers — routed to dedicated Studio pages */}
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => overlayRef.current?.openBranding()}
+            <Link
+              href="/client/dashboard/studio/branding"
               className="text-[8.5px] md:text-[9.5px] tracking-[0.18em] uppercase font-light text-zinc-400 hover:text-cyan-400 transition-colors"
               aria-label="Open Branding Studio"
             >
               Branding
-            </button>
-            <button
-              onClick={() => overlayRef.current?.openPersona()}
+            </Link>
+            <Link
+              href="/client/dashboard/studio/persona"
               className="text-[8.5px] md:text-[9.5px] tracking-[0.18em] uppercase font-light text-zinc-400 hover:text-cyan-400 transition-colors"
               aria-label="Open AI Persona Settings"
             >
               Persona
-            </button>
+            </Link>
           </div>
 
           {/* System Mic Button — ZEEDER PTT trigger */}
