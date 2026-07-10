@@ -33,6 +33,7 @@ import { isInvalidSlug } from '@/lib/utils/guard';
 import { useZeeder, type ZeederClientProfile } from '@/contexts/ZeederContext';
 import { useStudioDraft } from '@/contexts/StudioDraftContext';
 import { isZeederActionId, type ZeederActionId } from '@/lib/zeeder/action-registry';
+import type { CanonicalBranding } from '@/lib/schemas/tenant-config.canonical';
 
 // ──────────────────────────── Types ─────────────────────────────────────
 
@@ -143,7 +144,7 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
   // Bridge to the Studio's single source of truth for persona state. This is
   // the Architect's "unified dispatcher": persona changes never touch the
   // disconnected ZeederContext — they flow straight into StudioDraftProvider.
-  const { dispatchStudioAction } = useStudioDraft();
+  const { dispatchStudioAction, applyBrandingTheme } = useStudioDraft();
   const [state, setState] = useState<ZeederVoiceState>({
     isProcessing: false,
     error: null,
@@ -437,6 +438,19 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
           }
           setState(prev => ({ ...prev, isProcessing: false }));
           console.log(`[ZEEDER-VOICE] Action "${mappedActionId}" completed successfully.`);
+
+          // ── Mirror committed branding into StudioDraft so the live WidgetPreview
+          // repaints. The branding voice path auto-commits to the DB via the
+          // zeederActionRegistry handler, but never touches StudioDraft — unlike
+          // persona changes which route through dispatchStudioAction. Without this,
+          // the DB updates (blue→red) but the preview keeps rendering stale draft.
+          if (mappedActionId === 'updateBranding') {
+            const brandingPatch = (dispatchPayload as { branding?: Partial<CanonicalBranding> }).branding;
+            if (brandingPatch) {
+              applyBrandingTheme(brandingPatch);
+              console.log('[ZEEDER-VOICE] Mirrored branding into StudioDraft for live preview.');
+            }
+          }
         }
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'An unexpected error occurred.';
@@ -452,6 +466,7 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
       setMode,
       setExecutionState,
       dispatchStudioAction,
+      applyBrandingTheme,
       resolvedResellerId,
       _currentConfig,
       _tenantContext,

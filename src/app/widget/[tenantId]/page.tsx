@@ -32,20 +32,18 @@ export default async function WidgetPage({
   const supabase = await createClient();
   const { data: resellerBrandingRow, error: brandingError } = await supabase
     .from("resellers")
-    .select("branding")
+    .select("branding_bag")
     .eq("tenant_id", tenant.tenant_id)
     .maybeSingle();
 
   const rawBranding = brandingError
     ? null
-    : (typeof resellerBrandingRow?.branding === 'string' ? resellerBrandingRow.branding : null);
+    : ((resellerBrandingRow?.branding_bag as Record<string, unknown> | null) ?? null);
 
-  const resellerBranding = rawBranding
-    ? (JSON.parse(rawBranding) as Record<string, unknown>)
-    : null;
+  const resellerBranding = rawBranding;
 
   const canonicalConfig = rawBranding
-    ? migrateLegacyBranding(JSON.parse(rawBranding) as Partial<import("@/lib/schemas/tenant-config.canonical").CanonicalWidgetConfig>)
+    ? migrateLegacyBranding(rawBranding as Partial<import("@/lib/schemas/tenant-config.canonical").CanonicalWidgetConfig>)
     : null;
 
   const canonicalBranding: CanonicalBranding | null =

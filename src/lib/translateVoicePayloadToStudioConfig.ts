@@ -1,4 +1,5 @@
 import type { CanonicalWidgetConfig } from '@/lib/schemas/tenant-config.canonical';
+import { normalizeHexColor } from '@/lib/colors';
 
 /**
  * Translate a SYSTEM_UPDATE_BRANDING voice payload (theme/ui/behavior shape)
@@ -17,13 +18,23 @@ export function translateVoicePayloadToStudioConfig(
   const ui = voicePayload.ui as Record<string, unknown> | undefined;
   const behavior = voicePayload.behavior as Record<string, unknown> | undefined;
   const aiPersonaRaw = voicePayload.aiPersona as Record<string, unknown> | undefined;
+  const widget = voicePayload.widget as Record<string, unknown> | undefined;
 
   const branding: Record<string, unknown> = {};
 
+  // Map widget.* -> branding.* (widget body properties emitted by the LLM
+  // under payload.widget, per the STUDIO capabilities / system prompt).
+  if (widget) {
+    if (widget.bodyOpacity !== undefined) branding.widgetBodyOpacity = widget.bodyOpacity;
+    if (widget.opacity !== undefined) branding.widgetBodyOpacity = widget.opacity; // legacy alias
+    if (widget.bodyBackground !== undefined) branding.widgetBodyBackground = normalizeHexColor(String(widget.bodyBackground));
+    if (widget.background !== undefined) branding.widgetBodyBackground = normalizeHexColor(String(widget.background)); // legacy alias
+  }
+
   // Map theme.* -> branding.*
   if (theme) {
-    if (theme.primary !== undefined) branding.primaryColor = theme.primary;
-    if (theme.secondary !== undefined) branding.accentColor = theme.secondary;
+    if (theme.primary !== undefined) branding.primaryColor = normalizeHexColor(String(theme.primary));
+    if (theme.secondary !== undefined) branding.accentColor = normalizeHexColor(String(theme.secondary));
     if (theme.logoUrl !== undefined) branding.logoUrl = theme.logoUrl;
     if (theme.opacity !== undefined) branding.widgetBodyOpacity = theme.opacity;
 
@@ -31,16 +42,22 @@ export function translateVoicePayloadToStudioConfig(
     if (theme.backgroundType !== undefined || theme.primaryGradientStart !== undefined || theme.primaryGradientEnd !== undefined) {
       const headerConfig: Record<string, unknown> = {};
       if (theme.backgroundType !== undefined) headerConfig.type = theme.backgroundType;
-      if (theme.primaryGradientStart !== undefined) headerConfig.colorStart = theme.primaryGradientStart;
-      if (theme.primaryGradientEnd !== undefined) headerConfig.colorEnd = theme.primaryGradientEnd;
+      if (theme.primaryGradientStart !== undefined) headerConfig.colorStart = normalizeHexColor(String(theme.primaryGradientStart));
+      if (theme.primaryGradientEnd !== undefined) headerConfig.colorEnd = normalizeHexColor(String(theme.primaryGradientEnd));
+      // When the voice intent is "header background to <color>" with a solid
+      // type, theme.primary IS the intended header color (mirrors
+      // migrateLegacyBranding's treatment of headerBackground).
+      if (theme.primary !== undefined && theme.backgroundType === 'solid') {
+        headerConfig.colorStart = normalizeHexColor(String(theme.primary));
+      }
       branding.headerConfig = headerConfig;
     }
 
     // Map secondary gradients -> footerConfig
     if (theme.secondaryGradientStart !== undefined || theme.secondaryGradientEnd !== undefined) {
       const footerConfig: Record<string, unknown> = {};
-      if (theme.secondaryGradientStart !== undefined) footerConfig.colorStart = theme.secondaryGradientStart;
-      if (theme.secondaryGradientEnd !== undefined) footerConfig.colorEnd = theme.secondaryGradientEnd;
+      if (theme.secondaryGradientStart !== undefined) footerConfig.colorStart = normalizeHexColor(String(theme.secondaryGradientStart));
+      if (theme.secondaryGradientEnd !== undefined) footerConfig.colorEnd = normalizeHexColor(String(theme.secondaryGradientEnd));
       branding.footerConfig = footerConfig;
     }
   }

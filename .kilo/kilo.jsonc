@@ -6,7 +6,6 @@
     "agent_manager": "allow",
     "subtask": "allow",
     "bash": {
-      "*": "ask",
       "git *": "allow",
       "npm *": "allow",
       "npx *": "allow",
@@ -20,7 +19,9 @@
       "ls *": "allow",
       "cat *": "allow",
       "echo *": "allow",
-      "tree *": "allow"
+      "tree *": "allow",
+      "*": "ask" 
     }
-  }
+  },
+  "snapshot": false
 }

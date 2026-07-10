@@ -169,11 +169,11 @@ export async function POST(
 
     // ================================================================
     // FETCH existing branding to preserve websiteUrl if not in payload
-    // Live schema stores JSON string in `branding` column.
+    // Live schema stores JSONB object in `branding_bag` column.
     // ================================================================
     const { data: existingReseller, error: fetchError } = await supabase
       .from('resellers')
-      .select('branding')
+      .select('branding_bag')
       .eq('id', reseller.id)
       .single();
 
@@ -185,10 +185,8 @@ export async function POST(
       );
     }
 
-    // Preserve existing websiteUrl from JSON string if the payload doesn't include it
-    const existingParsed = typeof existingReseller.branding === 'string'
-      ? (JSON.parse(existingReseller.branding) as Record<string, unknown>)
-      : null;
+    // Preserve existing websiteUrl from JSONB object if the payload doesn't include it
+    const existingParsed = (existingReseller.branding_bag as Record<string, unknown>) ?? null;
     const existingWebsiteUrl = existingParsed?.websiteUrl ?? null;
 
     const finalBrandingBag = {

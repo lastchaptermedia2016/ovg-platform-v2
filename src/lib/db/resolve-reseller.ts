@@ -24,7 +24,7 @@ export interface ResolvedReseller {
   slug: string;
   tenant_id: string;
   name: string;
-  branding: string | null;
+  branding_bag: Record<string, unknown> | null;
 }
 
 /**
@@ -50,7 +50,7 @@ export interface ResolveResult {
  * - branding_bag    → added by migration 010
  * - version_stamp   → added by migration 010
  */
-const RESOLVER_COLUMNS = 'id, slug, tenant_id, name, branding' as const;
+const RESOLVER_COLUMNS = 'id, slug, tenant_id, name, branding_bag' as const;
 
 // ─── Core Resolver ───────────────────────────────────────────────────────────
 

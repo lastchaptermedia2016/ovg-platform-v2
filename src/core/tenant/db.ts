@@ -16,14 +16,27 @@ export function safeParseTenant(data: unknown): Tenant | null {
 export async function getTenantBySlug(slug: string): Promise<Tenant | null> {
   try {
     const supabase = await createClient();
-    const { data, error } = await supabase
+
+    // Try slug column first for human-readable identifiers
+    let { data, error } = await supabase
       .from("tenants")
       .select("*")
-      .eq("tenant_id", slug)
-      .single();
+      .eq("slug", slug)
+      .maybeSingle();
+
+    // Fallback: the input may be a tenant_id UUID rather than a slug
+    if (error || !data) {
+      const fallback = await supabase
+        .from("tenants")
+        .select("*")
+        .eq("tenant_id", slug)
+        .maybeSingle();
+      data = fallback.data;
+      error = fallback.error;
+    }
 
     if (error) {
-      console.error(`Error fetching tenant by tenant_id "${slug}":`, error);
+      console.error(`Error fetching tenant by slug/tenant_id "${slug}":`, error);
       return null;
     }
 
@@ -35,7 +48,7 @@ export async function getTenantBySlug(slug: string): Promise<Tenant | null> {
     const validatedTenant = safeParseTenant(data);
     return validatedTenant;
   } catch (error) {
-    console.error(`Unexpected error fetching tenant by tenant_id "${slug}":`, error);
+    console.error(`Unexpected error fetching tenant by slug/tenant_id "${slug}":`, error);
     return null;
   }
 }

@@ -57,15 +57,8 @@ export function useReseller(): UseResellerReturn {
       }
 
       setReseller(resellerData as Reseller);
-      const rawBranding = (resellerData as unknown as { branding?: string | null }).branding;
-      let parsedBranding: Record<string, unknown> | null = null;
-      if (typeof rawBranding === 'string') {
-        try {
-          parsedBranding = JSON.parse(rawBranding) as Record<string, unknown>;
-        } catch {
-          parsedBranding = null;
-        }
-      }
+      const rawBranding = (resellerData as unknown as { branding_bag?: Record<string, unknown> | null }).branding_bag;
+      const parsedBranding: Record<string, unknown> | null = rawBranding ?? null;
       setBranding(
         parsedBranding
           ? {

@@ -188,7 +188,7 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
           <div className="flex gap-3 items-center">
             <input
               type="color"
-              value={draftConfig.primaryColor}
+              value={isValidHexColor(draftConfig.primaryColor) ? draftConfig.primaryColor : '#1A73E8'}
               onChange={(e) => {
                 setDraftConfig({ ...draftConfig, primaryColor: e.target.value });
                 clearFeedback();

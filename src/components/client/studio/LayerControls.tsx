@@ -6,6 +6,7 @@ import {
   type LayerDraft,
   type LayerType,
 } from '@/contexts/StudioDraftContext';
+import { isValidHexColor } from '@/lib/colors';
 import { AssetUploader } from './AssetUploader';
 import { OpacitySlider } from './OpacitySlider';
 
@@ -84,14 +85,14 @@ export function LayerControls({ title, layer, onChange, allowBlur = false }: Lay
               <div className="flex gap-3 items-center">
                 <input
                   type="color"
-                  value={gradStart}
+                  value={isValidHexColor(gradStart) ? gradStart : '#1A73E8'}
                   onChange={(e) => commitGradient(e.target.value, gradEnd)}
                   className="w-10 h-10 rounded-lg cursor-pointer border border-white/10"
                   aria-label={`${title} gradient start color`}
                 />
                 <input
                   type="color"
-                  value={gradEnd}
+                  value={isValidHexColor(gradEnd) ? gradEnd : '#0A2540'}
                   onChange={(e) => commitGradient(gradStart, e.target.value)}
                   className="w-10 h-10 rounded-lg cursor-pointer border border-white/10"
                   aria-label={`${title} gradient end color`}
@@ -102,7 +103,7 @@ export function LayerControls({ title, layer, onChange, allowBlur = false }: Lay
               <div className="flex gap-3 items-center">
                 <input
                   type="color"
-                  value={layer.value ?? '#1A73E8'}
+                  value={layer.value && isValidHexColor(layer.value) ? layer.value : '#1A73E8'}
                   onChange={(e) => update({ value: e.target.value })}
                   className="w-10 h-10 rounded-lg cursor-pointer border border-white/10"
                   aria-label={`${title} color picker`}

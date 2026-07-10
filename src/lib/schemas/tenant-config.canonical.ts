@@ -144,8 +144,8 @@ export const CanonicalBrandingSchema = z.object({
   footerConfig: CanonicalBackgroundSectionSchema.optional(),
 
   // Widget body customization
-  widgetBodyOpacity: z.number().min(0).max(1).optional(),
-  widgetBodyBackground: z.string().optional(),
+  widgetBodyOpacity: z.number().min(0).max(1).nullable().optional(),
+  widgetBodyBackground: z.string().nullable().optional(),
 
   // Custom CSS support
   customCssCode: z.string().optional(),

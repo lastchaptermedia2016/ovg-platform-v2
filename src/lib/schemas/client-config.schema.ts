@@ -120,8 +120,9 @@ export const ClientBrandingSchema = z.object({
     .number()
     .min(0)
     .max(1)
+    .nullable()
     .optional(),
-  widgetBodyBackground: z.string().optional(),
+  widgetBodyBackground: z.string().nullable().optional(),
   widgetPosition: ClientWidgetPositionSchema.optional(),
   headerConfig: ClientBackgroundSectionSchema.optional(),
   footerConfig: ClientBackgroundSectionSchema.optional(),

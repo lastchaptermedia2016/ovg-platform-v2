@@ -1,6 +1,9 @@
 import { createAuthClient } from '@/lib/auth/server';
+import { supabaseAdmin } from '@/lib/supabase/admin';
 import { ClientWidgetStudioSchema, ClientWidgetStudio } from '@/lib/schemas/client-config.schema';
 import { ZodError, ZodIssue } from 'zod';
+
+type AuthSupabaseClient = Awaited<ReturnType<typeof createAuthClient>>;
 
 // ────────────────────────────────────────────────────────────────────
 // Types
@@ -163,23 +166,85 @@ registerAction<ClientWidgetStudio, ActionResult>({
 // Route-specific helper
 // ────────────────────────────────────────────────────────────────────
 
-export async function dispatchUpdateStudioConfig(
-  params: ClientWidgetStudio,
-  ctx: ActionContext
-): Promise<ActionResult> {
-  const supabase = await createAuthClient();
+function normalizeBrandingPayload(
+  branding: Record<string, unknown>
+): Record<string, unknown> {
+  const result = { ...branding };
 
-  // Fetch current widget_config to merge partial updates
-  const { data: currentTenant, error: fetchError } = await supabase
-    .from('tenants')
-    .select('widget_config')
-    .eq('id', ctx.tenantId)
-    .single();
-
-  if (fetchError) {
-    throw new Error(fetchError.message);
+  const header = result.header as Record<string, unknown> | undefined;
+  if (header?.type === 'none') {
+    result.headerConfig = { type: 'none' };
   }
 
+  const footer = result.footer as Record<string, unknown> | undefined;
+  if (footer?.type === 'none') {
+    result.footerConfig = { type: 'none' };
+  }
+
+  const widgetBody = result.widgetBody as Record<string, unknown> | undefined;
+  if (widgetBody?.type === 'none') {
+    result.widgetBodyOpacity = null;
+    result.widgetBodyBackground = null;
+  }
+
+  return result;
+}
+
+export async function dispatchUpdateStudioConfig(
+  params: ClientWidgetStudio,
+  ctx: ActionContext,
+  supabase?: AuthSupabaseClient | Promise<AuthSupabaseClient>
+): Promise<ActionResult> {
+  const raw = supabase ?? createAuthClient();
+  const client = raw instanceof Promise ? await raw : raw;
+
+  // Dual-path resolution: accept either the PK `id` or the `tenant_id`
+  // column value. This eliminates PostgREST single-row coercion errors
+  // when callers pass a UUID that belongs to the `tenant_id` column.
+  let currentTenant: { id: string; widget_config: unknown } | null = null;
+  let resolutionError: string | null = null;
+
+  try {
+    const { data, error } = await client
+      .from('tenants')
+      .select('id, widget_config')
+      .eq('id', ctx.tenantId)
+      .maybeSingle();
+
+    if (error) {
+      resolutionError = error.message;
+    } else {
+      currentTenant = data;
+    }
+  } catch (err) {
+    resolutionError = err instanceof Error ? err.message : String(err);
+  }
+
+  if (!currentTenant) {
+    try {
+      const { data, error } = await client
+        .from('tenants')
+        .select('id, widget_config')
+        .eq('tenant_id', ctx.tenantId)
+        .maybeSingle();
+
+      if (error) {
+        resolutionError = error.message;
+      } else {
+        currentTenant = data;
+      }
+    } catch (err) {
+      resolutionError = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  if (!currentTenant) {
+    throw new Error(
+      `Tenant not found for identifier "${ctx.tenantId}"${resolutionError ? `: ${resolutionError}` : ''}`
+    );
+  }
+
+  const tenantId = currentTenant.id;
   const currentConfig = (currentTenant?.widget_config as Record<string, unknown> | null) ?? {};
 
   // widget_config.widget_studio is RETIRED as a write target. Each incoming
@@ -189,7 +254,8 @@ export async function dispatchUpdateStudioConfig(
 
   if (params.branding !== undefined) {
     const currentBranding = (currentConfig.branding as Record<string, unknown> | undefined) ?? {};
-    nextConfig.branding = deepMerge(currentBranding, params.branding as Record<string, unknown>);
+    const normalized = normalizeBrandingPayload(params.branding as Record<string, unknown>);
+    nextConfig.branding = deepMerge(currentBranding, normalized);
   }
 
   if (params.aiPersona !== undefined) {
@@ -204,17 +270,55 @@ export async function dispatchUpdateStudioConfig(
     console.warn('[dispatchUpdateStudioConfig] LEGACY widget_studio payload ignored:', legacyKeys);
   }
 
-  const { error } = await supabase
+  const { error } = await client
     .from('tenants')
     .update({
       widget_config: nextConfig,
       updated_at: new Date().toISOString(),
     })
-    .eq('id', ctx.tenantId)
+    .eq('id', tenantId)
     .single();
 
   if (error) {
     throw new Error(error.message);
+  }
+
+  // Propagate branding changes to the linked reseller so live widgets
+  // reading resellers.branding_bag stay in sync with tenant widget_config.
+  const { data: tenantRecord } = await client
+    .from('tenants')
+    .select('reseller_id')
+    .eq('id', tenantId)
+    .single();
+
+  if (tenantRecord?.reseller_id) {
+    const propagatedPayload = { ...(nextConfig.branding as Record<string, unknown>) };
+    const brandingColor = (propagatedPayload.primaryColor as string | undefined) ?? '#0097b2';
+    const accentColor = (propagatedPayload.accentColor as string | undefined) ?? '#D4AF37';
+    const logoUrl = (propagatedPayload.logoUrl as string | undefined) ?? null;
+
+    const { data: _rpcResult, error: rpcError } = await supabaseAdmin.rpc(
+      'sync_reseller_branding',
+      {
+        p_tenant_id: tenantRecord.reseller_id,
+        p_branding_bag: {
+          primaryColor: brandingColor,
+          accentColor: accentColor,
+          logoUrl: logoUrl,
+          favicon: null,
+          metaTitle: null,
+          metaDescription: null,
+          typography: { headingFont: 'Inter', bodyFont: 'Inter' },
+          borderRadius: 8,
+          mode: 'light',
+        },
+        p_expected_version: 1,
+      }
+    );
+
+    if (rpcError) {
+      console.error('[dispatchUpdateStudioConfig] Reseller propagation failed:', rpcError);
+    }
   }
 
   return { success: true };
@@ -223,6 +327,9 @@ export async function dispatchUpdateStudioConfig(
 /**
  * Deep merge two objects, preserving nested values.
  * Only overwrites leaf properties that are explicitly provided.
+ * If the source declares an explicit structural intent (presence of a 'type'
+ * key), overwrite the entire target object instead of recursively merging
+ * nested keys so stale parameters are eliminated cleanly.
  */
 function deepMerge(
   target: Record<string, unknown>,
@@ -239,7 +346,8 @@ function deepMerge(
       !Array.isArray(sourceValue) &&
       targetValue !== undefined &&
       typeof targetValue === 'object' &&
-      !Array.isArray(targetValue)
+      !Array.isArray(targetValue) &&
+      !('type' in (sourceValue as Record<string, unknown>))
     ) {
       result[key] = deepMerge(targetValue as Record<string, unknown>, sourceValue as Record<string, unknown>);
     } else if (sourceValue !== undefined) {

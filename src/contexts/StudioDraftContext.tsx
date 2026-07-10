@@ -1,7 +1,10 @@
 'use client';
 
 import { createContext, useContext, ReactNode, useState, useCallback, useEffect } from 'react';
-import type { CanonicalBranding, CanonicalAIPersona, LayerConfig, CanonicalBackgroundSection } from '@/lib/schemas/tenant-config.canonical';
+import { createClient as createSupabaseClient } from '@/lib/supabase/client';
+import { resolveTenantId } from '@/lib/resolveTenantId';
+import type { CanonicalBranding, CanonicalAIPersona, LayerConfig, CanonicalBackgroundSection, CanonicalWidgetConfig } from '@/lib/schemas/tenant-config.canonical';
+import { normalizeHexColor } from '@/lib/colors';
 
 export type LayerType = 'none' | 'solid' | 'gradient' | 'image';
 
@@ -33,6 +36,23 @@ const defaultLayer: LayerDraft = {
   backdropBlur: false,
 };
 
+/**
+ * Factory-default StudioDraft. Used as both the initial useState value and the
+ * base for canonicalConfigToDraft when a tenant has no stored widget_config.
+ */
+const defaultDraft: StudioDraft = {
+  primaryColor: '#1A73E8',
+  logoUrl: '',
+  widgetPosition: 'bottom-right',
+  header: { ...defaultLayer },
+  footer: { ...defaultLayer },
+  widgetBody: { ...defaultLayer },
+  personaMode: 'sales',
+  systemPrompt: '',
+  temperature: 0.3,
+  voiceId: '',
+};
+
 /** Build a CSS gradient string from two colors for the 'gradient' layer type. */
 export function gradientValue(start: string, end: string): string {
   return `linear-gradient(135deg, ${start}, ${end})`;
@@ -53,7 +73,7 @@ export function parseGradient(value: string | null): [string, string] {
 export function canonicalBrandingToDraftPatch(patch: Partial<CanonicalBranding>): Partial<StudioDraft> {
   const next: Partial<StudioDraft> = {};
 
-  if (patch.primaryColor) next.primaryColor = patch.primaryColor;
+  if (patch.primaryColor) next.primaryColor = normalizeHexColor(patch.primaryColor);
   if (patch.logoUrl !== undefined) next.logoUrl = patch.logoUrl ?? '';
   if (patch.widgetPosition) next.widgetPosition = patch.widgetPosition;
 
@@ -62,16 +82,19 @@ export function canonicalBrandingToDraftPatch(patch: Partial<CanonicalBranding>)
   if (header) {
     next.header = {
       type: header.type,
-      value: header.value,
+      value: header.type === 'solid' && header.value ? normalizeHexColor(header.value) : header.value,
       opacity: header.opacity ?? 1,
       backdropBlur: header.backdropBlur ?? false,
     };
   } else if (headerConfig?.type && headerConfig.type !== 'none') {
     let value: string | null = null;
     if (headerConfig.type === 'solid') {
-      value = headerConfig.colorStart ?? null;
+      value = headerConfig.colorStart ? normalizeHexColor(headerConfig.colorStart) : null;
     } else if (headerConfig.type === 'gradient') {
-      value = gradientValue(headerConfig.colorStart ?? '#1A73E8', headerConfig.colorEnd ?? '#0A2540');
+      value = gradientValue(
+        normalizeHexColor(headerConfig.colorStart ?? '#1A73E8'),
+        normalizeHexColor(headerConfig.colorEnd ?? '#0A2540')
+      );
     } else if (headerConfig.type === 'image') {
       value = headerConfig.image ?? null;
     }
@@ -88,16 +111,19 @@ export function canonicalBrandingToDraftPatch(patch: Partial<CanonicalBranding>)
   if (footer) {
     next.footer = {
       type: footer.type,
-      value: footer.value,
+      value: footer.type === 'solid' && footer.value ? normalizeHexColor(footer.value) : footer.value,
       opacity: footer.opacity ?? 1,
       backdropBlur: footer.backdropBlur ?? false,
     };
   } else if (footerConfig?.type && footerConfig.type !== 'none') {
     let value: string | null = null;
     if (footerConfig.type === 'solid') {
-      value = footerConfig.colorStart ?? null;
+      value = footerConfig.colorStart ? normalizeHexColor(footerConfig.colorStart) : null;
     } else if (footerConfig.type === 'gradient') {
-      value = gradientValue(footerConfig.colorStart ?? '#1A73E8', footerConfig.colorEnd ?? '#0A2540');
+      value = gradientValue(
+        normalizeHexColor(footerConfig.colorStart ?? '#1A73E8'),
+        normalizeHexColor(footerConfig.colorEnd ?? '#0A2540')
+      );
     } else if (footerConfig.type === 'image') {
       value = footerConfig.image ?? null;
     }
@@ -113,14 +139,14 @@ export function canonicalBrandingToDraftPatch(patch: Partial<CanonicalBranding>)
   if (widgetBody) {
     next.widgetBody = {
       type: widgetBody.type,
-      value: widgetBody.value,
+      value: widgetBody.type === 'solid' && widgetBody.value ? normalizeHexColor(widgetBody.value) : widgetBody.value,
       opacity: widgetBody.opacity ?? 1,
       backdropBlur: widgetBody.backdropBlur ?? false,
     };
   } else if (patch.widgetBodyOpacity !== undefined || patch.widgetBodyBackground) {
     next.widgetBody = {
       type: 'solid',
-      value: patch.widgetBodyBackground ?? null,
+      value: patch.widgetBodyBackground ? normalizeHexColor(patch.widgetBodyBackground) : null,
       opacity: patch.widgetBodyOpacity ?? 1,
       backdropBlur: false,
     };
@@ -148,10 +174,10 @@ function layerToCanonical(layer: LayerDraft): LayerConfig {
  * headerConfig/footerConfig consumers (voice pipeline, agentic colleague) keep
  * working alongside the new layered model.
  */
-function layerToLegacySection(layer: LayerDraft): CanonicalBackgroundSection | undefined {
+function layerToLegacySection(layer: LayerDraft): CanonicalBackgroundSection {
   switch (layer.type) {
     case 'none':
-      return undefined;
+      return { type: 'none' };
     case 'solid':
       return { type: 'solid', colorStart: layer.value ? layer.value : undefined };
     case 'gradient': {
@@ -173,8 +199,10 @@ export function toCanonicalBranding(draft: StudioDraft): Partial<CanonicalBrandi
     header: layerToCanonical(draft.header),
     footer: layerToCanonical(draft.footer),
     widgetBody: layerToCanonical(draft.widgetBody),
-    ...(header ? { headerConfig: header } : {}),
-    ...(footer ? { footerConfig: footer } : {}),
+    headerConfig: header,
+    footerConfig: footer,
+    widgetBodyOpacity: draft.widgetBody.type === 'none' ? null : draft.widgetBody.opacity,
+    widgetBodyBackground: draft.widgetBody.type === 'none' ? null : draft.widgetBody.value ?? null,
   };
 }
 
@@ -227,19 +255,32 @@ const DEFAULT_SYSTEM_PROMPTS: Record<'sales' | 'concierge', string> = {
     "You are a concierge-style AI assistant. Your primary goal is to provide exceptional hospitality and personalized service. Anticipate needs, offer thoughtful recommendations, and ensure every interaction feels premium and caring. Prioritize customer comfort and satisfaction. Be attentive to details and proactive in offering assistance.",
 };
 
+/**
+ * Build a full StudioDraft from a tenant's stored widget_config so the studio
+ * (and the live WidgetPreview) reflects persisted branding + persona on mount,
+ * instead of factory defaults. Reuses canonicalBrandingToDraftPatch for the
+ * layered branding fields.
+ */
+function canonicalConfigToDraft(
+  config: Partial<CanonicalWidgetConfig> | null | undefined
+): StudioDraft {
+  if (!config) return defaultDraft;
+  const brandingPatch = canonicalBrandingToDraftPatch(config.branding ?? {});
+  const persona = config.aiPersona ?? (config.ai_settings as unknown as CanonicalAIPersona | undefined);
+  const personaMode: 'sales' | 'concierge' =
+    persona?.personaMode === 'concierge' ? 'concierge' : 'sales';
+  return {
+    ...defaultDraft,
+    ...brandingPatch,
+    personaMode,
+    systemPrompt: persona?.systemPrompt ?? DEFAULT_SYSTEM_PROMPTS[personaMode],
+    temperature: persona?.temperature ?? 0.3,
+    voiceId: persona?.voiceId ?? '',
+  };
+}
+
 export function StudioDraftProvider({ children }: { children: ReactNode }) {
-  const [draft, setDraft] = useState<StudioDraft>({
-    primaryColor: '#1A73E8',
-    logoUrl: '',
-    widgetPosition: 'bottom-right',
-    header: { ...defaultLayer },
-    footer: { ...defaultLayer },
-    widgetBody: { ...defaultLayer },
-    personaMode: 'sales',
-    systemPrompt: '',
-    temperature: 0.3,
-    voiceId: '',
-  });
+  const [draft, setDraft] = useState<StudioDraft>(defaultDraft);
 
   const dispatchStudioAction = useCallback(
     (action: { type: 'UPDATE_PERSONA'; mode: 'sales' | 'concierge' }) => {
@@ -277,6 +318,36 @@ export function StudioDraftProvider({ children }: { children: ReactNode }) {
     window.addEventListener('branding-concierge:apply', handler);
     return () => window.removeEventListener('branding-concierge:apply', handler);
   }, [applyBrandingTheme]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const supabase = createSupabaseClient();
+    supabase
+      .auth.getSession()
+      .then(async ({ data }) => {
+        const session = data.session;
+        if (!session?.user) return;
+        const { data: tenantResult, error: tenantErr } = await resolveTenantId(session.user.id);
+        if (tenantErr || !tenantResult) {
+          console.warn('[StudioDraft] Hydration skipped — tenant unresolved:', tenantErr?.message);
+          return;
+        }
+        const { data: tenant, error: fetchErr } = await supabase
+          .from('tenants')
+          .select('widget_config')
+          .eq('id', tenantResult)
+          .maybeSingle();
+        if (fetchErr || !tenant?.widget_config) return;
+        if (cancelled) return;
+        setDraft(canonicalConfigToDraft(tenant.widget_config as Partial<CanonicalWidgetConfig>));
+      })
+      .catch((err) => {
+        console.warn('[StudioDraft] Hydration failed:', err);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
       <StudioDraftContext.Provider value={{ draft, setDraft, dispatchStudioAction, applyBrandingTheme, requestBrandingSave }}>

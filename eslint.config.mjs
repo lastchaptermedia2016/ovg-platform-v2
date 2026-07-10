@@ -6,12 +6,18 @@ const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
   {
+    files: ['**/*.cjs'],
     rules: {
-      "@typescript-eslint/no-unused-vars": [
-        "warn",
+      '@typescript-eslint/no-require-imports': 'off',
+    },
+  },
+  {
+    rules: {
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
         {
-          argsIgnorePattern: "^_",
-          varsIgnorePattern: "^_",
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
         },
       ],
     },
@@ -23,6 +29,7 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    ".kilo/**",
   ]),
 ]);
 

@@ -251,17 +251,74 @@ export async function POST(request: NextRequest) {
 
     // ðŸ”· Production Excellence: Resolve reseller_slug to UUID via shared utility
     // resolveResellerId queries slug first (text column), then falls back to tenant_id (UUID column)
-    const actualResellerId = await resolveResellerId(supabase, resellerId);
+    let actualResellerId: string | null = null;
 
-    if (!actualResellerId) {
-      console.error('%c[ProcessCommand] âŒ Failed to resolve reseller slug:', 'color: #dc2626; font-weight: bold;', {
-        slug: resellerId,
-      });
-      return NextResponse.json(
-        { error: 'Reseller not found', details: `No reseller with slug: ${resellerId}` },
-        { status: 404 }
-      );
+    try {
+      console.log('%c[ProcessCommand] 🔷 Fetching tenants for reseller:', 'color: #0097b2; font-weight: bold;', resellerId);
+      actualResellerId = await resolveResellerId(supabase, resellerId);
+    } catch {
+      console.warn('%c[ProcessCommand] ⚠️ Primary resolution threw an exception for "%s". Moving to fallback.', 'color: #f59e0b; font-weight: bold;', resellerId);
     }
+
+
+      if (!actualResellerId && tenantContext?.tenantId) {
+        console.warn('%c[ProcessCommand] âš ï¸ Slug resolution failed — attempting tenant fallback:', 'color: #f59e0b; font-weight: bold;', {
+          tenantId: tenantContext.tenantId,
+          staleSlug: resellerId,
+        });
+
+        const { data: tenantRow, error: tenantError } = await supabase
+          .from('tenants')
+          .select('reseller_id')
+          .eq('tenant_id', tenantContext.tenantId)
+          .maybeSingle();
+
+        if (tenantRow?.reseller_id) {
+          actualResellerId = tenantRow.reseller_id;
+          console.log('%c[ProcessCommand] âœ… Tenant fallback resolved reseller:', 'color: #0097b2; font-weight: bold;', {
+            tenantId: tenantContext.tenantId,
+            resellerId: actualResellerId,
+          });
+        } else if (tenantError) {
+          console.error('%c[ProcessCommand] âŒ Tenant fallback query failed:', 'color: #dc2626; font-weight: bold;', tenantError);
+        }
+      }
+
+      if (!actualResellerId) {
+        // Auth fallback: resolve reseller from the authenticated user's
+        // user_resellers relationship when both slug and tenantContext fail.
+        // This handles stale slugs without requiring client-side changes.
+        const { userId } = await getAuthenticatedUser();
+        if (userId) {
+          console.warn('%c[ProcessCommand] âš ï¸ Slug + tenant fallback failed — attempting auth fallback:', 'color: #f59e0b; font-weight: bold;', {
+            userId,
+            staleSlug: resellerId,
+          });
+
+          const { data: userReseller, error: userResellerError } = await supabase
+            .from('user_resellers')
+            .select('reseller_id')
+            .eq('user_id', userId)
+            .maybeSingle();
+
+          if (userReseller?.reseller_id) {
+            actualResellerId = userReseller.reseller_id;
+            console.log('%c[ProcessCommand] âœ… Auth fallback resolved reseller:', 'color: #0097b2; font-weight: bold;', {
+              userId,
+              resellerId: actualResellerId,
+            });
+          } else if (userResellerError) {
+            console.error('%c[ProcessCommand] âŒ Auth fallback query failed:', 'color: #dc2626; font-weight: bold;', userResellerError);
+          }
+        }
+      }
+
+      if (!actualResellerId) {
+        return NextResponse.json(
+          { error: 'Reseller not found', details: `No reseller with slug: ${resellerId}` },
+          { status: 404 }
+        );
+      }
 
     console.log('%c[ProcessCommand] âœ… Resolved slug to UUID:', 'color: #0097b2; font-weight: bold;', {
       slug: resellerId,
