@@ -3,6 +3,7 @@ import {
   safeParseClientWidgetStudio,
   ClientAIPersonaSchema,
   ClientWidgetStudioSchema,
+  ClientLayerConfigSchema,
 } from './client-config.schema';
 
 describe('ClientAIPersonaSchema — personaMode support', () => {
@@ -103,5 +104,17 @@ describe('ClientWidgetStudioSchema — features block (AI add-ons)', () => {
       expect(result.data.features?.aiInsightBadge).toBeUndefined();
       expect(result.data.features?.customCss).toBeUndefined();
     }
+  });
+});
+
+describe('ClientLayerConfigSchema — opacity regression', () => {
+  it('accepts opacity of 0 for voice/theme pipeline compatibility', () => {
+    const result = ClientLayerConfigSchema.safeParse({
+      type: 'solid',
+      value: '#FF0000',
+      opacity: 0,
+      backdropBlur: false,
+    });
+    expect(result.success).toBe(true);
   });
 });

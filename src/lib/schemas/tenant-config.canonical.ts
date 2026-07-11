@@ -65,13 +65,13 @@ export type CanonicalBackgroundSection = z.infer<typeof CanonicalBackgroundSecti
  *
  * @property type - Background kind: none | solid | gradient | image
  * @property value - Hex color (solid), CSS gradient string (gradient), or URL (image). null when type is none.
- * @property opacity - Layer opacity clamped to 0.1–1.0 (default 1.0).
+ * @property opacity - Layer opacity clamped to 0–1.0 (default 1.0).
  * @property backdropBlur - Apply a frosted-glass backdrop blur (primarily the widget body).
  */
 export const LayerConfigSchema = z.object({
   type: z.enum(['none', 'solid', 'gradient', 'image']),
   value: z.string().nullable(),
-  opacity: z.number().min(0.1).max(1.0).default(1.0),
+  opacity: z.number().min(0).max(1.0).default(1.0),
   backdropBlur: z.boolean().default(false),
 });
 

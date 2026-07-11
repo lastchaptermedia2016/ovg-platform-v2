@@ -9,8 +9,10 @@ interface OpacitySliderProps {
 }
 
 /**
- * Clamped opacity control for a branding layer. Range is 0.1–1.0 by default to
- * match the canonical LayerConfig schema constraints.
+ * Clamped opacity control for a branding layer. Range is 0–1.0 to align with
+ * the canonical LayerConfig schema and allow zero-opacity states from the
+ * voice/theme pipeline. The UI slider itself still defaults to a 0.1 floor so
+ * manual drag interactions remain usable.
  */
 export function OpacitySlider({
   value,

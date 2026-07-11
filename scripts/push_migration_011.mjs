@@ -5,7 +5,7 @@ const { Client } = pg;
 const sql = fs.readFileSync('supabase/migrations/011_sync_reseller_branding_rpc.sql', 'utf8');
 
 const client = new Client({
-  connectionString: 'postgresql://postgres:Ilove$dona68@db.lfmrdaeuwfhguqghqrto.supabase.co:5432/postgres',
+  connectionString: 'postgresql://postgres.lfmrdaeuwfhguqghqrto:Ilove$dona68@aws-0-eu-west-1.pooler.supabase.com:5432/postgres',
 });
 
 await client.connect();

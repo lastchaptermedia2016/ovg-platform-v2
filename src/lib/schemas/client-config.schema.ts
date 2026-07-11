@@ -105,7 +105,7 @@ export type ClientBackgroundSection = z.infer<typeof ClientBackgroundSectionSche
 export const ClientLayerConfigSchema = z.object({
   type: z.enum(['none', 'solid', 'gradient', 'image']),
   value: z.string().nullable(),
-  opacity: z.number().min(0.1).max(1.0),
+  opacity: z.number().min(0).max(1.0),
   backdropBlur: z.boolean(),
 });
 

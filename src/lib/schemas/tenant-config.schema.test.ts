@@ -18,6 +18,7 @@ import {
   type WidgetConfig,
   type CustomAssets,
 } from './tenant-config.schema';
+import { LayerConfigSchema } from './tenant-config.canonical';
 
 // ============================================================================
 // HexColorSchema Tests
@@ -636,5 +637,17 @@ describe('Type inference', () => {
 
     expect(assets.header_url).toBe('https://example.com/header.jpg');
     expect(assets.favicon_url).toBeNull();
+  });
+});
+
+describe('LayerConfigSchema — opacity regression', () => {
+  it('allows zero opacity values without throwing validation errors', () => {
+    const result = LayerConfigSchema.safeParse({
+      type: 'solid',
+      value: '#FF0000',
+      opacity: 0,
+      backdropBlur: false,
+    });
+    expect(result.success).toBe(true);
   });
 });
