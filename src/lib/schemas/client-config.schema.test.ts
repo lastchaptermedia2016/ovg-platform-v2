@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { safeParseClientWidgetStudio, ClientAIPersonaSchema } from './client-config.schema';
+import {
+  safeParseClientWidgetStudio,
+  ClientAIPersonaSchema,
+  ClientWidgetStudioSchema,
+} from './client-config.schema';
 
 describe('ClientAIPersonaSchema — personaMode support', () => {
   it('accepts a persona-only payload (voice path)', () => {
@@ -45,5 +49,59 @@ describe('ClientAIPersonaSchema — personaMode support', () => {
       },
     });
     expect(result.success).toBe(true);
+  });
+});
+
+describe('ClientWidgetStudioSchema — features block (AI add-ons)', () => {
+  // Regression lock for the silent-drop bug fixed in dispatchUpdateStudioConfig.
+  // The Zeeder reseller studio (ClientBrandingStudio.tsx:928-948) reads
+  // widget_config.features by key, so the schema that governs the persisted
+  // shape MUST preserve every features flag rather than dropping it on parse.
+  const featuresFixture = {
+    aiInsightBadge: true,
+    aiDesignMirror: true,
+    customCss: true,
+    customCssCode: '.widget-container { backdrop-filter: blur(12px); }',
+  };
+
+  it('parses and preserves the full features block', () => {
+    const result = ClientWidgetStudioSchema.safeParse({ features: featuresFixture });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.features).toEqual(featuresFixture);
+    }
+  });
+
+  it('round-trips features alongside branding + aiPersona (multi-block payload)', () => {
+    const config = {
+      branding: { primaryColor: '#008080', headerConfig: { type: 'solid', colorStart: '#008080' } },
+      aiPersona: { personaMode: 'concierge' },
+      features: featuresFixture,
+    };
+    const result = safeParseClientWidgetStudio(config);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.features).toEqual(featuresFixture);
+      expect(result.data.branding?.primaryColor).toBe('#008080');
+      expect(result.data.aiPersona?.personaMode).toBe('concierge');
+    }
+  });
+
+  it('keeps customCssCode so custom CSS injection survives end-to-end', () => {
+    const result = safeParseClientWidgetStudio({ features: { customCss: true, customCssCode: '.x{}' } });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.features?.customCss).toBe(true);
+      expect(result.data.features?.customCssCode).toBe('.x{}');
+    }
+  });
+
+  it('defaults each flag to undefined (not false) when omitted', () => {
+    const result = ClientWidgetStudioSchema.safeParse({ features: {} });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.features?.aiInsightBadge).toBeUndefined();
+      expect(result.data.features?.customCss).toBeUndefined();
+    }
   });
 });

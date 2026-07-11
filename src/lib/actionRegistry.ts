@@ -263,6 +263,14 @@ export async function dispatchUpdateStudioConfig(
     nextConfig.aiPersona = deepMerge(currentPersona, params.aiPersona as Record<string, unknown>);
   }
 
+  // Project the `features` block (AI add-ons, Design Mirror, Custom CSS) so the
+  // client loop persists them instead of silently dropping them on the
+  // passthrough. Mirrors the canonical pipeline's handling of widget_config.features.
+  if (params.features !== undefined) {
+    const currentFeatures = (currentConfig.features as Record<string, unknown> | undefined) ?? {};
+    nextConfig.features = deepMerge(currentFeatures, params.features as Record<string, unknown>);
+  }
+
   // Deprecation monitoring: warn if any legacy widget_studio-specific keys
   // are still being submitted so the cleanup can be tracked.
   const legacyKeys = Object.keys(params).filter((key) => key === 'widget_studio');

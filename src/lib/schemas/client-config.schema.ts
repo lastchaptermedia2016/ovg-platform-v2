@@ -163,6 +163,15 @@ export type ClientBranding = z.infer<typeof ClientBrandingSchema>;
 export const ClientWidgetStudioSchema = z.object({
   aiPersona: ClientAIPersonaSchema.optional(),
   branding: ClientBrandingSchema.optional(),
+  features: z
+    .object({
+      aiInsightBadge: z.boolean().optional(),
+      aiDesignMirror: z.boolean().optional(),
+      customCss: z.boolean().optional(),
+      customCssCode: z.string().optional(),
+    })
+    .passthrough()
+    .optional(),
 }).passthrough();
 
 export type ClientWidgetStudio = z.infer<typeof ClientWidgetStudioSchema>;
