@@ -1,5 +1,5 @@
 .widget-body {
-  background: rgba(var(--w-body-bg-rgb, 255, 255, 255), var(--w-body-bg-opacity, 0));
+  background: var(--w-body-bg, rgba(var(--w-body-bg-rgb, 255, 255, 255), var(--w-body-bg-opacity, 0)));
   backdrop-filter: blur(var(--w-body-backdrop-blur, 0px));
 }
 

@@ -1,4 +1,4 @@
-import type { PostgrestError } from '@supabase/supabase-js';
+import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/client';
 
 export interface ResolveTenantIdResult {
@@ -14,10 +14,15 @@ export interface ResolveTenantIdResult {
  * 2. tenants table: reseller_id → tenant.id (UUID primary key)
  * 
  * @param userId - The authenticated user's UUID
+ * @param supabase - Optional Supabase client. When omitted, the browser client is
+ *   used (correct for client components that already carry the user's session).
+ *   Server route handlers must pass an authenticated server client (e.g.
+ *   `createAuthClient()`) so that RLS policies keyed on `auth.uid()` resolve.
  * @returns The tenant UUID (tenants.id), or null if not found
  */
 export async function resolveTenantId(
   userId: string,
+  supabase?: SupabaseClient,
 ): Promise<ResolveTenantIdResult> {
   const trimmed = userId.trim();
 
@@ -25,10 +30,10 @@ export async function resolveTenantId(
     return { data: null, error: new Error('Empty userId passed to resolveTenantId') };
   }
 
-  const supabase = createClient();
+  const client = supabase ?? createClient();
 
   // Step 1: Get the reseller_id from user_resellers table
-  const { data: userResellerData, error: userResellerError } = await supabase
+  const { data: userResellerData, error: userResellerError } = await client
     .from('user_resellers')
     .select('reseller_id')
     .eq('user_id', trimmed)
@@ -45,7 +50,7 @@ export async function resolveTenantId(
   const resellerId = userResellerData.reseller_id as string;
 
   // Step 2: Get tenants belonging to this reseller
-  const { data: tenantsData, error: tenantsError } = await supabase
+  const { data: tenantsData, error: tenantsError } = await client
     .from('tenants')
     .select('id')
     .eq('reseller_id', resellerId);

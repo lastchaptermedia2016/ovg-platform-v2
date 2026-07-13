@@ -70,6 +70,17 @@ export function ClientSystemModal({
 
   const items = CLIENT_SYSTEM_REGISTRY[active];
 
+  // Context wall: on the public client-auth (login) view, only surface baseline
+  // educational headers. Administrative / authenticated capability options must
+  // not leak onto the unauthenticated login interface.
+  const isClientAuth = typeof window !== 'undefined' && window.location.pathname.includes('client-auth');
+  const visibleItems = items.filter((item) => {
+    if (isClientAuth) {
+      return ['List capabilities', 'Explain behavior', 'System health'].includes(item.label);
+    }
+    return true;
+  });
+
   const navigate = (href: string) => {
     onClose();
     router.push(href);
@@ -117,7 +128,7 @@ export function ClientSystemModal({
         </div>
 
         <ul className="mt-4 max-h-[60vh] space-y-2 overflow-y-auto pr-1">
-          {items.map((item) => (
+           {visibleItems.map((item) => (
             <li key={item.id} className="rounded-xl border border-white/5 bg-white/5 p-3">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-xs font-semibold text-cyan-300 font-agrandir">{item.label}</p>

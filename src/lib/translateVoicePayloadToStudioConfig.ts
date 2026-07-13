@@ -2,6 +2,33 @@ import type { CanonicalWidgetConfig } from '@/lib/schemas/tenant-config.canonica
 import { normalizeHexColor } from '@/lib/colors';
 
 /**
+ * Fast-path validation: a strict 6-character hex string starting with `#`.
+ *
+ * The widget styling controls only accept solid `#rrggbb` tokens for color
+ * inputs — CSS gradients, rgb()/rgba(), named colors ("red"), and free text
+ * ("gradient yellow and blue") are invalid CSS for a solid color field and
+ * cause spurious component re-renders without a visual update. This guard lets
+ * the translator drop such values so the existing valid color is preserved
+ * (the downstream merge is partial — omitted keys are left untouched).
+ */
+const STRICT_HEX6_RE = /^#[0-9A-F]{6}$/i;
+const isValidHex = (color: unknown): color is string =>
+  typeof color === 'string' && STRICT_HEX6_RE.test(color);
+
+/**
+ * Normalize a raw color value and assign it to `target[key]` only when the
+ * result is a clean strict-hex token. Raw phrases / gradients are skipped so
+ * the current value is preserved by the partial merge downstream.
+ */
+function assignSolidHex(target: Record<string, unknown>, key: string, raw: unknown): void {
+  if (raw === undefined) return;
+  const normalized = normalizeHexColor(String(raw));
+  if (isValidHex(normalized)) {
+    target[key] = normalized;
+  }
+}
+
+/**
  * Translate a SYSTEM_UPDATE_BRANDING voice payload (theme/ui/behavior shape)
  * into a partial CanonicalWidgetConfig-shaped object.
  *
@@ -27,14 +54,33 @@ export function translateVoicePayloadToStudioConfig(
   if (widget) {
     if (widget.bodyOpacity !== undefined) branding.widgetBodyOpacity = widget.bodyOpacity;
     if (widget.opacity !== undefined) branding.widgetBodyOpacity = widget.opacity; // legacy alias
+    // widgetBodyBackground is a CSS background field (gradients allowed by the
+    // schema), so it is normalized but not held to strict hex.
     if (widget.bodyBackground !== undefined) branding.widgetBodyBackground = normalizeHexColor(String(widget.bodyBackground));
     if (widget.background !== undefined) branding.widgetBodyBackground = normalizeHexColor(String(widget.background)); // legacy alias
+
+    // Widget body gradient: two strict-hex endpoints composed into a CSS
+    // gradient string for widgetBodyBackground. Each endpoint is normalized
+    // (named colors / 3-digit hex) then gated to strict hex; if either endpoint
+    // fails the check the pair is dropped so the current background is preserved
+    // by the partial downstream merge.
+    if (widget.bodyGradientStart !== undefined || widget.bodyGradientEnd !== undefined) {
+      const bodyStart = isValidHex(normalizeHexColor(String(widget.bodyGradientStart)))
+        ? normalizeHexColor(String(widget.bodyGradientStart))
+        : null;
+      const bodyEnd = isValidHex(normalizeHexColor(String(widget.bodyGradientEnd)))
+        ? normalizeHexColor(String(widget.bodyGradientEnd))
+        : null;
+      if (bodyStart && bodyEnd) {
+        branding.widgetBodyBackground = `linear-gradient(135deg, ${bodyStart}, ${bodyEnd})`;
+      }
+    }
   }
 
   // Map theme.* -> branding.*
   if (theme) {
-    if (theme.primary !== undefined) branding.primaryColor = normalizeHexColor(String(theme.primary));
-    if (theme.secondary !== undefined) branding.accentColor = normalizeHexColor(String(theme.secondary));
+    assignSolidHex(branding, 'primaryColor', theme.primary);
+    assignSolidHex(branding, 'accentColor', theme.secondary);
     if (theme.logoUrl !== undefined) branding.logoUrl = theme.logoUrl;
     if (theme.opacity !== undefined) branding.widgetBodyOpacity = theme.opacity;
 
@@ -42,13 +88,18 @@ export function translateVoicePayloadToStudioConfig(
     if (theme.backgroundType !== undefined || theme.primaryGradientStart !== undefined || theme.primaryGradientEnd !== undefined) {
       const headerConfig: Record<string, unknown> = {};
       if (theme.backgroundType !== undefined) headerConfig.type = theme.backgroundType;
-      if (theme.primaryGradientStart !== undefined) headerConfig.colorStart = normalizeHexColor(String(theme.primaryGradientStart));
-      if (theme.primaryGradientEnd !== undefined) headerConfig.colorEnd = normalizeHexColor(String(theme.primaryGradientEnd));
+      assignSolidHex(headerConfig, 'colorStart', theme.primaryGradientStart);
+      assignSolidHex(headerConfig, 'colorEnd', theme.primaryGradientEnd);
       // When the voice intent is "header background to <color>" with a solid
       // type, theme.primary IS the intended header color (mirrors
       // migrateLegacyBranding's treatment of headerBackground).
       if (theme.primary !== undefined && theme.backgroundType === 'solid') {
-        headerConfig.colorStart = normalizeHexColor(String(theme.primary));
+        assignSolidHex(headerConfig, 'colorStart', theme.primary);
+      }
+      // A resolved two-stop pair without an explicit backgroundType renders as
+      // a gradient — default the type so the Studio paints it correctly.
+      if (headerConfig.colorStart && headerConfig.colorEnd && headerConfig.type !== 'solid' && headerConfig.type !== 'image') {
+        headerConfig.type = 'gradient';
       }
       branding.headerConfig = headerConfig;
     }
@@ -56,8 +107,11 @@ export function translateVoicePayloadToStudioConfig(
     // Map secondary gradients -> footerConfig
     if (theme.secondaryGradientStart !== undefined || theme.secondaryGradientEnd !== undefined) {
       const footerConfig: Record<string, unknown> = {};
-      if (theme.secondaryGradientStart !== undefined) footerConfig.colorStart = normalizeHexColor(String(theme.secondaryGradientStart));
-      if (theme.secondaryGradientEnd !== undefined) footerConfig.colorEnd = normalizeHexColor(String(theme.secondaryGradientEnd));
+      assignSolidHex(footerConfig, 'colorStart', theme.secondaryGradientStart);
+      assignSolidHex(footerConfig, 'colorEnd', theme.secondaryGradientEnd);
+      if (footerConfig.colorStart && footerConfig.colorEnd) {
+        footerConfig.type = 'gradient';
+      }
       branding.footerConfig = footerConfig;
     }
   }

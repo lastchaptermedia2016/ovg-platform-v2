@@ -43,6 +43,7 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
         }
 
         const profile = {
+          id: session.user.id,
           name: session.user.user_metadata?.name ?? session.user.email?.split('@')[0] ?? 'Client',
           email: session.user.email ?? '',
           resellerSlug: slugResult,

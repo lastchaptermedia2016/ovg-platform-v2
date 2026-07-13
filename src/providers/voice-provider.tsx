@@ -22,6 +22,7 @@ import {
   type UiTrigger,
 } from '@/lib/ai/cognitive-orchestrator';
 import type { AuthContext } from '@/lib/actions/auth-middleware';
+import { consumeVoiceNavigation } from '@/lib/voice/voiceNavSignal';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Voice status state machine
@@ -149,6 +150,13 @@ export function VoiceProvider({
   useEffect(() => {
     if (greetedRef.current || !enableAudio) return;
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    // Arrived via a voice command (e.g. "update my branding"): suppress the
+    // generic welcome so the originating command's own confirmation is the only
+    // voice heard. Mark as greeted so we don't welcome later this mount.
+    if (consumeVoiceNavigation()) {
+      greetedRef.current = true;
+      return;
+    }
     greetedRef.current = true;
     const utter = new SpeechSynthesisUtterance(
       "Hi, I'm Zeeder, your Lead Architect. I'm ready to help you design your widget."

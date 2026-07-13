@@ -252,9 +252,14 @@ BRANDING SCHEMA — Map voice commands to these structured fields inside payload
    - Generate a SYSTEM_UPDATE_BRANDING action with payload.theme.logoUrl pointing to the new image URL
    - Explain that the logo is stored in the tenant's widget_config.branding JSONB field via the atomic sync_tenant_config RPC
    - Confirm that logo changes persist across browser page refreshes and are sandboxed per-tenant
-   If the user asks "how do I upload a logo", instruct them to use the Logo URL input field in the Studio Controls panel or paste a public CDN link.
+    If the user asks "how do I upload a logo", instruct them to use the Logo URL input field in the Studio Controls panel or paste a public CDN link.
 
-   6. PERSONA MODE (payload.aiPersona.personaMode):
+    5. WIDGET BODY BACKGROUND (payload.widget):
+       - "bodyBackground": "hex-color" | "css-gradient" => solid color or full CSS gradient for the main conversation canvas
+       - "bodyGradientStart", "bodyGradientEnd": "hex-color" => two-stop gradient endpoints for the widget body; the engine composes them into a CSS gradient (linear-gradient(135deg, start, end))
+       - A single voice command can style the header, footer, and widget body gradient simultaneously by pairing sections 1 and 5.
+
+    6. PERSONA MODE (payload.aiPersona.personaMode):
     - "persona": "sales" | "concierge" => set the assistant's operational mode
     - "sales" => goal-oriented, lead qualification and conversion focus
     - "concierge" => premium hospitality and personalized service focus

@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import Image from "next/image";
 import {
   MessageCircle, X, Send, Mic, MicOff, RefreshCw, Volume2, VolumeX, ShieldCheck,
 } from "lucide-react";
@@ -56,25 +55,41 @@ interface WidgetMessage {
 interface ChatWidgetProps {
   tenantId: string;
   branding?: CanonicalBranding | null;
+  /**
+   * Studio preview mode. Renders the chat window as a contained, always-open
+   * surface (no consent gate, no floating bubble), suppresses realtime
+   * presence/voice channels, and seeds a static sample conversation so the
+   * canvas reflects branding without any network or WebSocket traffic.
+   */
+  preview?: boolean;
 }
 
-const ChatWidget = ({ tenantId, branding }: ChatWidgetProps) => {
-  const presenceStatus = useWidgetPresence(tenantId);
+const ChatWidget = ({ tenantId, branding, preview = false }: ChatWidgetProps) => {
+  const presenceStatus = useWidgetPresence(preview ? null : tenantId);
 
   const [config] = useState<WidgetConfig>(defaultConfig);
   const [isOpen, setIsOpen] = useState(false);
   const [showConsent, setShowConsent] = useState(false);
-  const [hasConsent, setHasConsent] = useState(() => localStorage.getItem("ovgweb_ai_consent") === "true");
+  const [hasConsent, setHasConsent] = useState(() => preview ? true : localStorage.getItem("ovgweb_ai_consent") === "true");
   const [showPeek, setShowPeek] = useState(false);
   const [showSyncBadge, setShowSyncBadge] = useState(false);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
-  const [voiceEnabled, setVoiceEnabled] = useState(() => localStorage.getItem("ovgweb_voice_mute") !== "true");
+  const [voiceEnabled, setVoiceEnabled] = useState(() => preview ? true : localStorage.getItem("ovgweb_voice_mute") !== "true");
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   const greetedRef = useRef(false);
 
   const [messages, setMessages] = useState<WidgetMessage[]>(() => {
+    if (preview) {
+      const now = Date.now();
+      return [
+        { id: "preview-1", role: "assistant", text: "Hi! I'm your AI concierge. How can I help you today?", timestamp: now },
+        { id: "preview-2", role: "user", text: "Can you tell me about your services?", timestamp: now + 1 },
+        { id: "preview-3", role: "assistant", text: "Absolutely — we tailor AI-powered solutions to help your business grow smarter. What are you working on?", timestamp: now + 2 },
+      ];
+    }
     try {
       const saved = JSON.parse(localStorage.getItem("ovgweb_chat_messages") || "[]");
       if (saved.length === 0) {
@@ -143,7 +158,7 @@ const ChatWidget = ({ tenantId, branding }: ChatWidgetProps) => {
     interimTranscript,
     transcript,
   } = useVoiceCommand({
-    tenantContext: { tenantId },
+    tenantContext: { tenantId: preview ? "" : tenantId },
     onTranscript: handleVoiceTranscript,
     onAIResponse: handleVoiceAIResponse,
     onError: handleVoiceError,
@@ -193,6 +208,7 @@ const ChatWidget = ({ tenantId, branding }: ChatWidgetProps) => {
   }, [hasConsent]);
 
   const refreshConfiguration = useCallback(async () => {
+    if (preview) return;
     try {
       const response = await fetch(`/api/tenants/${tenantId}`);
       if (!response.ok) return;
@@ -201,9 +217,10 @@ const ChatWidget = ({ tenantId, branding }: ChatWidgetProps) => {
     } catch (e) {
       console.error('[ChatWidget] Refresh failed:', e);
     }
-  }, [tenantId]);
+  }, [tenantId, preview]);
 
-  const sendMessageDirect = useCallback(async (userInputText: string, source: 'text' | 'voice-ptt' = 'text') => {
+  const sendMessageDirect = useCallback(async (userInputText: string) => {
+    if (preview) return;
     if (!userInputText.trim()) return;
 
     const userMsg: WidgetMessage = {
@@ -220,27 +237,15 @@ const ChatWidget = ({ tenantId, branding }: ChatWidgetProps) => {
     setIsTyping(true);
 
     try {
-      const currentConfig = branding
-        ? {
-            branding,
-            primaryColor: branding.primaryColor,
-            accentColor: branding.accentColor,
-            logoUrl: branding.logoUrl,
-            header: branding.header,
-            footer: branding.footer,
-            widgetBody: branding.widgetBody,
-          }
-        : {};
-
-      const response = await fetch("/api/ai/process-command", {
+      console.log("💬 [ChatWidget] Routing client chat payload to client-isolated orchestration endpoint");
+      const response = await fetch("/api/client/process-command", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          resellerId: tenantId,
-          userCommand: userInputText,
-          currentConfig,
-          tenantContext: { tenantId },
-          source,
+          text: userInputText,
+          context: {
+            surface: "chat-widget-embed",
+          },
         }),
       });
 
@@ -287,15 +292,25 @@ const ChatWidget = ({ tenantId, branding }: ChatWidgetProps) => {
     } finally {
       setIsTyping(false);
     }
-  }, [messages, tenantId, branding, refreshConfiguration]);
+  }, [messages, refreshConfiguration, preview]);
 
   const handleMicClick = useCallback(() => {
+    if (preview) return;
     if (isRecording) {
       stopListeningAndProcess();
     } else {
       startListening();
     }
-  }, [isRecording, startListening, stopListeningAndProcess]);
+  }, [isRecording, startListening, stopListeningAndProcess, preview]);
+
+  // Gate timestamp rendering until after client mount to avoid hydration
+  // mismatch from locale/timezone-dependent toLocaleTimeString output.
+  // Deferred via a macrotask so setState is not called synchronously within
+  // the effect body (avoids the react-hooks/set-state-in-effect lint error).
+  useEffect(() => {
+    const id = setTimeout(() => setMounted(true), 0);
+    return () => clearTimeout(id);
+  }, []);
 
   // Auto-greet once when opened with consent and no messages
   useEffect(() => {
@@ -349,7 +364,7 @@ const ChatWidget = ({ tenantId, branding }: ChatWidgetProps) => {
     <>
       {/* ===== PEEK TEASER ===== */}
       <AnimatePresence>
-        {!isOpen && !showConsent && showPeek && (
+        {!preview && !isOpen && !showConsent && showPeek && (
           <motion.div
             initial={{ opacity: 0, y: 20, scale: 0.9 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -471,21 +486,21 @@ const ChatWidget = ({ tenantId, branding }: ChatWidgetProps) => {
       </AnimatePresence>
 
       {/* ===== MAIN CHAT WINDOW ===== */}
-      {isOpen && (
+      {(preview || isOpen) && (
         <div
-          className="fixed z-[9999] widget-body
-                     bottom-[max(1.5rem,env(safe-area-inset-bottom))]
-                     right-[max(1rem,env(safe-area-inset-right))]
-                     w-[94vw] max-w-[380px] sm:max-w-[420px]
-                     rounded-3xl border-2 overflow-hidden shadow-2xl bg-transparent"
+          className={
+            preview
+              ? "relative z-0 widget-body flex flex-col w-full h-full rounded-3xl border-2 overflow-hidden shadow-2xl bg-transparent"
+              : "fixed z-[9999] widget-body bottom-[max(1.5rem,env(safe-area-inset-bottom))] right-[max(1rem,env(safe-area-inset-right))] w-[94vw] max-w-[380px] sm:max-w-[420px] rounded-3xl border-2 overflow-hidden shadow-2xl bg-transparent"
+          }
           style={{ borderColor: "var(--w-primary, #0097b2)" }}
         >
           {/* Header */}
           <div className="relative widget-header p-5 flex justify-between items-center overflow-hidden">
             <div className="absolute inset-0 bg-black/40" />
             <div className="relative flex items-center gap-3">
-              <Image
-                src={config.logo || config.logoUrl || "/images/omnivergeglobal.svg"}
+              <img
+                src={branding?.logoUrl || config.logo || config.logoUrl || "/images/omnivergeglobal.svg"}
                 alt={config.brandName ?? "Brand"}
                 width={40}
                 height={40}
@@ -517,9 +532,11 @@ const ChatWidget = ({ tenantId, branding }: ChatWidgetProps) => {
               >
                 {voiceEnabled ? <Volume2 className="h-4 w-4 text-white" /> : <VolumeX className="h-4 w-4 text-white" />}
               </Button>
-              <Button className="h-8 w-8 rounded-full text-white shrink-0" style={{ backgroundColor: "var(--w-primary, #0097b2)" }} onClick={() => setShowResetConfirm(true)}>
-                <RefreshCw className="h-4 w-4 text-white" />
-              </Button>
+              {!preview && (
+                <Button className="h-8 w-8 rounded-full text-white shrink-0" style={{ backgroundColor: "var(--w-primary, #0097b2)" }} onClick={() => setShowResetConfirm(true)}>
+                  <RefreshCw className="h-4 w-4 text-white" />
+                </Button>
+              )}
               <Button className="h-8 w-8 rounded-full text-white shrink-0" style={{ backgroundColor: "var(--w-primary, #0097b2)" }} onClick={() => setIsOpen(false)}>
                 <X className="h-4 w-4 text-white" />
               </Button>
@@ -527,7 +544,7 @@ const ChatWidget = ({ tenantId, branding }: ChatWidgetProps) => {
           </div>
 
           {/* Messages */}
-          <div className="relative overflow-y-auto p-4 space-y-2 bg-transparent h-[40vh] sm:h-[320px] max-h-[450px]">
+          <div className={preview ? "relative overflow-y-auto p-4 space-y-2 bg-transparent flex-1 min-h-0" : "relative overflow-y-auto p-4 space-y-2 bg-transparent h-[40vh] sm:h-[320px] max-h-[450px]"}>
             <AnimatePresence>
               {showSyncBadge && (
                 <motion.div
@@ -577,7 +594,7 @@ const ChatWidget = ({ tenantId, branding }: ChatWidgetProps) => {
                       </div>
                     )}
                     <span className="ml-2 inline-flex items-end float-right text-[9px] text-amber-600/70 mt-1.5 pl-2 leading-none whitespace-nowrap font-mono">
-                      {time}
+                      {mounted ? time : ""}
                     </span>
                   </div>
                 </div>
@@ -671,7 +688,7 @@ const ChatWidget = ({ tenantId, branding }: ChatWidgetProps) => {
       )}
 
       {/* ===== FLOATING BUBBLE ===== */}
-      {!isOpen && !showConsent && (
+      {!preview && !isOpen && !showConsent && (
         <button
           onClick={handleOpenChat}
           className="fixed bottom-6 right-6 z-[10000] h-14 w-14 rounded-full shadow-2xl hover:scale-110 transition-all flex items-center justify-center widget-bubble"

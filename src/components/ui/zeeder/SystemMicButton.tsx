@@ -6,7 +6,7 @@
  * A production-grade Push-to-Talk (PTT) UI component that integrates with
  * the ZEEDER voice-action pipeline. It uses the Web Speech API for
  * client-side speech recognition and dispatches the resulting transcript
- * through `useZeederVoice()` → `/api/ai/process-command` → `ZeederContext.dispatch()`.
+ * through `useZeederVoice()` → `/api/client/process-command` → `ZeederContext.dispatch()`.
  *
  * Visual States:
  * - `idle`       : Circular gold-border button with a subtle glow.

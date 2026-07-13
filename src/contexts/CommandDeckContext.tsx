@@ -34,8 +34,12 @@ export function CommandDeckProvider({ children }: { children: ReactNode }) {
 // ── Consumer Hook ──────────────────────────────────────────────────────
 export function useCommandDeck(): CommandDeckContextValue {
   const ctx = useContext(CommandDeckContext);
+  // Graceful no-op fallback: the production ChatWidget is rendered outside the
+  // reseller CommandDeck (e.g. the studio preview canvas), and useVoiceCommand
+  // depends on this hook. Degrading instead of throwing keeps the widget usable
+  // in those contexts without forcing a provider mount.
   if (ctx === undefined) {
-    throw new Error("useCommandDeck must be used within a <CommandDeckProvider>");
+    return { isCommandDeckOpen: false, setCommandDeckOpen: () => {} };
   }
   return ctx;
 }

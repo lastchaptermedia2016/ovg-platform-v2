@@ -66,7 +66,7 @@ export const FEATURE_REGISTRY: Record<SYSTEM_COMMAND, FeatureRegistryEntry> = {
     uiModal: 'src/components/reseller/ClientBrandingStudio.tsx',
     handler: 'ClientBrandingStudio',
     requiresAuth: true,
-    description: 'Update reseller or client branding configuration',
+    description: 'Update your widget branding and AI persona configuration',
   },
   SYSTEM_HELP: {
     actionType: 'SYSTEM_HELP',

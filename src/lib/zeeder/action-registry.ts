@@ -141,8 +141,9 @@ export const zeederActionRegistry = new Map<ZeederActionId, ZeederActionEntry>([
 
         if (Object.keys(studioConfig).length === 0) {
           return {
-            success: false,
-            error: 'No valid branding configuration extracted from voice command.',
+            success: true,
+            awaitingInput: true,
+            greeting: `Sure, ${clientName}! Tell me the colors, logo, or style you'd like, or open the Branding Studio to set it up.`,
           };
         }
 
@@ -215,8 +216,9 @@ export const zeederActionRegistry = new Map<ZeederActionId, ZeederActionEntry>([
         const metric = payload.metric;
         if (typeof metric !== 'string' || metric.length === 0) {
           return {
-            success: false,
-            error: 'fetchTelemetry requires a non-empty string `metric` in the payload.',
+            success: true,
+            awaitingInput: true,
+            greeting: `${clientName}, which metric would you like — performance, health, or status?`,
           };
         }
 

@@ -53,12 +53,6 @@ export const CLIENT_SYSTEM_REGISTRY: Record<ClientSystemCategory, ClientSystemIt
       description: 'Explain a capability, command, or system behavior.',
     },
     {
-      id: 'run_action',
-      label: 'Run a deployment or action',
-      description: 'Execute a single or bulk client deployment / action.',
-      requiresAuth: true,
-    },
-    {
       id: 'no_match',
       label: 'Unrecognized intent',
       description: 'AI could not match your request to a known command.',
@@ -103,8 +97,7 @@ export const CLIENT_SYSTEM_REGISTRY: Record<ClientSystemCategory, ClientSystemIt
     {
       id: 'update_branding',
       label: 'Update branding',
-      description: 'Update reseller or client branding configuration.',
-      requiresAuth: true,
+      description: 'Update your widget branding and AI persona configuration.',
       action: {
         type: 'nav',
         href: '/client/dashboard/studio/branding',
@@ -114,7 +107,7 @@ export const CLIENT_SYSTEM_REGISTRY: Record<ClientSystemCategory, ClientSystemIt
     {
       id: 'branding_colors',
       label: 'Branding & Colors',
-      description: 'Update header/footer colors, gradients, logo, and widget position.',
+      description: 'Update Header Color, footer colors, logo, and widget position.',
     },
     {
       id: 'design_mirror',
@@ -122,15 +115,9 @@ export const CLIENT_SYSTEM_REGISTRY: Record<ClientSystemCategory, ClientSystemIt
       description: 'Get live, on-brand layout recommendations as you edit.',
     },
     {
-      id: 'custom_css',
-      label: 'Custom CSS',
-      description: 'Fine-tune the widget with your own styles.',
-    },
-    {
       id: 'apply_branding_theme',
       label: 'Apply branding theme',
       description: 'AI-suggested branding theme staged in the widget for confirmation.',
-      requiresAuth: true,
     },
   ],
   persona: [

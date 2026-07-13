@@ -47,7 +47,49 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
   const { draft: draftConfig, setDraft: setDraftConfig } = useStudioDraft();
 
   const [isLoading, setIsLoading] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+
+  const logoInputRef = useRef<HTMLInputElement>(null);
+
+  const uploadLogo = useCallback(async (file: File) => {
+    if (!tenantId) {
+      setFeedback({
+        type: 'error',
+        message: tenantIdError || 'Unable to resolve tenant ID. Please refresh the page.',
+      });
+      return;
+    }
+    setIsUploading(true);
+    setFeedback(null);
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      const response = await fetch('/api/client/upload-logo', {
+        method: 'POST',
+        body,
+      });
+      if (!response.ok) {
+        let message = `HTTP ${response.status}`;
+        try {
+          const errorData = await response.json();
+          message = (errorData as Record<string, unknown>).error as string || message;
+        } catch {
+          // Non-JSON error response; fall back to HTTP status.
+        }
+        throw new Error(message);
+      }
+      const result = await response.json();
+      setDraftConfig((prev) => ({ ...prev, logoUrl: result.url as string }));
+      setFeedback({ type: 'success', message: 'Logo uploaded successfully!' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Logo upload failed';
+      console.error('[BrandingStudio] Logo upload error:', message, error);
+      setFeedback({ type: 'error', message });
+    } finally {
+      setIsUploading(false);
+    }
+  }, [tenantId, tenantIdError, setDraftConfig]);
 
   const isValidHexColor = (color: string): boolean => {
     return /^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{8})$/.test(color);
@@ -215,18 +257,41 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
           <label className="block text-sm font-medium text-zinc-300 mb-2 font-agrandir">
             Logo URL
           </label>
-          <input
-            type="text"
-            placeholder="https://example.com/logo.png"
-            value={draftConfig.logoUrl}
-            onChange={(e) => {
-              setDraftConfig({ ...draftConfig, logoUrl: e.target.value });
-              clearFeedback();
-            }}
-            className="w-full px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm"
-            aria-label="Logo URL"
-          />
-          <p className="text-xs text-zinc-500 mt-1">Optional: provide a direct URL to your logo image</p>
+          <div className="flex gap-3 items-center">
+            <input
+              type="text"
+              placeholder="https://example.com/logo.png"
+              value={draftConfig.logoUrl}
+              onChange={(e) => {
+                setDraftConfig({ ...draftConfig, logoUrl: e.target.value });
+                clearFeedback();
+              }}
+              className="flex-1 px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm"
+              aria-label="Logo URL"
+            />
+            <input
+              ref={logoInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/jpg,image/webp,image/gif,image/svg+xml"
+              className="hidden"
+              onChange={(e) => {
+                const picked = e.target.files?.[0];
+                if (picked) void uploadLogo(picked);
+                e.target.value = '';
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => logoInputRef.current?.click()}
+              disabled={isUploading || !tenantId}
+              className="shrink-0 px-3 py-2 rounded-lg bg-slate-800 text-white border border-white/10 hover:border-cyan-500/50 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isUploading ? 'Uploading…' : 'Upload'}
+            </button>
+          </div>
+          <p className="text-xs text-zinc-500 mt-1">
+            Optional: paste a direct logo URL, or upload a PNG, JPEG, WEBP, GIF, or SVG (max 5 MB).
+          </p>
         </div>
 
         <div className="space-y-4">

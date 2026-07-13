@@ -44,6 +44,8 @@ export interface ZeederExecutionState {
  * Derived from Supabase session metadata — no new database tables required.
  */
 export interface ZeederClientProfile {
+  /** Authenticated user id (from the Supabase session). */
+  id?: string;
   /** Client's display name (from `user_metadata.name` or fallback email). */
   name: string;
   /** Client's email address. */

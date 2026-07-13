@@ -29,6 +29,7 @@ import {
 } from '../schemas/tenant-config.canonical';
 import { PersonaModeSchema, type ActionId } from '../actions/registry';
 import { getBrandingTheme, type BrandingTheme } from './branding-concierge';
+import { extractPersonaMode } from './extract-persona-mode';
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Studio draft context (read-only observation input — mirrors StudioDraftContext)
@@ -316,24 +317,4 @@ function extractGradient(rawText: string): { start: string; end: string } | null
   return null;
 }
 
-/**
- * Detect a persona-mode switch ("concierge" / "sales"). Matches the bare keyword
- * or the keyword preceded by a mode-intent phrase ("switch to", "set persona to",
- * "use ... mode", "make it ...", "change the persona to"). Returns the resolved
- * mode, or null when no persona directive is present.
- */
-function extractPersonaMode(rawText: string): 'sales' | 'concierge' | null {
-  const text = rawText.toLowerCase();
-  const hasModePhrase =
-    /(switch|change|set|make|use|turn|put|switch over)\b.*\b(mode|persona)|persona\s*(mode|to|is)|(to|as)\s*(concierge|sales)\b/.test(
-      text
-    );
-  // Direct keyword hit is enough; otherwise require a mode-intent phrase.
-  if (/\bconcierge\b/.test(text)) return 'concierge';
-  if (/\bsales\b/.test(text)) {
-    // Avoid false positives: "sales" alone outside a persona context is ambiguous,
-    // so only accept it when a mode-intent phrase is also present.
-    return hasModePhrase ? 'sales' : null;
-  }
-  return null;
-}
+

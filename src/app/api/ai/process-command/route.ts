@@ -235,6 +235,52 @@ export async function POST(request: NextRequest) {
       userCommand = text;
     }
 
+    // ── Server-Authoritative Context Guard: Unauthenticated Caller ──
+    // The public client login surface has no session, so it must never receive
+    // reseller capability state, tenant lists, or internal metrics. The boundary
+    // is derived from the server session (unspoofable) instead of any
+    // client-supplied path or flag.
+    let userId: string | null = null;
+    try {
+      const auth = await getAuthenticatedUser();
+      userId = auth?.userId || null;
+    } catch {
+      userId = null;
+    }
+
+    if (!userId && HELP_INTENT_REGEX.test(userCommand.trim())) {
+      console.log('%c[ProcessCommand] 🔒 Server Guard: Intercepted unauthenticated help request', 'color: #dc2626; font-weight: bold;');
+      return NextResponse.json({
+        success: true,
+        actionType: 'SYSTEM_HELP',
+        targetIds: [],
+        hasAudio: false,
+        payload: {
+          availableCommands: [
+            'How do I sign in?',
+            'What is Zeeder Portal?',
+            'Where do I find my credentials?'
+          ],
+          brandingCapabilities: {}
+        },
+        summary: 'Welcome to the Zeeder Client Portal. You can sign in using your corporate email address and password. If you need help with credentials, please reach out to your Account Manager.',
+        metadata: {
+          processedAt: new Date().toISOString(),
+          resellerId,
+          model: 'unauthenticated-server-guard',
+        },
+      });
+    }
+
+    // Strict gate: any non-help command from an unauthenticated caller is
+    // refused before it can reach Groq orchestration or the tenant portfolio.
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Unauthorized access to orchestration layer.' },
+        { status: 401 }
+      );
+    }
+
     // Security: Validate reseller authorization
     if (!resellerId) {
       return NextResponse.json(

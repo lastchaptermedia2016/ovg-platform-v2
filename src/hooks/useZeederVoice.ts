@@ -1,13 +1,13 @@
 /**
  * @file useZeederVoice.ts
  *
- * ZEEDER Voice-Action Bridge Hook (Groq-Powered)
+ * ZEEDER Voice-Action Bridge Hook (Client-Surface)
  *
  * Connects the ZEEDER client-side state machine (`ZeederContext`) with the
- * Groq-powered `/api/ai/process-command` endpoint. When a user speaks a
- * command, `handleVoiceCommand` sends it to the AI endpoint which uses
- * `llama-3.3-70b-versatile` to resolve the intent, then maps the response
- * `actionType` to a `ZeederActionId` and calls `ZeederContext.dispatch()`.
+ * surface-isolated `/api/client/process-command` endpoint. When a user speaks
+ * a command, `handleVoiceCommand` sends it to the client endpoint which
+ * resolves the intent, then maps the response `actionType` to a
+ * `ZeederActionId` and calls `ZeederContext.dispatch()`.
  *
  * @remarks
  * This hook is intentionally **zero-dependency** with respect to the
@@ -29,11 +29,12 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { isInvalidSlug } from '@/lib/utils/guard';
+import { useRouter, usePathname } from 'next/navigation';
 import { useZeeder, type ZeederClientProfile } from '@/contexts/ZeederContext';
 import { useStudioDraft } from '@/contexts/StudioDraftContext';
 import { isZeederActionId, type ZeederActionId } from '@/lib/zeeder/action-registry';
 import type { CanonicalBranding } from '@/lib/schemas/tenant-config.canonical';
+import { markVoiceNavigation } from '@/lib/voice/voiceNavSignal';
 
 // ──────────────────────────── Types ─────────────────────────────────────
 
@@ -46,36 +47,26 @@ interface ZeederVoiceState {
 }
 
 /**
- * Map from `/api/ai/process-command` `actionType` values to ZEEDER action IDs.
+ * Map from `/api/client/process-command` `actionType` values to ZEEDER action IDs.
  *
- * Entries not in this map (e.g. `SYSTEM_HELP`, `NO_MATCH`, `SINGLE`, `BULK`)
- * are treated as conversational/successful responses that don't trigger a
- * ZEEDER dispatch — they just log and reset state without error.
+ * Entries not in this map (e.g. `SYSTEM_HELP`, `CLIENT_NOP`) are treated as
+ * conversational/successful responses that don't trigger a ZEEDER dispatch —
+ * they just log and reset state without error.
  */
 const ACTION_TYPE_TO_ZEEDER_ID: Record<string, ZeederActionId | null> = {
   SYSTEM_UPDATE_BRANDING: 'updateBranding',
   SYSTEM_TELEMETRY: 'fetchTelemetry',
 };
 
-interface UseZeederVoiceOptions {
-  /** Explicit reseller slug (e.g. "lastchaptermedia2016"). */
-  resellerId?: string;
-  tenantContext?: {
-    tenantId?: string;
-    category?: string;
-  };
-  currentConfig?: Record<string, unknown>;
-  contextCapabilities?: Record<string, unknown>;
-  conversationHistory?: Array<{
-    role: 'user' | 'assistant';
-    content: string;
-    timestamp: number;
-  }>;
-  agentMode?: 'conversational' | 'executor';
-}
-
 // ──────────────────────────── Helpers ────────────────────────────────────
 
+/**
+ * Wait for the client profile to hydrate before issuing a command.
+ *
+ * @param ref - Live reference to the current `ZeederClientProfile`.
+ * @param timeoutMs - Maximum time to poll before giving up.
+ * @returns The hydrated profile, or null if it never arrived.
+ */
 async function pollForProfile(
   ref: React.RefObject<ZeederClientProfile | null>,
   timeoutMs: number
@@ -83,7 +74,7 @@ async function pollForProfile(
   const intervalMs = 150;
   let waited = 0;
   while (waited < timeoutMs) {
-    if (ref.current?.resellerSlug) return ref.current;
+    if (ref.current) return ref.current;
     await new Promise(resolve => setTimeout(resolve, intervalMs));
     waited += intervalMs;
   }
@@ -95,20 +86,11 @@ async function pollForProfile(
 /**
  * useZeederVoice
  *
- * Sovereign voice-to-action bridge for the ZEEDER system.
+ * Sovereign voice-to-action bridge for the ZEEDER client surface.
  *
- * Mirrors the `/reseller` `useVoiceCommand` configuration:
- * - Authenticated via `resellerId` (reseller slug), resolved server-side
- *   by `resolveResellerId`.
- * - Payload sent to `/api/ai/process-command` matches the reseller system's
- *   `useVoiceCommand` body structure exactly.
- * - Header: `Content-Type: application/json` (no Authorization header;
- *   auth is body-based via `resellerId`).
- *
- * @param options - Optional overrides for tenant context, config, and history.
- *   The hook derives the definitive `resellerId` from
- *   `ZeederContext.clientProfile.resellerSlug`. An explicit `options.resellerId`
- *   takes precedence when supplied.
+ * Talks exclusively to the client-scoped `/api/client/process-command`
+ * endpoint, which holds no reseller data by construction. Auth is derived
+ * from the server session, so no `resellerId` or capability map is sent.
  *
  * @remarks
  * This hook is intentionally **zero-dependency** with respect to the
@@ -119,14 +101,14 @@ async function pollForProfile(
  *
  * @example
  * ```tsx
- * const { handleVoiceCommand, isProcessing } = useZeederVoice({ resellerId: 'lastchaptermedia2016' });
+ * const { handleVoiceCommand, isProcessing } = useZeederVoice();
  *
  * const onUserSpeech = async (transcript: string) => {
  *   await handleVoiceCommand(transcript);
  * };
  * ```
  */
-export function useZeederVoice(options?: UseZeederVoiceOptions): {
+export function useZeederVoice(): {
   /** Send a transcript to the ZEEDER process-command pipeline. */
   handleVoiceCommand: (text: string) => Promise<void>;
   /** True while a voice command is being processed. */
@@ -140,31 +122,18 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
   /** Dismiss (close) the SYSTEM_HELP capabilities modal. */
   dismissHelpModal: () => void;
 } {
-  const { dispatch, clientProfile, setMode, setExecutionState } = useZeeder();
+  const { dispatch, clientProfile } = useZeeder();
   // Bridge to the Studio's single source of truth for persona state. This is
   // the Architect's "unified dispatcher": persona changes never touch the
   // disconnected ZeederContext — they flow straight into StudioDraftProvider.
   const { dispatchStudioAction, applyBrandingTheme } = useStudioDraft();
+  const router = useRouter();
+  const pathname = usePathname();
   const [state, setState] = useState<ZeederVoiceState>({
     isProcessing: false,
     error: null,
   });
   const [helpModalOpen, setHelpModalOpen] = useState(false);
-
-  const {
-    resellerId: _resellerId,
-    tenantContext: _tenantContext,
-    currentConfig: _currentConfig,
-    contextCapabilities: _contextCapabilities,
-    conversationHistory: _conversationHistory,
-    agentMode: _agentMode,
-  } = options ?? {};
-
-  // Resolve resellerId: explicit option takes precedence, then fallback to context slug
-  const resolvedResellerId =
-    _resellerId?.trim() ??
-    clientProfile?.resellerSlug?.trim() ??
-    null;
 
   const clientProfileRef = useRef(clientProfile);
   useEffect(() => {
@@ -205,14 +174,11 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
    */
   const handleVoiceCommand = useCallback(
     async (text: string): Promise<void> => {
-      let currentResellerId = resolvedResellerId;
-
       console.log('[TRACE] handleVoiceCommand ENTRY');
       console.log('[TRACE] text:', `"${text}"`);
       console.log('[TRACE] text.length:', text.length);
       console.log('[TRACE] text.trim().length:', text.trim().length);
       console.log('[TRACE] clientProfile:', clientProfile);
-      console.log('[TRACE] resolvedResellerId:', resolvedResellerId);
 
       const shouldSkipProcessing = processingRef.current;
       console.log('[TRACE] processingRef.current:', shouldSkipProcessing);
@@ -230,44 +196,14 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
 
       // Deterministic override: when clientProfile has not yet hydrated,
       // poll for it instead of immediately rejecting.
-      if (!clientProfileRef.current?.resellerSlug) {
+      if (!clientProfileRef.current) {
         console.warn('[ZEEDER-VOICE] Profile not yet loaded, polling...');
         const hydrated = await pollForProfile(clientProfileRef, 2000);
-        if (!hydrated?.resellerSlug) {
-          console.error('[ZEEDER-VOICE] handleVoiceCommand rejected — resellerSlug is missing');
+        if (!hydrated) {
+          console.error('[ZEEDER-VOICE] handleVoiceCommand rejected — client profile is missing');
+          setState(prev => ({ ...prev, isProcessing: false, error: 'Client profile not resolved.' }));
           return;
         }
-        currentResellerId = hydrated.resellerSlug;
-      }
-
-      const isResellerIdMissing = !currentResellerId;
-      console.log('[TRACE] isResellerIdMissing:', isResellerIdMissing);
-      if (isResellerIdMissing) {
-        console.warn('[ZEEDER-VOICE] handleVoiceCommand rejected — resellerSlug is missing from clientProfile');
-        setExecutionState({
-          activeActionId: null,
-          startedAt: null,
-          completedAt: Date.now(),
-          error: 'Reseller not resolved.',
-        });
-        setMode('error');
-        setState(prev => ({ ...prev, isProcessing: false, error: 'Reseller not resolved.' }));
-        return;
-      }
-
-      const isInvalidSlugValue = isInvalidSlug(currentResellerId || '');
-      console.log('[TRACE] isInvalidSlug:', isInvalidSlugValue);
-      if (isInvalidSlugValue) {
-        console.warn('[ZEEDER-VOICE] handleVoiceCommand rejected — resellerSlug is an unresolved hydration artifact:', currentResellerId);
-        setExecutionState({
-          activeActionId: null,
-          startedAt: null,
-          completedAt: Date.now(),
-          error: 'Reseller not resolved.',
-        });
-        setMode('error');
-        setState(prev => ({ ...prev, isProcessing: false, error: 'Reseller not resolved.' }));
-        return;
       }
 
       console.log('[TRACE] PASSED ALL GUARDS - proceeding to API call');
@@ -276,51 +212,21 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
       setState(prev => ({ ...prev, isProcessing: true, error: null }));
 
       try {
-        if (!currentResellerId) {
-          console.warn('[ZEEDER-VOICE] handleVoiceCommand rejected — resellerSlug is missing from clientProfile');
-          setExecutionState({
-            activeActionId: null,
-            startedAt: null,
-            completedAt: Date.now(),
-            error: 'Reseller not resolved.',
-          });
-          setMode('error');
-          setState(prev => ({ ...prev, isProcessing: false, error: 'Reseller not resolved.' }));
-          return;
-        }
+        // ── Step 1: POST to the client-scoped process-command API ──
+        // Surface-isolated: no resellerId, capability map, or tenant context
+        // leaves the client. Auth is derived from the server session.
+        console.log(`[ZEEDER-VOICE] Sending text to /api/client/process-command: "${text.slice(0, 80)}..."`);
 
-        if (isInvalidSlug(currentResellerId || '')) {
-          console.warn('[ZEEDER-VOICE] handleVoiceCommand rejected — resellerSlug is an unresolved hydration artifact:', currentResellerId);
-          setExecutionState({
-            activeActionId: null,
-            startedAt: null,
-            completedAt: Date.now(),
-            error: 'Reseller not resolved.',
-          });
-          setMode('error');
-          setState(prev => ({ ...prev, isProcessing: false, error: 'Reseller not resolved.' }));
-          return;
-        }
-
-        // ── Step 1: POST to the Groq-powered AI process-command API ──
-        // Payload mirrors the /reseller `useVoiceCommand` configuration exactly.
-        console.log('[ZEEDER-VOICE] Identity resolved as:', currentResellerId);
-        console.log(`[ZEEDER-VOICE] Sending text to /api/ai/process-command: "${text.slice(0, 80)}..."`);
-
-        const response = await fetch('/api/ai/process-command', {
+        const response = await fetch('/api/client/process-command', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            resellerId: currentResellerId,
-            userCommand: text,
-            currentConfig: _currentConfig ?? {},
-            contextCapabilities: _contextCapabilities,
-            tenantContext: {
-              tenantId: _tenantContext?.tenantId,
-              category: _tenantContext?.category,
+            text,
+            currentPath: pathname,
+            context: {
+              clientProfileId: clientProfile?.id,
+              activeView: 'client-dashboard',
             },
-            conversationHistory: _conversationHistory,
-            agentMode: _agentMode,
           }),
         });
 
@@ -342,7 +248,7 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
           error?: string;
         } = await response.json();
 
-        // ── Step 2: Map AI actionType to ZEEDER action ID ──────────
+        // ── Step 2: Map client actionType to ZEEDER action ID ──────
         const mappedActionId = ACTION_TYPE_TO_ZEEDER_ID[data.actionType] ?? null;
 
         // ── Unified Dispatcher: Persona bridge ─────────────────────
@@ -387,12 +293,40 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
           return;
         }
 
+        // ── SYSTEM_UPDATE_BRANDING: route to Branding Studio ──────────
+        // The client endpoint returns an empty payload for this intent (it does
+        // not extract branding from free text), so voice cannot apply branding
+        // directly here. A bare "Update my branding" (no extracted config) is
+        // redirected to the Branding Studio where the user configures visually.
+        // If branding IS present in the payload (future extraction), fall through
+        // to the normal dispatch/apply path.
+        if (data.actionType === 'SYSTEM_UPDATE_BRANDING') {
+          const hasBranding = Boolean(
+            (data.payload as { branding?: unknown } | undefined)?.branding,
+          );
+          if (!hasBranding) {
+            // Mark this as a voice-initiated navigation so the destination
+            // VoiceProvider suppresses its generic welcome greeting; our own
+            // confirmation below is the only spoken output (no channel overlap).
+            markVoiceNavigation();
+            // Prefer the endpoint's tailored summary (e.g. a screen-aware
+            // persona-mode clarification); fall back to the generic greeting.
+            await speakSummary(
+              data.summary ?? 'Welcome to your branding page, how can I help?',
+            );
+            router.push('/client/dashboard/studio/branding');
+            setState(prev => ({ ...prev, isProcessing: false }));
+            console.log('[ZEEDER-VOICE] Routed SYSTEM_UPDATE_BRANDING → /client/dashboard/studio/branding');
+            return;
+          }
+        }
+
         if (!mappedActionId) {
-          // The AI responded with a non-ZEEDER action (e.g. SYSTEM_HELP,
-          // NO_MATCH, SINGLE, BULK). This is a successful response but
-          // doesn't map to a ZEEDER state-machine action — log and reset.
+          // The endpoint responded with a non-ZEEDER action (e.g. SYSTEM_HELP,
+          // CLIENT_NOP). This is a successful response but doesn't map to a
+          // ZEEDER state-machine action — log and reset.
           console.log(
-            `[ZEEDER-VOICE] AI responded with non-ZEEDER actionType: "${data.actionType}" — ${data.summary ?? 'no summary'}`,
+            `[ZEEDER-VOICE] Endpoint responded with non-ZEEDER actionType: "${data.actionType}" — ${data.summary ?? 'no summary'}`,
           );
 
           // SYSTEM_HELP: elevate from speech-only to a visual capabilities modal.
@@ -463,17 +397,11 @@ export function useZeederVoice(options?: UseZeederVoiceOptions): {
     },
     [
       dispatch,
-      setMode,
-      setExecutionState,
       dispatchStudioAction,
       applyBrandingTheme,
-      resolvedResellerId,
-      _currentConfig,
-      _tenantContext,
-      _contextCapabilities,
-      _conversationHistory,
-      _agentMode,
       clientProfile,
+      router,
+      pathname,
     ],
   );
 
