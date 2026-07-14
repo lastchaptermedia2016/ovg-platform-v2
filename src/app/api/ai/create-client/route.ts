@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Groq from 'groq-sdk';
 import { createClient as createSupabaseClient } from '@/lib/supabase/server';
+import { getAuthenticatedUser } from '@/lib/auth/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { z } from 'zod';
 import { normalizeEmail } from '@/lib/utils/sanitize-email';
@@ -256,6 +257,38 @@ export async function POST(request: NextRequest) {
           missingFields: missingFields,
           message: `Partner, I missed the ${missingFields.join(', ')}—could you say that again?`
         }, { status: 400 });
+      }
+
+      // ── Authorization: verify the caller is linked to the target reseller ──
+      // The service-role insert below bypasses RLS, so this ownership check is
+      // the sole guard preventing an authenticated user from provisioning a
+      // tenant under any reseller they do not own (multi-tenant isolation).
+      const { userId: callerUserId, error: callerAuthError } = await getAuthenticatedUser();
+      if (callerAuthError || !callerUserId) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+
+      const { data: resellerLink, error: linkError } = await supabaseAdmin
+        .from('user_resellers')
+        .select('reseller_id')
+        .eq('user_id', callerUserId)
+        .eq('reseller_id', resellerId)
+        .maybeSingle();
+
+      if (linkError) {
+        console.error('[CreateClient] Reseller membership check failed:', linkError);
+        return NextResponse.json({ error: 'Failed to verify reseller membership' }, { status: 500 });
+      }
+
+      if (!resellerLink) {
+        console.warn('[CreateClient] Forbidden: user not linked to target reseller', {
+          userId: callerUserId,
+          resellerId,
+        });
+        return NextResponse.json(
+          { error: 'Forbidden: you do not have permission to create clients for this reseller' },
+          { status: 403 }
+        );
       }
 
       const insertPayload = {

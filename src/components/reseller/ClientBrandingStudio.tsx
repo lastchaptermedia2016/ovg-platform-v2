@@ -64,6 +64,8 @@ export interface BrandingConfig {
   widgetBodyOpacity: number;
   /** Chat body (message window) background — hex, rgb, or rgba color string */
   widgetBodyBackground: string;
+  /** Header title / company name shown in the widget header */
+  brandName: string;
 }
 
 type StudioAction = IncomingAIAction;
@@ -146,6 +148,7 @@ export function ClientBrandingStudio({
     footerImage: initialConfig?.branding?.footerImage || '',
     footerOpacity: initialConfig?.branding?.footerOpacity || 0.75,
     logoUrl: initialConfig?.branding?.logoUrl || '',
+    brandName: initialConfig?.branding?.brandName || '',
     aiInsightBadge: initialConfig?.features?.aiInsightBadge ?? true,
     aiDesignMirror: initialConfig?.features?.aiDesignMirror ?? false,
     customCss: initialConfig?.features?.customCss ?? false,
@@ -570,19 +573,22 @@ export function ClientBrandingStudio({
     // on the server side (UpdateConfigSchema).
     const consolidatedPayload = {
       tenantId: clientId,
-      branding: {
-        primaryColor: config.headerBackground,
-        accentColor: config.footerBackground,
-        logoUrl: config.logoUrl,
-        widgetBodyOpacity: config.widgetBodyOpacity,
-        widgetBodyBackground: config.widgetBodyBackground,
-        customCssCode: config.customCssCode,
-      } as Partial<CanonicalBranding>,
-      features: {
-        aiInsightBadge: config.aiInsightBadge,
-        aiDesignMirror: config.aiDesignMirror,
-        customCss: config.customCss,
-      } as Partial<CanonicalFeatures>,
+      widgetConfig: {
+        branding: {
+          primaryColor: config.headerBackground,
+          accentColor: config.footerBackground,
+          logoUrl: config.logoUrl,
+          brandName: config.brandName,
+          widgetBodyOpacity: config.widgetBodyOpacity,
+          widgetBodyBackground: config.widgetBodyBackground,
+          customCssCode: config.customCssCode,
+        } as Partial<CanonicalBranding>,
+        features: {
+          aiInsightBadge: config.aiInsightBadge,
+          aiDesignMirror: config.aiDesignMirror,
+          customCss: config.customCss,
+        } as Partial<CanonicalFeatures>,
+      },
     };
 
     try {
@@ -1684,6 +1690,18 @@ export function ClientBrandingStudio({
                 Upload
               </button>
             </div>
+          </div>
+
+          {/* Widget Title / Company Name */}
+          <div className="space-y-2">
+            <label className="text-xs text-white/60 uppercase tracking-wider">Widget Title Text</label>
+            <input
+              type="text"
+              value={config.brandName}
+              onChange={(e) => updateConfig('brandName', e.target.value)}
+              className="w-full bg-black/30 border border-white/20 rounded px-3 py-2 text-xs text-white focus:border-[#0097b2] outline-none"
+              placeholder="Omniverge Global"
+            />
           </div>
         </div>
 

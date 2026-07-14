@@ -127,6 +127,7 @@ export const CanonicalBrandingSchema = z.object({
   // Core brand colors
   primaryColor: CanonicalHexColorSchema.optional(),
   accentColor: CanonicalHexColorSchema.optional(),
+  brandName: z.string().optional(),
   logoUrl: z.string().url().or(z.string().startsWith('/')).or(z.literal('')).nullable().optional(),
 
   // Layered branding (header / footer / widget body) with transparency + media.

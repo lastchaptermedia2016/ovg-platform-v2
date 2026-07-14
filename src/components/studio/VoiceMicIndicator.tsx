@@ -52,7 +52,7 @@ function PendingNavigationPrompt() {
   const { persistProposal, cancelProposal, commitChanges } = useVoiceControls();
 
   return (
-    <div className="w-72 rounded-2xl border border-amber-400/40 bg-slate-950/80 p-3 text-xs text-zinc-200 shadow-xl backdrop-blur-xl">
+    <div className="w-72 max-w-[min(18rem,calc(100vw-2rem))] rounded-2xl border border-amber-400/40 bg-slate-950/80 p-3 text-xs text-zinc-200 shadow-xl backdrop-blur-xl">
       <p className="font-semibold text-amber-300">Unsaved proposal</p>
       <p className="mt-1 text-zinc-400">
         You navigated away while a voice proposal was pending. Keep the draft and continue editing, or discard it?

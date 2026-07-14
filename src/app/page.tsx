@@ -273,10 +273,7 @@ export default function Home() {
           {/* Nav buttons */}
           <div className="flex items-center gap-2 sm:gap-4">
             {/* Client Portal */}
-            <div className="relative">
-              <span className="absolute -top-4 right-0 bg-gray-100 text-gray-500 text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap">
-                Coming Soon
-              </span>
+            <div>
                <Link
                  href="/client-auth"
                  onClick={handleClientClick}

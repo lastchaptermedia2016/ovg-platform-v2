@@ -127,7 +127,7 @@ export default function PersonaPage() {
   }, []);
 
   return (
-    <div className="w-full rounded-2xl border border-white/10 bg-slate-950/15 backdrop-blur-xl p-5 md:p-6">
+    <div className="w-full rounded-2xl border border-white/10 bg-slate-950/15 backdrop-blur-xl p-4 sm:p-6">
       <div className="mb-6">
         <h2 className="text-sm font-medium text-white font-agrandir mb-1">
           Persona Configuration

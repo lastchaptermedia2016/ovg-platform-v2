@@ -221,7 +221,7 @@ export default function SystemMicButton({ onTranscriptChange, onRecordingStateCh
         aria-pressed={isListening}
         className={`
           relative flex items-center justify-center
-          w-10 h-10 md:w-11 md:h-11
+          w-11 h-11 md:w-11 md:h-11
           rounded-full
           border ${borderColor}
           ${bgColor}

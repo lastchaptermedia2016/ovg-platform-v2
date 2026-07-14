@@ -19,6 +19,7 @@ export type LayerDraft = {
 export type StudioDraft = {
   primaryColor: string;
   logoUrl: string;
+  brandName: string;
   widgetPosition: string;
   header: LayerDraft;
   footer: LayerDraft;
@@ -43,6 +44,7 @@ const defaultLayer: LayerDraft = {
 const defaultDraft: StudioDraft = {
   primaryColor: '#1A73E8',
   logoUrl: '',
+  brandName: 'Omniverge Global',
   widgetPosition: 'bottom-right',
   header: { ...defaultLayer },
   footer: { ...defaultLayer },
@@ -75,6 +77,7 @@ export function canonicalBrandingToDraftPatch(patch: Partial<CanonicalBranding>)
 
   if (patch.primaryColor) next.primaryColor = normalizeHexColor(patch.primaryColor);
   if (patch.logoUrl !== undefined) next.logoUrl = patch.logoUrl ?? '';
+  if (patch.brandName !== undefined) next.brandName = patch.brandName;
   if (patch.widgetPosition) next.widgetPosition = patch.widgetPosition;
 
   const header = patch.header;
@@ -195,6 +198,7 @@ export function toCanonicalBranding(draft: StudioDraft): Partial<CanonicalBrandi
   return {
     primaryColor: draft.primaryColor,
     logoUrl: draft.logoUrl?.trim() ? draft.logoUrl.trim() : null,
+    brandName: draft.brandName?.trim() ? draft.brandName.trim() : undefined,
     widgetPosition: draft.widgetPosition as CanonicalBranding['widgetPosition'],
     header: layerToCanonical(draft.header),
     footer: layerToCanonical(draft.footer),

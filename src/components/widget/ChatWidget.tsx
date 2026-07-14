@@ -501,13 +501,13 @@ const ChatWidget = ({ tenantId, branding, preview = false }: ChatWidgetProps) =>
             <div className="relative flex items-center gap-3">
               <img
                 src={branding?.logoUrl || config.logo || config.logoUrl || "/images/omnivergeglobal.svg"}
-                alt={config.brandName ?? "Brand"}
+                alt={branding?.brandName || config.brandName || "Brand"}
                 width={40}
                 height={40}
                 className="object-contain"
               />
               <div>
-                <h3 className="font-semibold text-white text-sm">{config.brandName}</h3>
+                <h3 className="font-semibold text-white text-sm">{branding?.brandName || config.brandName || "Omniverge Global"}</h3>
                 <div className="flex items-center gap-1.5">
                   <span className="relative flex h-2 w-2">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>

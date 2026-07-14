@@ -71,6 +71,7 @@ export type BackgroundSettings = z.infer<typeof BackgroundSettingsSchema>;
 export const BrandingSchema = z.object({
   primaryColor: HexColorSchema.optional(),
   accentColor: HexColorSchema.optional(),
+  brandName: z.string().optional(),
   logoUrl: URLSchema.nullable().optional(),
   widgetBodyOpacity: z
     .number()

@@ -217,9 +217,9 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
   }, []);
 
   return (
-    <div className="branding-studio w-full rounded-2xl border border-white/10 bg-slate-950/15 backdrop-blur-xl p-6">
+    <div className="branding-studio w-full rounded-2xl border border-white/10 bg-slate-950/15 backdrop-blur-xl p-4 sm:p-6">
       <h2 className="text-lg font-semibold text-white mb-6 font-agrandir">
-        Branding Studio
+        Branding {draftConfig.brandName || "Studio"}
       </h2>
 
       <div className="space-y-5">
@@ -291,6 +291,26 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
           </div>
           <p className="text-xs text-zinc-500 mt-1">
             Optional: paste a direct logo URL, or upload a PNG, JPEG, WEBP, GIF, or SVG (max 5 MB).
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-zinc-300 mb-2 font-agrandir">
+            Widget Title Text / Company Name
+          </label>
+          <input
+            type="text"
+            placeholder="Omniverge Global"
+            value={draftConfig.brandName ?? ""}
+            onChange={(e) => {
+              setDraftConfig({ ...draftConfig, brandName: e.target.value });
+              clearFeedback();
+            }}
+            className="w-full px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm"
+            aria-label="Widget title text or company name"
+          />
+          <p className="text-xs text-zinc-500 mt-1">
+            Displayed as the header title in the widget. Set it to your company name for white-labeling.
           </p>
         </div>
 

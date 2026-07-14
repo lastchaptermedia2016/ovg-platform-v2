@@ -110,8 +110,8 @@ export default function StudioLayout({ children }: { children: ReactNode }) {
 
 function StudioShell({ pathname, children }: { pathname: string; children: ReactNode }) {
   return (
-    <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-6 md:py-10">
-      <div className="sticky top-0 z-20 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 pt-3 pb-4 mb-6 bg-black/40 backdrop-blur-xl border-b border-white/5">
+    <div className="mx-auto w-full max-w-7xl px-4 md:px-8 pt-6 md:pt-10 pb-24 md:pb-10">
+      <div className="sticky top-0 z-20 -mx-4 md:-mx-8 px-4 md:px-8 pt-3 pb-4 mb-6 bg-black/40 backdrop-blur-xl border-b border-white/5">
         <BackButton />
         <div className="mt-3">
           <p className="text-[10px] font-semibold uppercase tracking-widest text-cyan-400 font-agrandir">

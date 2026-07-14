@@ -754,7 +754,12 @@ Output ONLY valid JSON.`;
     }
 
     // Execute the updates with safe deep-merge into existing widget_config
-    let updateResult;
+    type UpdateResult = {
+      type: 'SINGLE' | 'BULK';
+      updatedCount: number;
+      tenants: { id: string; name: string }[];
+    };
+    let updateResult: UpdateResult | undefined;
     try {
       // Fetch existing widget_config for ALL target tenants first
       const { data: existingTenants, error: fetchError } = await supabase
@@ -817,6 +822,33 @@ Output ONLY valid JSON.`;
             .map((t: { id: string; name: string }) => ({ id: t.id, name: t.name })),
         };
       }
+      // ── Audit trail: mirror the human save workflow ────────────────────────
+      // AI bulk/single config pushes must be logged under the same schema as a
+      // manual save (action_logs, source = 'hannah'). The authenticated server
+      // client is used so RLS enforces tenant ownership per row — an insert for
+      // an unowned tenant is rejected by the action_logs insert policy.
+      try {
+        const auditRows = (targetIds ?? []).map((tid: string) => ({
+          action_id: actionType,
+          tenant_id: tid,
+          user_id: userId,
+          source: 'hannah',
+          params: { payload } as Record<string, unknown>,
+          result: updateResult ?? null,
+        }));
+
+        if (auditRows.length > 0) {
+          const { error: auditErr } = await supabase
+            .from('action_logs')
+            .insert(auditRows);
+          if (auditErr) {
+            console.error('%c[ProcessCommand] ⚠️ Failed to audit bulk config update:', 'color: #f59e0b; font-weight: bold;', auditErr);
+          }
+        }
+      } catch (auditErr) {
+        console.error('%c[ProcessCommand] ⚠️ Audit logging threw:', 'color: #f59e0b; font-weight: bold;', auditErr);
+      }
+
     } catch (updateError) {
       const errorMessage = updateError instanceof Error ? updateError.message : String(updateError);
       console.error('%c[ProcessCommand:Exception] âŒ Update execution failed:', 'color: #dc2626; font-weight: bold;', updateError);

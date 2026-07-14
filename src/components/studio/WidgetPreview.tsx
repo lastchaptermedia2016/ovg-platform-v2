@@ -31,6 +31,7 @@ function draftToBranding(draft: StudioDraft): CanonicalBranding {
 
   if (draft.primaryColor) branding.primaryColor = draft.primaryColor;
   if (draft.logoUrl) branding.logoUrl = draft.logoUrl;
+  if (draft.brandName) branding.brandName = draft.brandName;
   if (draft.widgetPosition) {
     branding.widgetPosition = draft.widgetPosition as CanonicalBranding['widgetPosition'];
   }
