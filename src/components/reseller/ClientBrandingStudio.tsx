@@ -9,6 +9,7 @@ function triggerHapticFeedback(): void {
   }
 }
 import Image from 'next/image';
+import { Mic, MicOff } from 'lucide-react';
 import { ColorPicker } from '@/components/reseller/ColorPicker';
 import { useBrandingStudio } from '@/hooks/use-branding-studio';
 import { useVoiceCommand } from '@/hooks/use-voice-command';
@@ -30,7 +31,13 @@ interface InitialConfig {
     aiInsightBadge?: boolean;
     aiDesignMirror?: boolean;
     customCss?: boolean;
+    /** Voice Features Enabled — toggles the mic button in the client widget. */
+    voiceFeaturesEnabled?: boolean;
+    /** Local Fallback Alert — notify client on browser-native STT fallback. */
+    localFallbackAlert?: boolean;
   };
+  /** Default TTS voice param sent to /api/ai/speech. */
+  defaultTtsVoice?: string;
 }
 
 interface ClientBrandingStudioProps {
@@ -60,6 +67,12 @@ export interface BrandingConfig {
   aiDesignMirror: boolean;
   customCss: boolean;
   customCssCode: string;
+  /** Voice Features Enabled — toggles the mic button in the client chat widget. */
+  voiceFeaturesEnabled: boolean;
+  /** Local Fallback Alert — notify client when falling back to browser-native STT. */
+  localFallbackAlert: boolean;
+  /** Default TTS voice param sent to /api/ai/speech (e.g. 'hannah', 'classic_male'). */
+  defaultTtsVoice: string;
   /** Chat body (message window) transparency — 0.0 (fully transparent) to 1.0 (opaque) */
   widgetBodyOpacity: number;
   /** Chat body (message window) background — hex, rgb, or rgba color string */
@@ -69,6 +82,19 @@ export interface BrandingConfig {
 }
 
 type StudioAction = IncomingAIAction;
+
+/**
+ * Default TTS voice options exposed to the reseller. The `value` maps directly
+ * to the `voice` param of the unified `/api/ai/speech` endpoint, so changing
+ * the selection retunes the client widget's spoken responses.
+ */
+export const TTS_VOICE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: 'hannah', label: 'Hannah (Default)' },
+  { value: 'classic_male', label: 'Classic Male' },
+  { value: 'classic_female', label: 'Classic Female' },
+  { value: 'british_male', label: 'British Male' },
+  { value: 'calm_female', label: 'Calm Female' },
+];
 
 const STUDIO_CAPABILITIES = {
   header: {
@@ -116,8 +142,8 @@ const STUDIO_CAPABILITIES = {
 const ACOUSTIC_VERB_MAP: ReadonlyMap<string, string> = new Map([
   ['doggle', 'toggle'],
   ['goggle', 'toggle'],
-  ['five',   'vibe'],
-  ['bide',   'vibe'],
+  ['five', 'vibe'],
+  ['bide', 'vibe'],
 ]);
 
 function normalizeAcousticCommand(input: string): string {
@@ -153,6 +179,9 @@ export function ClientBrandingStudio({
     aiDesignMirror: initialConfig?.features?.aiDesignMirror ?? false,
     customCss: initialConfig?.features?.customCss ?? false,
     customCssCode: initialConfig?.branding?.customCssCode || '',
+    voiceFeaturesEnabled: initialConfig?.features?.voiceFeaturesEnabled ?? true,
+    localFallbackAlert: initialConfig?.features?.localFallbackAlert ?? false,
+    defaultTtsVoice: initialConfig?.defaultTtsVoice || 'hannah',
     widgetBodyOpacity: 1.0,
     widgetBodyBackground: 'rgba(31, 41, 55, 1.0)',
   });
@@ -287,24 +316,24 @@ export function ClientBrandingStudio({
       return;
     }
     try {
-      const response = await fetch('/api/ai/speech', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice: 'hannah', resellerSlug: activeSlug }),
-      });
-      if (!response.ok) return;
-      const arrayBuffer = await response.arrayBuffer();
-      const ctx = new AudioContext();
-      const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-      const source = ctx.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(ctx.destination);
-      source.start(0);
-      source.onended = () => ctx.close();
-    } catch (err) {
-      console.error('[TTS] Greeting playback failed:', err);
-    }
-  }, [isSpeakerEnabled, isHannahAwake, effectiveResellerSlug]);
+       const response = await fetch('/api/ai/speech', {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ text, voice: config.defaultTtsVoice || 'hannah', resellerSlug: activeSlug }),
+       });
+       if (!response.ok) return;
+       const arrayBuffer = await response.arrayBuffer();
+       const ctx = new AudioContext();
+       const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+       const source = ctx.createBufferSource();
+       source.buffer = audioBuffer;
+       source.connect(ctx.destination);
+       source.start(0);
+       source.onended = () => ctx.close();
+     } catch (err) {
+       console.error('[TTS] Greeting playback failed:', err);
+     }
+   }, [isSpeakerEnabled, isHannahAwake, effectiveResellerSlug, config.defaultTtsVoice]);
 
   // --- MOVED UP: Callback Definitions to resolve TDZ (Temporal Dead Zone) ---
 
@@ -587,7 +616,12 @@ export function ClientBrandingStudio({
           aiInsightBadge: config.aiInsightBadge,
           aiDesignMirror: config.aiDesignMirror,
           customCss: config.customCss,
+          voiceFeaturesEnabled: config.voiceFeaturesEnabled,
+          localFallbackAlert: config.localFallbackAlert,
         } as Partial<CanonicalFeatures>,
+        ai_settings: {
+          voiceId: config.defaultTtsVoice,
+        },
       },
     };
 
@@ -933,7 +967,8 @@ export function ClientBrandingStudio({
       const tenant = await response.json();
       const widgetConfig = tenant.widget_config || {};
       const branding = (widgetConfig.branding || {}) as Partial<BrandingConfig>;
-      const features = (widgetConfig.features || {}) as { aiInsightBadge?: boolean; aiDesignMirror?: boolean; customCss?: boolean };
+      const features = (widgetConfig.features || {}) as { aiInsightBadge?: boolean; aiDesignMirror?: boolean; customCss?: boolean; voiceFeaturesEnabled?: boolean; localFallbackAlert?: boolean };
+      const aiSettings = (widgetConfig.ai_settings || {}) as { voiceId?: string };
       const theme = (widgetConfig.theme || {}) as Record<string, unknown>;
 
       setConfig(prev => ({
@@ -952,6 +987,9 @@ export function ClientBrandingStudio({
         aiInsightBadge: (features.aiInsightBadge ?? prev.aiInsightBadge) as boolean,
         aiDesignMirror: (features.aiDesignMirror ?? prev.aiDesignMirror) as boolean,
         customCss: (features.customCss ?? prev.customCss) as boolean,
+        voiceFeaturesEnabled: (features.voiceFeaturesEnabled ?? prev.voiceFeaturesEnabled) as boolean,
+        localFallbackAlert: (features.localFallbackAlert ?? prev.localFallbackAlert) as boolean,
+        defaultTtsVoice: (aiSettings.voiceId || prev.defaultTtsVoice) as string,
         // ── Widget Body (Chat Window) Re-hydration ─────────────────────────
         widgetBodyOpacity: (branding.widgetBodyOpacity ?? prev.widgetBodyOpacity) as number,
         widgetBodyBackground: (branding.widgetBodyBackground || prev.widgetBodyBackground) as string,
@@ -1816,6 +1854,81 @@ export function ClientBrandingStudio({
           )}
         </div>
 
+      {/* Voice & Agent Configuration */}
+      <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-xl p-6">
+        <h2 className="text-lg font-bold text-white mb-6 flex items-center gap-2">
+          <span className="text-[#FFD700]">◆</span>
+          Voice &amp; Agent
+        </h2>
+
+        <div className="space-y-4">
+          {/* Voice Features Enabled */}
+          <div className="flex items-center justify-between p-3 bg-black/20 rounded-lg">
+            <div className="flex items-center gap-3">
+              <div>
+                <div className="text-sm text-white font-medium">Voice Features Enabled</div>
+                <div className="text-xs text-white/50">Show the mic button in the client chat widget</div>
+              </div>
+            </div>
+            <button
+              onClick={() => updateConfig('voiceFeaturesEnabled', !config.voiceFeaturesEnabled)}
+              className={`w-12 h-6 rounded-full transition-all relative ${
+                config.voiceFeaturesEnabled ? 'bg-[#0097b2]' : 'bg-white/20'
+              } cursor-pointer`}
+            >
+              <div
+                className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${
+                  config.voiceFeaturesEnabled ? 'left-7' : 'left-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Local Fallback Alert */}
+          <div className="flex items-center justify-between p-3 bg-black/20 rounded-lg">
+            <div className="flex items-center gap-3">
+              <div>
+                <div className="text-sm text-white font-medium">Local Fallback Alert</div>
+                <div className="text-xs text-white/50">Notify client when falling back to browser-native STT</div>
+              </div>
+            </div>
+            <button
+              onClick={() => updateConfig('localFallbackAlert', !config.localFallbackAlert)}
+              className={`w-12 h-6 rounded-full transition-all relative ${
+                config.localFallbackAlert ? 'bg-[#0097b2]' : 'bg-white/20'
+              } cursor-pointer`}
+            >
+              <div
+                className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${
+                  config.localFallbackAlert ? 'left-7' : 'left-1'
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Default TTS Voice Selector */}
+          <div className="p-3 bg-black/20 rounded-lg">
+            <label className="text-sm text-white font-medium block mb-1">
+              Default TTS Voice
+            </label>
+            <p className="text-xs text-white/50 mb-3">
+              Reseller default used by the unified speech endpoint for this client.
+            </p>
+            <select
+              value={config.defaultTtsVoice}
+              onChange={(e) => updateConfig('defaultTtsVoice', e.target.value)}
+              className="w-full bg-black/30 border border-white/20 rounded px-3 py-2 text-sm text-white focus:border-[#0097b2] outline-none"
+            >
+              {TTS_VOICE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
         {/* AI Vibe Generator */}
         <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-xl p-6">
           <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
@@ -2076,8 +2189,23 @@ export function ClientBrandingStudio({
                   style={{ backgroundColor: `rgba(0, 0, 0, ${1 - config.footerOpacity})` }}
                 />
               )}
-              <div className="relative z-10 text-white/60 text-xs text-center drop-shadow-md">
-                Powered by ZEEDER AI
+              <div className="relative z-10 flex items-center justify-between gap-2 px-2">
+                <div className="flex-1 text-white/60 text-xs text-center drop-shadow-md">
+                  Powered by ZEEDER AI
+                </div>
+                {/* Live mic preview — mirrors the production ChatWidget. Hidden
+                    instantly when the reseller disables Voice Features. */}
+                {config.voiceFeaturesEnabled && (
+                  <button
+                    type="button"
+                    disabled
+                    aria-hidden="true"
+                    title="Client mic (preview)"
+                    className="shrink-0 p-1.5 rounded-full bg-white/10 text-pink-400"
+                  >
+                    {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                  </button>
+                )}
               </div>
             </div>
             {config.customCss && config.customCssCode && (

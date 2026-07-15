@@ -18,13 +18,19 @@ type SupabaseDb = Awaited<ReturnType<typeof createClient>> | typeof supabaseAdmi
  * because the underlying `resellers` table does not have that column.
  * It was an aspirational schema field that was never migrated into the DB.
  * Routes that expect a version number fall back to a safe default (e.g. `?? 1`).
+ *
+ * NOTE: Live `resellers` stores branding as two JSONB columns,
+ * `branding_colors` ({ primary, secondary }) and `branding_assets`
+ * ({ header_url, footer_url }). The legacy `branding_bag` column does
+ * not exist on the live database and must never be selected.
  */
 export interface ResolvedReseller {
   id: string;
   slug: string;
   tenant_id: string;
   name: string;
-  branding_bag: Record<string, unknown> | null;
+  branding_colors: Record<string, unknown> | null;
+  branding_assets: Record<string, unknown> | null;
 }
 
 /**
@@ -45,12 +51,14 @@ export interface ResolveResult {
  * Columns selected on every resolution query.
  *
  * CRITICAL: Do NOT add columns that don't exist in the database.
- * This column list must stay in sync with migrations/002 and 010.
- * - slug            → added by migration 013
- * - branding_bag    → added by migration 010
- * - version_stamp   → added by migration 010
+ * This column list must stay in sync with the live `resellers` schema:
+ * - slug              → added by migration 013
+ * - branding_colors   → JSONB, { primary, secondary }
+ * - branding_assets   → JSONB, { header_url, footer_url }
+ * The legacy `branding_bag` column does NOT exist on the live DB and
+ * selecting it produces a PostgREST 42703 (undefined column) 400.
  */
-const RESOLVER_COLUMNS = 'id, slug, tenant_id, name, branding_bag' as const;
+const RESOLVER_COLUMNS = 'id, slug, tenant_id, name, branding_colors, branding_assets' as const;
 
 // ─── Core Resolver ───────────────────────────────────────────────────────────
 

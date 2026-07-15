@@ -75,6 +75,11 @@ The **OVG Platform** is now a fully-functional enterprise solution with advanced
 - **SYSTEM_HELP Elevated to UI** — `SYSTEM_HELP` is no longer speech-only. The `ClientHelpModal` (`src/components/client/ClientHelpModal.tsx`) renders the authoritative capability list from `FEATURE_REGISTRY`, triggered via `helpModalOpen` on the voice hook and mounted in `SystemMicButton`. Voice output is retained for accessibility; the modal is the primary surface.
 - **Client-Safe Command Taxonomy** — `SYSTEM_COMMANDS` / `SYSTEM_COMMAND` live in `src/lib/audit/command-types.ts` (no server-only imports) so the registry can be imported by `'use client'` components. `FEATURE_REGISTRY` (`src/lib/audit/feature-registry.ts`) is the single source of truth for AI capabilities, handlers, and auth requirements.
 - **System-Command Orchestrator** — Headless infrastructure commands (`SYSTEM_EXECUTE_BUILD`, `SYSTEM_SYNC_CRM`, `SYSTEM_RELOAD_ASSETS`) are queued into a `system_tasks` table and processed asynchronously by the orchestrator worker (`src/lib/orchestrator/worker.ts`) via handlers in `src/lib/orchestrator/`. The DB-backed `command-dispatcher.ts` branches critical commands to the queue and runs lightweight commands inline.
+- **White-Label Widget Header (`brandName`)** — The client widget header renders a `brandName` token resolved as `widget_config.branding.brandName` → `branding_bag.brandName` → `"Omniverge Global"`. Editable in the Branding Studio ("Widget Title Text / Company Name") and the Reseller `ClientBrandingStudio`; persisted via `POST /api/tenants/update-config` (`widgetConfig.branding`) and `POST /api/client/update-studio-config`.
+- **On-Screen Guide Page-Context Rule** — When a Zeeder client asks about branding/logo/header while on the Branding Studio page, the AI agent prompt names the exact left-panel controls (Logo URL, Upload, Widget Title Text) rather than a generic help dump.
+- **Informational Voice Query Routing** — How-to phrasing ("how do I…", "how to…", "where is…", "what is…", "explain…") no longer triggers the static `SYSTEM_HELP` block; it routes to the Groq LLM via `runSemanticFallback` so the agent can answer with screen-aware, page-contextual guidance. Capability questions ("what can you do", "list capabilities", "show help") still return `SYSTEM_HELP`.
+- **Multi-Tenant `create-client` Isolation** — `POST /api/ai/create-client` validates `user_resellers` membership before any service-role insert and returns 401/403/500 on failure.
+- **AI Audit Logging** — Bulk/single `SYSTEM_UPDATE_BRANDING` config writes from `process-command` are audited to `action_logs` (`source='hannah'`) via the authenticated client, mirroring the human save path.
 - **Isolation** — All Zeeder Client changes are confined to the `/client` surface and never touch the Reseller system (`src/app/(dashboard)/reseller/**`).
 
 ### 🎯 Key Capabilities
@@ -120,8 +125,11 @@ POST /api/ai/automotive                  # Automotive AI endpoint
 
 ## Chat & Voice
 POST /api/chat/voice                     # Voice chat session
-POST /api/hannah/speech                  # Hannah TTS endpoint
-POST /api/tts                            # Generic TTS
+POST /api/ai/speech                      # Text-to-Speech (Groq Orpheus) — single TTS source of truth for all surfaces
+
+## Client (Zeeder) Surface
+POST /api/client/process-command         # Zeeder client voice/text command processing (LLM + SYSTEM_HELP)
+POST /api/client/update-studio-config    # Persist white-label branding (brandName) from Studio
 
 ## Tenant Management
 GET  /api/tenants/[tenantId]             # Get tenant by ID
@@ -254,7 +262,7 @@ tenants {
   industry: text
   reseller_id: uuid (FK → resellers)
   pricing_tier_key: text
-  widget_config: jsonb           # Branding + AI settings + greeting
+  widget_config: jsonb           # Branding (incl. brandName) + AI settings + greeting
   branding_colors: jsonb
   custom_assets: jsonb
   show_ovg_branding: boolean

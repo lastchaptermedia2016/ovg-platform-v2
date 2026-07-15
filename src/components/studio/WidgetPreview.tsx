@@ -103,9 +103,20 @@ export function WidgetPreview() {
           style={isMobile ? { height: '70vh' } : { height: '100%' }}
         >
           {/* Real production widget, rendered directly inside the canvas. It
-              reads the live draft via `branding` and stays contained + inert
-              (no realtime channels, seeded sample conversation). */}
-          <ChatWidget tenantId="" branding={branding} preview />
+               reads the live draft via `branding` and stays contained + inert
+               (no realtime channels, seeded sample conversation). Live, unsaved
+               Studio overrides are surfaced via `liveDraft` so the test-drive
+               voice/text chat answers with the current on-screen vibe/brand. */}
+          <ChatWidget
+            tenantId=""
+            branding={branding}
+            preview
+            liveDraft={{
+              brandName: draft.brandName,
+              personaMode: draft.personaMode,
+              systemPrompt: draft.systemPrompt,
+            }}
+          />
         </div>
       </div>
 

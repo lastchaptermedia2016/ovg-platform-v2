@@ -52,7 +52,7 @@ const SyncBrandSchema = z.object({
  *   1. The resellerSlug from the URL path identifies which reseller to update.
  *   2. The tenantId in the body is validated as a UUID and verified against the
  *      reseller's ownership via the user_resellers junction table.
- *   3. websiteUrl is read from / written to branding_bag->>'websiteUrl' (JSONB path).
+ *   3. websiteUrl is read from / written to branding_colors->>'websiteUrl' (JSONB path).
  */
 export async function POST(
   request: NextRequest,
@@ -169,11 +169,11 @@ export async function POST(
 
     // ================================================================
     // FETCH existing branding to preserve websiteUrl if not in payload
-    // Live schema stores JSONB object in `branding_bag` column.
+    // Live schema stores JSONB objects in `branding_colors` / `branding_assets` columns.
     // ================================================================
     const { data: existingReseller, error: fetchError } = await supabase
       .from('resellers')
-      .select('branding_bag')
+      .select('branding_colors, branding_assets')
       .eq('id', reseller.id)
       .single();
 
@@ -185,9 +185,9 @@ export async function POST(
       );
     }
 
-    // Preserve existing websiteUrl from JSONB object if the payload doesn't include it
-    const existingParsed = (existingReseller.branding_bag as Record<string, unknown>) ?? null;
-    const existingWebsiteUrl = existingParsed?.websiteUrl ?? null;
+    // Preserve existing websiteUrl from branding_colors if the payload doesn't include it
+    const existingColors = (existingReseller.branding_colors as Record<string, unknown>) ?? {};
+    const existingWebsiteUrl = existingColors.websiteUrl ?? null;
 
     const finalBrandingBag = {
       ...brandingBag,

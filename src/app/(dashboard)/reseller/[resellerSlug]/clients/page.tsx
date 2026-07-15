@@ -10,6 +10,7 @@ import { useAICommand } from '@/hooks/use-ai-command';
 import { useVoiceCommand } from '@/hooks/use-voice-command';
 import { useResilientVoice } from '@/hooks/use-resilient-voice';
 import { CaptionsHUD } from '@/components/voice/CaptionsHUD';
+import LiveTelemetryFeed from '@/components/dashboard/LiveTelemetryFeed';
 import { formatCurrency } from '@/utils/formatters';
 import { SYSTEM_CAPABILITIES } from '@/core/ai/system-capabilities';
 import { useHannah } from "@/contexts/HannahContext";
@@ -873,6 +874,15 @@ export default function ClientsPage() {
             </div>
           </div>
         </div>
+
+        {/* Live Telemetry — streams the selected client's action log + chat history */}
+        {selectedTenantId && (
+          <div className="w-full px-4 mt-8 mb-4">
+            <div className="max-w-6xl mx-auto">
+              <LiveTelemetryFeed tenantId={selectedTenantId} clientName={selectedClientName} />
+            </div>
+          </div>
+        )}
 
       {/* Bulk Confirmation Banner */}
       {bulkConfirmation?.show && (

@@ -292,7 +292,8 @@ export async function dispatchUpdateStudioConfig(
   }
 
   // Propagate branding changes to the linked reseller so live widgets
-  // reading resellers.branding_bag stay in sync with tenant widget_config.
+  // reading resellers.branding_colors / branding_assets stay in sync
+  // with the tenant widget_config.
   const { data: tenantRecord } = await client
     .from('tenants')
     .select('reseller_id')

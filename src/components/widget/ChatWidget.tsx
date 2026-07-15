@@ -10,6 +10,7 @@ import { useVoiceCommand } from "@/hooks/use-voice-command";
 import { useWidgetPresence } from "@/hooks/useWidgetPresence";
 import { generateBrandingCSS } from "@/lib/branding/css-generator";
 import type { CanonicalBranding } from "@/lib/schemas/tenant-config.canonical";
+import { getSpeechRecognition, type SpeechRecognitionInstance, type SpeechRecognitionResultEvent } from "@/types/voice-parser";
 import "./widget.css";
 
 interface WidgetConfig {
@@ -62,9 +63,30 @@ interface ChatWidgetProps {
    * canvas reflects branding without any network or WebSocket traffic.
    */
   preview?: boolean;
+  /**
+   * Live, unsaved Studio overrides surfaced to the test-drive preview so the
+   * AI answers with the current on-screen brand/vibe. Consumed only in preview.
+   */
+  liveDraft?: {
+    brandName?: string;
+    personaMode?: string;
+    systemPrompt?: string;
+  };
+  /**
+   * When false, the microphone button is hidden from the widget footer. This
+   * mirrors the reseller-controlled `features.voiceFeaturesEnabled` flag so a
+   * client's chat widget can ship without voice input.
+   */
+  voiceFeaturesEnabled?: boolean;
 }
 
-const ChatWidget = ({ tenantId, branding, preview = false }: ChatWidgetProps) => {
+const ChatWidget = ({
+  tenantId,
+  branding,
+  preview = false,
+  liveDraft,
+  voiceFeaturesEnabled = true,
+}: ChatWidgetProps) => {
   const presenceStatus = useWidgetPresence(preview ? null : tenantId);
 
   const [config] = useState<WidgetConfig>(defaultConfig);
@@ -78,6 +100,11 @@ const ChatWidget = ({ tenantId, branding, preview = false }: ChatWidgetProps) =>
   const [voiceEnabled, setVoiceEnabled] = useState(() => preview ? true : localStorage.getItem("ovgweb_voice_mute") !== "true");
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [mounted, setMounted] = useState(false);
+
+  // ── Preview test-drive voice state (only used when `preview` is true) ──
+  const previewRecognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+  const [previewRecording, setPreviewRecording] = useState(false);
+  const [previewInterim, setPreviewInterim] = useState("");
 
   const greetedRef = useRef(false);
 
@@ -219,8 +246,26 @@ const ChatWidget = ({ tenantId, branding, preview = false }: ChatWidgetProps) =>
     }
   }, [tenantId, preview]);
 
+  // ── Preview test-drive TTS (client surface, mirrors useZeederVoice) ──
+  const speakPreview = useCallback(async (text: string) => {
+    try {
+      const ttsResponse = await fetch('/api/ai/speech', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice: 'hannah' }),
+      });
+      if (!ttsResponse.ok) return;
+      const audioBlob = await ttsResponse.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+      audio.onended = () => URL.revokeObjectURL(audioUrl);
+      await audio.play();
+    } catch {
+      /* TTS is best-effort in the preview */
+    }
+  }, []);
+
   const sendMessageDirect = useCallback(async (userInputText: string) => {
-    if (preview) return;
     if (!userInputText.trim()) return;
 
     const userMsg: WidgetMessage = {
@@ -232,11 +277,46 @@ const ChatWidget = ({ tenantId, branding, preview = false }: ChatWidgetProps) =>
 
     const newMsgs = [...messages, userMsg];
     setMessages(newMsgs);
-    localStorage.setItem("ovgweb_chat_messages", JSON.stringify(newMsgs));
     setInput("");
     setIsTyping(true);
 
     try {
+      if (preview) {
+        // ── Sandbox test-drive ───────────────────────────────────────────
+        // Non-persistent: messages stay in component state only (never
+        // localStorage), and the request is tagged testMode so the route skips
+        // any conversation/message log writes. Live draft overrides let the AI
+        // answer with the current, unsaved brand/vibe.
+        const response = await fetch("/api/client/process-command", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: userInputText,
+            testMode: true,
+            draftBrandName: liveDraft?.brandName,
+            draftVibe: liveDraft?.systemPrompt,
+            draftPersona: liveDraft?.personaMode,
+            currentPath: "/client/dashboard/studio/branding",
+          }),
+        });
+
+        if (!response.ok) throw new Error(`Process failed: ${response.status}`);
+
+        const data = await response.json();
+        const aiText = data.response || data.summary || "I'm here to help.";
+
+        const aiMsg: WidgetMessage = {
+          id: (Date.now() + 1).toString(),
+          role: "assistant",
+          text: aiText,
+          timestamp: Date.now(),
+        };
+        setMessages((prev) => [...prev, aiMsg]);
+        if (voiceEnabled) void speakPreview(aiText);
+        return;
+      }
+
+      localStorage.setItem("ovgweb_chat_messages", JSON.stringify(newMsgs));
       console.log("💬 [ChatWidget] Routing client chat payload to client-isolated orchestration endpoint");
       const response = await fetch("/api/client/process-command", {
         method: "POST",
@@ -292,16 +372,65 @@ const ChatWidget = ({ tenantId, branding, preview = false }: ChatWidgetProps) =>
     } finally {
       setIsTyping(false);
     }
-  }, [messages, refreshConfiguration, preview]);
+  }, [messages, refreshConfiguration, preview, voiceEnabled, liveDraft, speakPreview]);
+
+  // ── Preview test-drive STT (Web Speech API) ─────────────────────────
+  const startPreviewListening = useCallback(() => {
+    const Ctor = getSpeechRecognition();
+    if (!Ctor) return;
+    const recognition = new Ctor();
+    recognition.lang = 'en-US';
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.maxAlternatives = 1;
+    recognition.onresult = (event: SpeechRecognitionResultEvent) => {
+      let interim = '';
+      let finalText = '';
+      for (let i = 0; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) finalText += result.item(0)?.transcript ?? '';
+        else interim += result.item(0)?.transcript ?? '';
+      }
+      setPreviewInterim(interim);
+      if (finalText.trim()) {
+        setPreviewInterim('');
+        void sendMessageDirect(finalText.trim());
+      }
+    };
+    recognition.onerror = () => {
+      setPreviewRecording(false);
+      setPreviewInterim('');
+    };
+    recognition.onend = () => {
+      setPreviewRecording(false);
+      setPreviewInterim('');
+    };
+    previewRecognitionRef.current = recognition;
+    setPreviewRecording(true);
+    try {
+      recognition.start();
+    } catch {
+      setPreviewRecording(false);
+    }
+  }, [sendMessageDirect]);
+
+  const stopPreviewListening = useCallback(() => {
+    previewRecognitionRef.current?.stop();
+    setPreviewRecording(false);
+  }, []);
 
   const handleMicClick = useCallback(() => {
-    if (preview) return;
+    if (preview) {
+      if (previewRecording) stopPreviewListening();
+      else startPreviewListening();
+      return;
+    }
     if (isRecording) {
       stopListeningAndProcess();
     } else {
       startListening();
     }
-  }, [isRecording, startListening, stopListeningAndProcess, preview]);
+  }, [preview, previewRecording, startPreviewListening, stopPreviewListening, isRecording, startListening, stopListeningAndProcess]);
 
   // Gate timestamp rendering until after client mount to avoid hydration
   // mismatch from locale/timezone-dependent toLocaleTimeString output.
@@ -310,6 +439,14 @@ const ChatWidget = ({ tenantId, branding, preview = false }: ChatWidgetProps) =>
   useEffect(() => {
     const id = setTimeout(() => setMounted(true), 0);
     return () => clearTimeout(id);
+  }, []);
+
+  // Abort any in-flight preview speech recognition when the widget unmounts
+  // (e.g. switching viewports or leaving the Studio) to release the mic.
+  useEffect(() => {
+    return () => {
+      previewRecognitionRef.current?.abort();
+    };
   }, []);
 
   // Auto-greet once when opened with consent and no messages
@@ -499,6 +636,7 @@ const ChatWidget = ({ tenantId, branding, preview = false }: ChatWidgetProps) =>
           <div className="relative widget-header p-5 flex justify-between items-center overflow-hidden">
             <div className="absolute inset-0 bg-black/40" />
             <div className="relative flex items-center gap-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={branding?.logoUrl || config.logo || config.logoUrl || "/images/omnivergeglobal.svg"}
                 alt={branding?.brandName || config.brandName || "Brand"}
@@ -640,7 +778,9 @@ const ChatWidget = ({ tenantId, branding, preview = false }: ChatWidgetProps) =>
           {/* STT Layer - Dedicated transcription band anchored near PTT controls */}
           <div className="relative w-full px-4 h-5 flex items-center justify-center border-t border-gray-300/30 bg-black/20">
             {(() => {
-              const displayTranscript = isRecording ? interimTranscript : transcript;
+              const displayTranscript = preview
+                ? (previewRecording ? previewInterim : '')
+                : (isRecording ? interimTranscript : transcript);
               return (
                 <span className={`text-[10px] font-mono uppercase tracking-tight italic transition-opacity duration-200 ${
                   displayTranscript ? 'opacity-100' : 'opacity-0'
@@ -656,13 +796,17 @@ const ChatWidget = ({ tenantId, branding, preview = false }: ChatWidgetProps) =>
             <div className="absolute inset-0 bg-black/40" />
 
             <div className="relative flex gap-2 items-center">
-              {/* Microphone Button - Bound to useVoiceCommand */}
-              <Button
-                onClick={handleMicClick}
-                className={`shrink-0 ${isRecording ? "text-blue-500 animate-pulse scale-110" : "text-pink-500 hover:text-pink-600"}`}
-              >
-                {isRecording ? <MicOff className="h-6 w-6" /> : <Mic className="h-6 w-6" />}
-              </Button>
+              {/* Microphone Button - Bound to useVoiceCommand.
+                  Hidden entirely when the reseller disables voice features,
+                  so the client-side widget can ship without voice input. */}
+              {voiceFeaturesEnabled && (
+                <Button
+                  onClick={handleMicClick}
+                  className={`shrink-0 ${isRecording ? "text-blue-500 animate-pulse scale-110" : "text-pink-500 hover:text-pink-600"}`}
+                >
+                  {isRecording ? <MicOff className="h-6 w-6" /> : <Mic className="h-6 w-6" />}
+                </Button>
+              )}
 
               {/* Text Input */}
               <input

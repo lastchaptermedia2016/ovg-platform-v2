@@ -17,7 +17,7 @@ interface TtsError extends Error {
 
 // Phase 1: Groq Orpheus-v1 TTS – hardcode Hannah profile
 const playGroqTTS = async (text: string): Promise<ArrayBuffer> => {
-  const response = await fetch('/api/tts', {
+  const response = await fetch('/api/ai/speech', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text, voice: 'hannah', model: 'orpheus-v1', provider: 'groq' }),

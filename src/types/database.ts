@@ -45,11 +45,13 @@ export interface ResellerRecord {
   is_active: boolean;
   version_stamp: number;
   logo_url?: string | null;
-  branding_bag: {
-    primaryColor: string;
-    accentColor: string;
-    fontFamily?: string;
-    borderRadius?: string;
+  branding_colors: {
+    primary: string;
+    secondary: string;
+  };
+  branding_assets: {
+    header_url: string | null;
+    footer_url: string | null;
   };
   // Legacy compatibility
   branding_color: string;

@@ -1,39 +1,57 @@
 import Groq from "groq-sdk";
 
-export const dynamic = 'force-dynamic'; // Prevents build-time API key errors
+export const dynamic = "force-dynamic"; // Prevents build-time API key errors
 
-if (typeof window !== 'undefined') {
-  console.log("OVG-PLATFORM-V2: Voice identity updated to Hannah.");
+const DEFAULT_VOICE = "hannah";
+const TTS_MODEL = "canopylabs/orpheus-v1-english";
+
+interface SpeechInput {
+  text?: string;
+  voice?: string;
+  model?: string;
+  resellerSlug?: string;
+  metadata?: { resellerSlug?: string; [key: string]: unknown };
 }
 
-export async function POST(req: Request) {
-  try {
-    const { text, voice, resellerSlug, metadata } = await req.json();
-    const apiKey = process.env.GROQ_API_KEY;
-
-    // Bridge dual frontend patterns: top-level resellerSlug (ClientBrandingStudio)
-    // takes precedence; fall back to nested metadata (UniversalCommandModal) for
-    // backward compatibility.
-    const activeResellerSlug = resellerSlug ?? metadata?.resellerSlug;
-
-    // Log metadata for clean tracking
-    console.log('[TTS] Request:', { 
-      textLength: text?.length, 
-      voice, 
-      resellerSlug: activeResellerSlug 
+/**
+ * Single source of truth for TTS across every surface (Client / Zeeder and
+ * Reseller / Hannah). Generates Orpheus WAV audio from `text` using the
+ * requested `voice` (defaulting to "hannah").
+ *
+ * Accepts either a JSON POST body or GET query parameters so non-JSON
+ * consumers (e.g. <audio src="/api/ai/speech?text=...&voice=hannah">) work too.
+ * The legacy `metadata.resellerSlug` / top-level `resellerSlug` fields are
+ * preserved for backward compatibility with the existing Reseller callers.
+ */
+async function generateSpeech(input: SpeechInput): Promise<Response> {
+  const text = input.text?.trim();
+  if (!text) {
+    return new Response(JSON.stringify({ error: "Text is required" }), {
+      status: 400,
     });
+  }
 
-    if (!apiKey) {
-      return new Response(JSON.stringify({ error: "API Key Missing" }), { status: 500 });
-    }
+  const voice = input.voice || DEFAULT_VOICE;
+  const apiKey = process.env.GROQ_API_KEY;
 
+  // Bridge dual frontend patterns: top-level resellerSlug (ClientBrandingStudio)
+  // takes precedence; fall back to nested metadata (UniversalCommandModal) for
+  // backward compatibility.
+  const _activeResellerSlug = input.resellerSlug ?? input.metadata?.resellerSlug;
+
+  if (!apiKey) {
+    return new Response(JSON.stringify({ error: "API Key Missing" }), {
+      status: 500,
+    });
+  }
+
+  try {
     // Lazy instantiation inside the handler to protect the build
     const groq = new Groq({ apiKey });
 
-    // Your logic, optimized for streaming instead of local file writing
     const wav = await groq.audio.speech.create({
-      model: "canopylabs/orpheus-v1-english",
-      voice: voice || "hannah", // Using 'hannah' as requested
+      model: input.model || TTS_MODEL,
+      voice,
       response_format: "wav",
       input: text,
     });
@@ -45,6 +63,7 @@ export async function POST(req: Request) {
       headers: {
         "Content-Type": "audio/wav",
         "Content-Length": buffer.length.toString(),
+        "Cache-Control": "public, max-age=3600",
       },
     });
   } catch (error) {
@@ -52,4 +71,27 @@ export async function POST(req: Request) {
     console.error("❌ [API] Speech generation failed:", errorMessage);
     return new Response(JSON.stringify({ error: errorMessage }), { status: 500 });
   }
+}
+
+export async function POST(req: Request) {
+  let input: SpeechInput = {};
+  try {
+    input = (await req.json()) as SpeechInput;
+  } catch {
+    return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
+      status: 400,
+    });
+  }
+  return generateSpeech(input);
+}
+
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const input: SpeechInput = {
+    text: url.searchParams.get("text") ?? undefined,
+    voice: url.searchParams.get("voice") ?? undefined,
+    model: url.searchParams.get("model") ?? undefined,
+    resellerSlug: url.searchParams.get("resellerSlug") ?? undefined,
+  };
+  return generateSpeech(input);
 }

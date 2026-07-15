@@ -11,7 +11,7 @@
 process.env.GROQ_API_KEY = process.env.GROQ_API_KEY || 'test-groq-key';
 process.env.NEXT_PUBLIC_APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { POST } from '../route';
 import { getAuthenticatedUser } from '@/lib/auth/server';
@@ -92,10 +92,23 @@ const validClientData = {
 };
 
 describe('create-client multi-tenant isolation guard', () => {
+  const originalFetch = global.fetch;
+
   beforeEach(() => {
     vi.clearAllMocks();
     capturedInserts = [];
     terminal = makeTerminal({ id: 'new-tenant-uuid', name: 'Acme Motors', industry: 'AUTOMOTIVE' });
+    // The route makes a real internal fetch to /api/ai/apply-vibe after a
+    // successful insert. Stub it so the test is deterministic and never hangs
+    // when a dev server is listening on NEXT_PUBLIC_APP_URL.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ widgetConfig: { vibeName: 'Test Vibe' } }),
+    });
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
   });
 
   it('returns 403 and never inserts when the user is not linked to the reseller', async () => {

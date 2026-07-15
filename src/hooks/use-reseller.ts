@@ -57,15 +57,15 @@ export function useReseller(): UseResellerReturn {
       }
 
       setReseller(resellerData as Reseller);
-      const rawBranding = (resellerData as unknown as { branding_bag?: Record<string, unknown> | null }).branding_bag;
-      const parsedBranding: Record<string, unknown> | null = rawBranding ?? null;
+      const rawColors = (resellerData as unknown as { branding_colors?: Record<string, unknown> | null }).branding_colors;
+      const parsedBranding: Record<string, unknown> | null = rawColors ?? null;
       setBranding(
         parsedBranding
           ? {
               name: (resellerData as Reseller).name,
-              logoUrl: (parsedBranding.logoUrl as string) ?? "",
-              primaryColor: (parsedBranding.primaryColor as string) ?? "#0097b2",
-              accentColor: (parsedBranding.accentColor as string) ?? "#D4AF37",
+              logoUrl: (parsedBranding.logoUrl as string) ?? (parsedBranding.logo_url as string) ?? "",
+              primaryColor: (parsedBranding.primary as string) ?? (parsedBranding.primaryColor as string) ?? "#0097b2",
+              accentColor: (parsedBranding.secondary as string) ?? (parsedBranding.accentColor as string) ?? "#D4AF37",
               favicon: (parsedBranding.favicon as string | null) ?? undefined,
               metaTitle: (parsedBranding.metaTitle as string | null) ?? undefined,
               metaDescription: (parsedBranding.metaDescription as string | null) ?? undefined,

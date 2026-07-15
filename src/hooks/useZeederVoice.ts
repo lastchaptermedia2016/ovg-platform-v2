@@ -9,21 +9,19 @@
  * resolves the intent, then maps the response `actionType` to a
  * `ZeederActionId` and calls `ZeederContext.dispatch()`.
  *
+ * Voice capture uses a high-fidelity pipeline:
+ *   1. `startListening()` opens the mic via `MediaRecorder` (15s cap).
+ *   2. The blob is transcoded to WAV and POSTed to `/api/client/stt`
+ *      (Groq Whisper, server-side, tenant-scoped vocabulary boost).
+ *   3. On any failure it transparently falls back to the device Web Speech
+ *      API (`webkitSpeechRecognition`) with a `sttFallback` indicator.
+ *
  * @remarks
  * This hook is intentionally **zero-dependency** with respect to the
  * reseller domain. It does NOT import from:
  * - `src/contexts/HannahContext`
  * - `src/hooks/use-voice-command`
  * - `src/lib/reseller/*`
- *
- * @example
- * ```tsx
- * const { handleVoiceCommand, isProcessing } = useZeederVoice();
- *
- * const onUserSpeech = async (transcript: string) => {
- *   await handleVoiceCommand(transcript);
- * };
- * ```
  */
 
 'use client';
@@ -35,6 +33,8 @@ import { useStudioDraft } from '@/contexts/StudioDraftContext';
 import { isZeederActionId, type ZeederActionId } from '@/lib/zeeder/action-registry';
 import type { CanonicalBranding } from '@/lib/schemas/tenant-config.canonical';
 import { markVoiceNavigation } from '@/lib/voice/voiceNavSignal';
+import { transcodeBlobToWav } from '@/utils/audio/transcode-to-wav';
+import { getSpeechRecognition } from '@/types/voice-parser';
 
 // ──────────────────────────── Types ─────────────────────────────────────
 
@@ -58,6 +58,9 @@ const ACTION_TYPE_TO_ZEEDER_ID: Record<string, ZeederActionId | null> = {
   SYSTEM_TELEMETRY: 'fetchTelemetry',
 };
 
+/** Hard ceiling on a single push-to-talk capture (15s). */
+const MAX_RECORDING_MS = 15_000;
+
 // ──────────────────────────── Helpers ────────────────────────────────────
 
 /**
@@ -69,7 +72,7 @@ const ACTION_TYPE_TO_ZEEDER_ID: Record<string, ZeederActionId | null> = {
  */
 async function pollForProfile(
   ref: React.RefObject<ZeederClientProfile | null>,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<ZeederClientProfile | null> {
   const intervalMs = 150;
   let waited = 0;
@@ -98,23 +101,24 @@ async function pollForProfile(
  * - `src/contexts/HannahContext`
  * - `src/hooks/use-voice-command`
  * - `src/lib/reseller/*`
- *
- * @example
- * ```tsx
- * const { handleVoiceCommand, isProcessing } = useZeederVoice();
- *
- * const onUserSpeech = async (transcript: string) => {
- *   await handleVoiceCommand(transcript);
- * };
- * ```
  */
 export function useZeederVoice(): {
   /** Send a transcript to the ZEEDER process-command pipeline. */
   handleVoiceCommand: (text: string) => Promise<void>;
+  /** Begin a push-to-talk recording (MediaRecorder → /api/client/stt). */
+  startListening: () => void;
+  /** Stop the active recording and dispatch the captured transcript. */
+  stopListening: () => void;
+  /** True while the mic is actively capturing audio. */
+  isListening: boolean;
+  /** Live/captured transcript (surface it in the UI for the spoken-text effect). */
+  transcript: string;
   /** True while a voice command is being processed. */
   isProcessing: boolean;
   /** The last error message if an operation failed. */
   error: string | null;
+  /** True when STT fell back to the device Web Speech engine (local-only). */
+  sttFallback: boolean;
   /** Reset the error state to null. */
   clearError: () => void;
   /** True when the SYSTEM_HELP capabilities modal should be visible. */
@@ -135,6 +139,11 @@ export function useZeederVoice(): {
   });
   const [helpModalOpen, setHelpModalOpen] = useState(false);
 
+  // ── Recording (PTT) UI state ────────────────────────────────────
+  const [isListening, setIsListening] = useState(false);
+  const [transcript, setTranscript] = useState('');
+  const [sttFallback, setSttFallback] = useState(false);
+
   const clientProfileRef = useRef(clientProfile);
   useEffect(() => {
     clientProfileRef.current = clientProfile;
@@ -143,12 +152,210 @@ export function useZeederVoice(): {
   // Guard against concurrent invocations
   const processingRef = useRef(false);
 
+  // Ref bridge so recording callbacks can invoke the latest handleVoiceCommand
+  // without capturing it in their dependency arrays (avoids ordering/TDZ issues).
+  const handleVoiceCommandRef = useRef<(text: string) => Promise<void>>(
+    () => Promise.resolve(),
+  );
+
+  // Recording lifecycle refs
+  const streamRef = useRef<MediaStream | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const recognitionRef = useRef<ReturnType<typeof getSpeechRecognition> extends null ? never : InstanceType<NonNullable<ReturnType<typeof getSpeechRecognition>>> | null>(null);
+  const maxDurationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const transcriptRef = useRef('');
+
+  // ── Cleanup on unmount ───────────────────────────────────────────
+  useEffect(() => {
+    return () => {
+      if (maxDurationTimerRef.current) clearTimeout(maxDurationTimerRef.current);
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
+      }
+      mediaRecorderRef.current = null;
+      recognitionRef.current = null;
+    };
+  }, []);
+
+  /** Stop all mic hardware + recording timers. */
+  const teardownRecording = useCallback(() => {
+    if (maxDurationTimerRef.current) {
+      clearTimeout(maxDurationTimerRef.current);
+      maxDurationTimerRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try { mediaRecorderRef.current.stop(); } catch { /* noop */ }
+      mediaRecorderRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    if (recognitionRef.current) {
+      try { recognitionRef.current.abort(); } catch { /* noop */ }
+      recognitionRef.current = null;
+    }
+  }, []);
+
+  /**
+   * Fallback STT: device Web Speech API (local-only, no server round-trip).
+   * Used when MediaRecorder/Whisper is unavailable or fails. Surfaces a
+   * "Local Engine Active" indicator via `sttFallback`.
+   */
+  const runWebSpeechFallback = useCallback(() => {
+    const SpeechRecognitionAPI = getSpeechRecognition();
+    if (!SpeechRecognitionAPI) {
+      console.warn('[ZEEDER-VOICE] No STT engine available (Web Speech unsupported).');
+      setState(prev => ({ ...prev, error: 'Voice recognition is not available in this browser.' }));
+      setIsListening(false);
+      return;
+    }
+
+    setSttFallback(true);
+    const recognition = new SpeechRecognitionAPI();
+    recognition.lang = 'en-US';
+    recognition.interimResults = false;
+    recognition.continuous = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event: { results: ArrayLike<ArrayLike<{ transcript?: string }>> }) => {
+      const captured = (event.results[0]?.[0]?.transcript ?? '').trim();
+      transcriptRef.current = captured;
+      setTranscript(captured);
+      if (captured) handleVoiceCommandRef.current(captured);
+    };
+    recognition.onerror = () => {
+      setIsListening(false);
+      teardownRecording();
+    };
+    recognition.onend = () => {
+      setIsListening(false);
+      teardownRecording();
+    };
+
+    try {
+      recognition.start();
+      recognitionRef.current = recognition;
+      setIsListening(true);
+    } catch {
+      setIsListening(false);
+      setState(prev => ({ ...prev, error: 'Failed to start local voice recognition.' }));
+    }
+  }, [teardownRecording]);
+
+  /**
+   * Transcribe a recorded audio blob via the secure /api/client/stt endpoint.
+   * Throws on any failure so the caller can fall back to Web Speech.
+   */
+  const transcribeBlob = useCallback(async (blob: Blob): Promise<string> => {
+    const wavBlob = await transcodeBlobToWav(blob);
+    const form = new FormData();
+    form.append('file', wavBlob, 'recording.wav');
+
+    const res = await fetch('/api/client/stt', { method: 'POST', body: form });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(body?.error ?? `STT failed with status ${res.status}`);
+    }
+    const data = (await res.json()) as { text?: string };
+    return data.text?.trim() ?? '';
+  }, []);
+
+  /**
+   * Begin push-to-talk capture with the high-fidelity MediaRecorder pipeline.
+   * Automatically falls back to the device Web Speech engine on any failure.
+   */
+  const startListening = useCallback(() => {
+    if (isListening || processingRef.current) return;
+
+    setTranscript('');
+    transcriptRef.current = '';
+    setSttFallback(false);
+    chunksRef.current = [];
+
+    const startCapture = async () => {
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch {
+        console.warn('[ZEEDER-VOICE] getUserMedia denied — falling back to Web Speech.');
+        runWebSpeechFallback();
+        return;
+      }
+
+      if (typeof MediaRecorder === 'undefined') {
+        stream.getTracks().forEach(t => t.stop());
+        runWebSpeechFallback();
+        return;
+      }
+
+      streamRef.current = stream;
+      const recorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      chunksRef.current = [];
+
+      recorder.ondataavailable = (e: BlobEvent) => {
+        if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        teardownRecording();
+        setIsListening(false);
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+        if (blob.size === 0) {
+          console.warn('[ZEEDER-VOICE] Empty recording, skipping.');
+          return;
+        }
+        try {
+          const text = await transcribeBlob(blob);
+          transcriptRef.current = text;
+          setTranscript(text);
+          if (text) handleVoiceCommandRef.current(text);
+        } catch (err) {
+          console.warn('[ZEEDER-VOICE] Whisper STT failed — falling back to Web Speech.', err);
+          runWebSpeechFallback();
+        }
+      };
+
+      try {
+        recorder.start();
+        setIsListening(true);
+        maxDurationTimerRef.current = setTimeout(() => {
+          if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            mediaRecorderRef.current.stop();
+          }
+        }, MAX_RECORDING_MS);
+      } catch {
+        console.warn('[ZEEDER-VOICE] MediaRecorder.start failed — falling back to Web Speech.');
+        teardownRecording();
+        runWebSpeechFallback();
+      }
+    };
+
+    void startCapture();
+  }, [isListening, transcribeBlob, runWebSpeechFallback, teardownRecording]);
+
+  /**
+   * Stop the active push-to-talk capture (mouseup / touchend / leave).
+   * No-op if nothing is recording.
+   */
+  const stopListening = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch { /* noop */ }
+    }
+  }, []);
+
   /**
    * Play the AI summary response as speech via the TTS endpoint.
    */
   async function speakSummary(summary: string): Promise<void> {
     try {
-      const ttsResponse = await fetch('/api/tts', {
+      const ttsResponse = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: summary, voice: 'hannah' }),
@@ -405,6 +612,11 @@ export function useZeederVoice(): {
     ],
   );
 
+  // Keep the recording callbacks pointed at the latest handleVoiceCommand.
+  useEffect(() => {
+    handleVoiceCommandRef.current = handleVoiceCommand;
+  }, [handleVoiceCommand]);
+
   const clearError = useCallback(() => {
     setState(prev => ({ ...prev, error: null }));
   }, []);
@@ -415,8 +627,13 @@ export function useZeederVoice(): {
 
   return {
     handleVoiceCommand,
+    startListening,
+    stopListening,
+    isListening,
+    transcript,
     isProcessing: state.isProcessing,
     error: state.error,
+    sttFallback,
     clearError,
     helpModalOpen,
     dismissHelpModal,

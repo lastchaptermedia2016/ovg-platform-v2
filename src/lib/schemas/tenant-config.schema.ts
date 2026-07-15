@@ -224,6 +224,10 @@ export const FeaturesSchema = z.object({
   aiInsightBadge: z.boolean().optional(),
   aiDesignMirror: z.boolean().optional(),
   customCss: z.boolean().optional(),
+  // Voice surface controls — drive the client chat widget's mic visibility
+  // and the browser-native (Web Speech API) STT fallback alert.
+  voiceFeaturesEnabled: z.boolean().optional(),
+  localFallbackAlert: z.boolean().optional(),
 }).passthrough();
 
 export type Features = z.infer<typeof FeaturesSchema>;

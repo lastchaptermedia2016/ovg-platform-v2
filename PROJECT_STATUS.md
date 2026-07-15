@@ -158,4 +158,18 @@
 
 ---
 
+## 7. Client AI Surface Hardening (Post-Audit)
+
+The following client-facing AI routes were hardened/extended after the original audit:
+
+| Route | Hardening | Notes |
+|-------|-----------|-------|
+| `POST /api/ai/create-client` | ✅ `user_resellers` membership enforced via `getAuthenticatedUser()` before service-role insert | Returns 401/403/500 on failure; feeds reseller tenant registry |
+| `POST /api/ai/process-command` | ✅ AI `SYSTEM_UPDATE_BRANDING` writes audited to `action_logs` (`source='hannah'`) via authenticated client | Mirrors human save path; RLS-enforced |
+| `POST /api/client/process-command` | ✅ Informational/how-to queries routed to Groq LLM (`runSemanticFallback`) instead of static `SYSTEM_HELP` | Capability questions ("what can you do", "list capabilities") still return `SYSTEM_HELP`; on-screen guide page-context rule names exact Studio controls |
+
+**Branding addition:** `widget_config.branding.brandName` is now a supported white-label header token (resolved `branding.brandName → config.brandName → "Omniverge Global"`). No migration required — additive optional JSONB key persisted via `POST /api/tenants/update-config` (`widgetConfig.branding`).
+
+---
+
 *Audit complete. Codebase is production-ready with noted transitional schema dual-writes and minor cleanup items pending.*

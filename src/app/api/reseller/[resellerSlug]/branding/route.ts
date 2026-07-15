@@ -55,36 +55,33 @@ export async function authorizeResellerAccess(
 // ===================================================================
 
 /**
- * Safely read a string-typed branding field from a nullable unknown record.
- */
-function brandingField(
-  branding: Record<string, unknown> | null | undefined,
-  key: string,
-): string | null {
-  if (!branding) return null;
-  const val = branding[key];
-  return typeof val === 'string' ? val : null;
-}
-
-/**
  * Given a row from the resellers table, build a BrandingBag with
  * safe defaults for any missing values.
  */
 export function buildBrandingBag(row: ResolvedReseller): BrandingBag {
-  const b = (row.branding_bag as Record<string, unknown>) ?? {};
+  const colors = (row.branding_colors as Record<string, unknown>) ?? {};
+  const assets = (row.branding_assets as Record<string, unknown>) ?? {};
+  const primaryColor =
+    (colors.primary as string) ||
+    (colors.primaryColor as string) ||
+    '#0097b2';
+  const accentColor =
+    (colors.secondary as string) ||
+    (colors.accentColor as string) ||
+    '#D4AF37';
   return {
-    primaryColor: brandingField(b, 'primaryColor') ?? '#0097b2',
-    accentColor: brandingField(b, 'accentColor') ?? '#D4AF37',
-    logoUrl: brandingField(b, 'logoUrl') ?? null,
-    favicon: brandingField(b, 'favicon') ?? null,
-    metaTitle: brandingField(b, 'metaTitle') ?? null,
-    metaDescription: brandingField(b, 'metaDescription') ?? null,
-    typography: b?.typography as BrandingBag['typography'] ?? {
+    primaryColor,
+    accentColor,
+    logoUrl: (assets.logo_url as string) ?? (assets.logoUrl as string) ?? null,
+    favicon: (assets.favicon as string) ?? null,
+    metaTitle: (assets.metaTitle as string) ?? null,
+    metaDescription: (assets.metaDescription as string) ?? null,
+    typography: (colors.typography as BrandingBag['typography']) ?? {
       headingFont: 'Inter',
       bodyFont: 'Inter',
     },
-    borderRadius: typeof b?.borderRadius === 'number' ? b.borderRadius : 8,
-    mode: b?.mode as BrandingBag['mode'] ?? 'light',
+    borderRadius: typeof colors.borderRadius === 'number' ? colors.borderRadius : 8,
+    mode: (colors.mode as BrandingBag['mode']) ?? 'light',
   };
 }
 

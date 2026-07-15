@@ -30,7 +30,7 @@ export function ResellerProvider({
         
         const { data, error } = await supabase
           .from("resellers")
-          .select("id, tenant_id, name, branding_colors, accent_color, logo_url")
+          .select("id, tenant_id, name, branding_colors, branding_assets, branding_color, accent_color, logo_url")
           .eq("tenant_id", resellerSlug)
           .eq("is_active", true)
           .single();
@@ -48,19 +48,26 @@ export function ResellerProvider({
         }
 
         const reseller = data as unknown as ResellerRecord;
+        const colors = (reseller.branding_colors ?? null) as Record<string, unknown> | null;
+        const assets = (reseller.branding_assets ?? null) as Record<string, unknown> | null;
 
         const primaryColor =
-          (reseller.branding_bag?.primaryColor as string | undefined) ??
+          (colors?.primary as string | undefined) ??
+          (colors?.primaryColor as string | undefined) ??
           reseller.branding_color ??
           "#0097b2";
         const accentColor =
-          (reseller.branding_bag?.accentColor as string | undefined) ??
+          (colors?.secondary as string | undefined) ??
+          (colors?.accentColor as string | undefined) ??
           reseller.accent_color ??
           "#D4AF37";
 
         const brandingData: BrandingData = {
           name: reseller.name,
-          logoUrl: reseller.logo_url || "/logo-default.svg",
+          logoUrl:
+            (assets?.logo_url as string | undefined) ??
+            (assets?.logoUrl as string | undefined) ??
+            (reseller.logo_url || "/logo-default.svg"),
           primaryColor,
           accentColor,
         };

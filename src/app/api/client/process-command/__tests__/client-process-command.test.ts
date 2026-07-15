@@ -7,23 +7,25 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { POST } from '../route';
-import { getAuthenticatedUser } from '@/lib/auth/server';
+import { getAuthenticatedUser, createAuthClient } from '@/lib/auth/server';
+import { resolveTenantId } from '@/lib/resolveTenantId';
+import { persistChatMessage, logPlatformAction } from '@/lib/audit/platform-logger';
 
 process.env.GROQ_API_KEY = process.env.GROQ_API_KEY || 'test-groq-key';
 
-// The route calls `new Groq({ apiKey })`, so the default export MUST be a real
-// class (arrow functions cannot be used with `new`). The class field
-// initializer runs at construction time — by then `cannedGroqResponse` is set.
 let cannedGroqResponse: unknown = null;
+let lastGroqSystemPrompt: string | null = null;
 vi.mock('groq-sdk', () => {
   class Groq {
     chat = {
       completions: {
-        create: vi.fn().mockImplementation(() =>
-          Promise.resolve({
+        create: vi.fn().mockImplementation((args: { messages?: Array<{ role: string; content: unknown }> }) => {
+          const system = args?.messages?.find((m) => m.role === 'system')?.content;
+          lastGroqSystemPrompt = typeof system === 'string' ? system : null;
+          return Promise.resolve({
             choices: [{ message: { content: JSON.stringify(cannedGroqResponse) } }],
-          })
-        ),
+          });
+        }),
       },
     };
   }
@@ -32,12 +34,42 @@ vi.mock('groq-sdk', () => {
 
 vi.mock('@/lib/auth/server', () => ({
   getAuthenticatedUser: vi.fn(),
+  createAuthClient: vi.fn(),
+}));
+
+vi.mock('@/lib/resolveTenantId', () => ({
+  resolveTenantId: vi.fn(),
+}));
+
+vi.mock('@/lib/audit/platform-logger', () => ({
+  logPlatformAction: vi.fn(),
+  persistChatMessage: vi.fn(),
 }));
 
 const mockAuth = vi.mocked(getAuthenticatedUser);
+const mockCreateAuthClient = vi.mocked(createAuthClient);
+const mockResolveTenantId = vi.mocked(resolveTenantId);
+  const _mockPersistChatMessage = vi.mocked(persistChatMessage);
+  const _mockLogPlatformAction = vi.mocked(logPlatformAction);
 
 beforeEach(() => {
   cannedGroqResponse = null;
+  lastGroqSystemPrompt = null;
+  vi.clearAllMocks();
+  mockAuth.mockResolvedValue({
+    user: null,
+    userId: 'client-user',
+    email: 'client@example.com',
+    error: null,
+  });
+  mockCreateAuthClient.mockResolvedValue({
+    auth: { getUser: vi.fn() },
+    from: vi.fn(),
+  } as unknown as Awaited<ReturnType<typeof createAuthClient>>);
+  mockResolveTenantId.mockResolvedValue({
+    data: 'tenant-uuid-123',
+    error: null,
+  });
 });
 
 function post(text: string, extra: Record<string, unknown> = {}): Promise<Response> {
@@ -73,19 +105,15 @@ describe('POST /api/client/process-command', () => {
     expect(Array.isArray(commands)).toBe(true);
     expect(commands.length).toBeGreaterThan(0);
 
-    // Zero reseller verbs must leak into the client help list.
     for (const verb of RESELLER_VERBS) {
       expect(commands.some(c => c.toLowerCase().includes(verb))).toBe(false);
     }
 
-    // The spoken hint must NOT invite a help synonym ("List capabilities")
-    // that would re-match the help regex and create a repeat loop.
     expect(body.summary).not.toMatch(/list capabilities/i);
     expect(body.summary).toMatch(/update my branding|show my telemetry/i);
   });
 
   it('should deterministically answer identity questions as ZEEDER without an LLM round-trip', async () => {
-    // No canned Groq response — the guard must bypass the LLM entirely.
     const variants = ['what is your name', "what's your name", 'who are you', 'your name'];
 
     for (const text of variants) {
@@ -126,11 +154,9 @@ describe('POST /api/client/process-command', () => {
     const res = await post('how is the weather today?');
     const body = await res.json();
 
-    // It shouldn't execute an action or break the view.
     expect(res.status).toBe(200);
     expect(body.actionType).toBe('CLIENT_NOP');
 
-    // It should conversationalize the border enforcement.
     expect(body.summary).not.toContain('Error');
     expect(body.summary).toMatch(/branding|telemetry|portal/i);
   });
@@ -271,6 +297,51 @@ describe('POST /api/client/process-command - Help Boundary Coverage', () => {
   });
 });
 
+describe('POST /api/client/process-command - Informational / how-to queries', () => {
+  beforeEach(() => {
+    mockAuth.mockResolvedValue({
+      user: null,
+      userId: 'client-user',
+      email: 'client@example.com',
+      error: null,
+    });
+  });
+
+  it('should route "how do I upload my logo" on the Studio to the LLM, not the static SYSTEM_HELP block', async () => {
+    cannedGroqResponse = {
+      actionType: 'CLIENT_NOP',
+      summary:
+        "On the left panel, find the 'Logo URL' field — paste a direct image link, or tap Upload to add a PNG, JPG, WEBP, GIF, or SVG.",
+    };
+
+    const res = await post('how do I upload my logo?', {
+      currentPath: '/client/dashboard/studio/branding',
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.actionType).not.toBe('SYSTEM_HELP');
+    expect(body.summary).toMatch(/left panel|Logo URL|Upload/i);
+  });
+
+  it('should route "how to change the header text" to the LLM even though it names a branding keyword', async () => {
+    cannedGroqResponse = {
+      actionType: 'CLIENT_NOP',
+      summary:
+        "On the left panel, type your company name into the 'Widget Title Text / Company Name' box — the header updates instantly in the preview on your right.",
+    };
+
+    const res = await post('how to change the header text?', {
+      currentPath: '/client/dashboard/studio/branding',
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.actionType).not.toBe('SYSTEM_HELP');
+    expect(body.summary).toMatch(/Widget Title Text|Company Name|preview/i);
+  });
+});
+
 describe('POST /api/client/process-command - Persona Mode Execution', () => {
   beforeEach(() => {
     mockAuth.mockResolvedValue({
@@ -300,8 +371,6 @@ describe('POST /api/client/process-command - Persona Mode Execution', () => {
   });
 
   it('should preserve existing aiPersona subkeys when injecting personaMode', async () => {
-    // The caller-supplied payload already carried an aiPersona subkey; the
-    // injected personaMode must merge rather than clobber it.
     const res = await post('set my persona mode to sales', {
       payload: { aiPersona: { existingKey: 'keep-me' } },
     });
@@ -315,9 +384,6 @@ describe('POST /api/client/process-command - Persona Mode Execution', () => {
   });
 
   it('should NOT falsely resolve the bare word "sales" to a persona change', async () => {
-    // "sales" alone has no mode-intent phrase, so it must not trigger persona
-    // resolution. parseIntent returns null and the request falls through to the
-    // semantic fallback, which degrades to CLIENT_NOP.
     const res = await post('sales');
     const body = await res.json();
 
@@ -384,5 +450,150 @@ describe('POST /api/client/process-command - Persona Intent Without Target Mode'
     expect(res.status).toBe(200);
     expect(body.actionType).toBe('SYSTEM_UPDATE_BRANDING');
     expect(body.payload.aiPersona).toEqual({ personaMode: 'sales' });
+  });
+});
+
+describe('POST /api/client/process-command - Sandbox Test Mode (Studio Preview)', () => {
+  beforeEach(() => {
+    mockAuth.mockResolvedValue({
+      user: null,
+      userId: 'client-user',
+      email: 'client@example.com',
+      error: null,
+    });
+  });
+
+  it('should accept the testMode flag and draft overrides without error', async () => {
+    const res = await post('what is a widget body?', {
+      testMode: true,
+      draftBrandName: 'Acme Co',
+      draftVibe: 'Be punchy and friendly.',
+      draftPersona: 'concierge',
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.actionType).toBe('CLIENT_NOP');
+  });
+
+  it('should merge draft overrides into the LLM system prompt', async () => {
+    cannedGroqResponse = { actionType: 'CLIENT_NOP', summary: 'Sure — let me walk you through that.' };
+
+    await post('how do I change the header text?', {
+      testMode: true,
+      draftBrandName: 'Acme Co',
+      draftPersona: 'concierge',
+      currentPath: '/client/dashboard/studio/branding',
+    });
+
+    expect(lastGroqSystemPrompt).not.toBeNull();
+    expect(lastGroqSystemPrompt).toMatch(/Acme Co/);
+    expect(lastGroqSystemPrompt).toMatch(/concierge/i);
+    expect(lastGroqSystemPrompt).toMatch(/UNSAVED STUDIO SETTINGS|TEST MODE/i);
+  });
+
+  it('should omit the draft section when no overrides are supplied', async () => {
+    cannedGroqResponse = { actionType: 'CLIENT_NOP', summary: 'Got it.' };
+
+    await post('how do I upload my logo?', {
+      currentPath: '/client/dashboard/studio/branding',
+    });
+
+    expect(lastGroqSystemPrompt).not.toBeNull();
+    expect(lastGroqSystemPrompt).not.toMatch(/UNSAVED STUDIO SETTINGS/i);
+  });
+});
+
+describe('POST /api/client/process-command - Audit Persistence', () => {
+  beforeEach(() => {
+    mockAuth.mockResolvedValue({
+      user: null,
+      userId: 'client-user',
+      email: 'client@example.com',
+      error: null,
+    });
+  });
+
+  it('should persist chat messages and action logs in normal mode for SYSTEM_UPDATE_BRANDING', async () => {
+    const { persistChatMessage, logPlatformAction } = await import('@/lib/audit/platform-logger');
+    vi.mocked(persistChatMessage).mockClear();
+    vi.mocked(logPlatformAction).mockClear();
+
+    const res = await post('update my branding');
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.actionType).toBe('SYSTEM_UPDATE_BRANDING');
+    expect(persistChatMessage).toHaveBeenCalledTimes(1);
+    expect(logPlatformAction).toHaveBeenCalledTimes(1);
+    expect(logPlatformAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actionId: 'SYSTEM_UPDATE_BRANDING',
+        surface: 'client',
+        tenantId: 'tenant-uuid-123',
+        userId: 'client-user',
+      }),
+    );
+  });
+
+  it('should persist chat messages but skip action logs for CLIENT_NOP', async () => {
+    const { persistChatMessage, logPlatformAction } = await import('@/lib/audit/platform-logger');
+    vi.mocked(persistChatMessage).mockClear();
+    vi.mocked(logPlatformAction).mockClear();
+
+    const res = await post('make me a sandwich');
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.actionType).toBe('CLIENT_NOP');
+    expect(persistChatMessage).toHaveBeenCalledTimes(1);
+    expect(logPlatformAction).not.toHaveBeenCalled();
+  });
+
+  it('should bypass all database writes when testMode is true', async () => {
+    const { persistChatMessage, logPlatformAction } = await import('@/lib/audit/platform-logger');
+    vi.mocked(persistChatMessage).mockClear();
+    vi.mocked(logPlatformAction).mockClear();
+
+    const res = await post('update my branding', { testMode: true });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.actionType).toBe('SYSTEM_UPDATE_BRANDING');
+    expect(persistChatMessage).not.toHaveBeenCalled();
+    expect(logPlatformAction).not.toHaveBeenCalled();
+  });
+
+  it('should bypass all database writes when isTestDrive is true', async () => {
+    const { persistChatMessage, logPlatformAction } = await import('@/lib/audit/platform-logger');
+    vi.mocked(persistChatMessage).mockClear();
+    vi.mocked(logPlatformAction).mockClear();
+
+    const res = await post('update my branding', { isTestDrive: true });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.actionType).toBe('SYSTEM_UPDATE_BRANDING');
+    expect(persistChatMessage).not.toHaveBeenCalled();
+    expect(logPlatformAction).not.toHaveBeenCalled();
+  });
+
+  it('should persist for LLM fallback responses with SYSTEM_UPDATE_BRANDING', async () => {
+    const { persistChatMessage, logPlatformAction } = await import('@/lib/audit/platform-logger');
+    vi.mocked(persistChatMessage).mockClear();
+    vi.mocked(logPlatformAction).mockClear();
+
+    cannedGroqResponse = {
+      actionType: 'SYSTEM_UPDATE_BRANDING',
+      summary: 'Applying a beautiful gradient across your widget.',
+    };
+
+    const res = await post('make my header a gradient blue and green');
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.actionType).toBe('SYSTEM_UPDATE_BRANDING');
+    expect(persistChatMessage).toHaveBeenCalledTimes(1);
+    expect(logPlatformAction).toHaveBeenCalledTimes(1);
   });
 });

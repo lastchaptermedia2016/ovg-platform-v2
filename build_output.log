@@ -45,7 +45,6 @@ Route (app)
 ├ ƒ /api/tenants/bulk-update
 ├ ƒ /api/tenants/update-config
 ├ ƒ /api/tenants/update-config-with-greeting
-├ ƒ /api/tts
 ├ ○ /auth
 ├ ○ /create-agent
 ├ ○ /pricing

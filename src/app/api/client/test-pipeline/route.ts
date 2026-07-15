@@ -58,14 +58,14 @@ export async function GET() {
     if (tenantRecord?.reseller_id) {
       const { data: resellerData } = await supabaseAdmin
         .from('resellers')
-        .select('branding_bag')
+        .select('branding_colors, branding_assets')
         .eq('id', tenantRecord.reseller_id)
         .single();
 
-      if (resellerData?.branding_bag?.headerConfig?.type === 'none') {
+      if (resellerData?.branding_colors) {
         results.resellerRpcPropagation = 'PASS - Live widget assets synchronized natively via RPC';
       } else {
-        results.resellerRpcPropagation = 'FAIL - Reseller branding bag did not match';
+        results.resellerRpcPropagation = 'FAIL - Reseller branding did not reflect the normalized UI layout';
       }
     } else {
       results.resellerRpcPropagation = 'SKIP - No reseller linked to test tenant ID';

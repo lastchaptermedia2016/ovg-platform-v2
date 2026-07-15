@@ -26,19 +26,27 @@ export default async function WidgetPage({
 
   // ─── BRANDING PROPAGATION FIX ────────────────────────────────────────────
   // The widget must display reseller branding, not tenant-local defaults.
-  // We perform a lightweight join via tenant_id → resellers.branding_bag.
-  // This ensures the widget always reflects the active reseller theme.
+  // We perform a lightweight join via tenant_id → resellers.branding_colors /
+  // resellers.branding_assets (the live JSONB columns). This ensures the
+  // widget always reflects the active reseller theme.
   // ─────────────────────────────────────────────────────────────────────────
   const supabase = await createClient();
   const { data: resellerBrandingRow, error: brandingError } = await supabase
     .from("resellers")
-    .select("branding_bag")
+    .select("branding_colors, branding_assets")
     .eq("tenant_id", tenant.tenant_id)
     .maybeSingle();
 
-  const rawBranding = brandingError
+  const rawColors = brandingError
     ? null
-    : ((resellerBrandingRow?.branding_bag as Record<string, unknown> | null) ?? null);
+    : ((resellerBrandingRow?.branding_colors as Record<string, unknown> | null) ?? null);
+
+  const rawBranding: Record<string, unknown> | null = rawColors
+    ? {
+        primaryColor: rawColors.primary ?? rawColors.primaryColor ?? null,
+        accentColor: rawColors.secondary ?? rawColors.accentColor ?? null,
+      }
+    : null;
 
   const resellerBranding = rawBranding;
 

@@ -4,15 +4,18 @@
  * ZEEDER System Microphone Button
  *
  * A production-grade Push-to-Talk (PTT) UI component that integrates with
- * the ZEEDER voice-action pipeline. It uses the Web Speech API for
- * client-side speech recognition and dispatches the resulting transcript
- * through `useZeederVoice()` → `/api/client/process-command` → `ZeederContext.dispatch()`.
+ * the ZEEDER voice-action pipeline via `useZeederVoice()`. The hook owns
+ * the capture engine (MediaRecorder → secure Whisper STT, with a device
+ * Web Speech fallback), so this component only orchestrates the PTT gesture
+ * and reflects visual state (idle / listening / executing / error / local-fallback).
  *
  * Visual States:
  * - `idle`       : Circular gold-border button with a subtle glow.
  * - `listening`  : Solid gold background + animated "Listening..." indicator.
  * - `executing`  : Pulse-glow animation while the action pipeline is processing.
  * - `error`      : Red border + red glow when the last dispatch failed.
+ * - `localFallback`: A small "Local Engine Active" badge when STT falls back
+ *                    to the device Web Speech engine instead of the server pipeline.
  *
  * @remarks
  * This component is intentionally **zero-dependency** with respect to the
@@ -29,11 +32,10 @@
 
 'use client';
 
-import { useRef, useState, useCallback, useEffect } from 'react';
+import { useEffect } from 'react';
 import { useZeeder } from '@/contexts/ZeederContext';
 import { useZeederVoice } from '@/hooks/useZeederVoice';
 import { ClientHelpModal } from '@/components/client/ClientHelpModal';
-import { getSpeechRecognition, type SpeechRecognitionInstance, type SpeechRecognitionResultEvent, type SpeechRecognitionErrorEvent } from '@/types/voice-parser';
 
 // ──────────────────────────── Constants ─────────────────────────────────
 
@@ -46,10 +48,9 @@ const ERROR_VISIBLE_DURATION_MS = 3_000;
  * SystemMicButton
  *
  * A circular Push-to-Talk button that:
- * 1. Starts the Web Speech API on `mousedown`.
- * 2. Stops recognition on `mouseup` / `mouseleave`.
- * 3. Sends the transcript through `useZeederVoice().handleVoiceCommand()`.
- * 4. Reflects the ZEEDER state machine visually (idle / listening / executing / error).
+ * 1. Starts the hook's capture engine on `mousedown` / `touchstart`.
+ * 2. Stops it on `mouseup` / `mouseleave` / `touchend`.
+ * 3. Reflects the ZEEDER state machine visually (idle / listening / executing / error).
  *
  * @returns A styled `<button>` element.
  */
@@ -60,19 +61,20 @@ interface SystemMicButtonProps {
 
 export default function SystemMicButton({ onTranscriptChange, onRecordingStateChange }: SystemMicButtonProps) {
   const { mode } = useZeeder();
-  const { handleVoiceCommand, isProcessing, error: voiceError, clearError, helpModalOpen, dismissHelpModal } = useZeederVoice();
-
-  // ── Local state ────────────────────────────────────────────────────
-  const [isListening, setIsListening] = useState(false);
-
-  // Refs for speech recognition lifecycle
-  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
-  const transcriptRef = useRef('');
+  const {
+    startListening,
+    stopListening,
+    isListening,
+    isProcessing,
+    transcript,
+    error: voiceError,
+    clearError,
+    helpModalOpen,
+    dismissHelpModal,
+    sttFallback,
+  } = useZeederVoice();
 
   // ── Error visual state is derived directly from voiceError ─────────
-  // No separate hasError state needed — avoids setState-in-effect linter
-  // violations. The hook's clearError() will be called from the UI or
-  // by a future caller.
   const hasError = voiceError !== null;
 
   // Auto-clear error after a timeout — runs as a side-effect subscription
@@ -85,97 +87,14 @@ export default function SystemMicButton({ onTranscriptChange, onRecordingStateCh
     return () => clearTimeout(timer);
   }, [voiceError, clearError]);
 
-  // ── Cleanup on unmount ─────────────────────────────────────────────
+  // Surface the live transcript + recording state to the parent (if wired).
   useEffect(() => {
-    return () => {
-      if (recognitionRef.current) {
-        try { recognitionRef.current.abort(); } catch { /* noop */ }
-        recognitionRef.current = null;
-      }
-    };
-  }, []);
+    onTranscriptChange?.(transcript);
+  }, [transcript, onTranscriptChange]);
 
-  // ── Start speech recognition ───────────────────────────────────────
-  const startListening = useCallback(() => {
-    // Guard: prevent overlapping sessions
-    if (isListening || isProcessing) return;
-
-    const SpeechRecognitionAPI = getSpeechRecognition();
-
-    if (!SpeechRecognitionAPI) {
-      console.warn('[ZEEDER-VOICE] Web Speech API not available in this browser.');
-      return;
-    }
-
-    // Clear previous transcript at the start of a new recording session
-    onTranscriptChange?.('');
-    onRecordingStateChange?.(true);
-
-    const recognition = new SpeechRecognitionAPI();
-    recognition.lang = 'en-US';
-    recognition.interimResults = true;
-    recognition.continuous = false;
-    recognition.maxAlternatives = 1;
-
-    recognition.onresult = (event: SpeechRecognitionResultEvent) => {
-      const results = event.results;
-      console.log('[TRACE] SpeechRecognitionResult:', {
-        resultsLength: results.length,
-        result0Length: results[0]?.length,
-        transcript: results[0]?.[0]?.transcript,
-        isFinal: results[0]?.isFinal,
-      });
-      if (results.length > 0 && results[0].length > 0 && results[0][0].transcript) {
-        const captured = results[0][0].transcript.trim();
-        transcriptRef.current = captured;
-        onTranscriptChange?.(captured);
-        console.log('[TRACE] Transcript stored:', `"${captured}"`);
-      }
-    };
-
-    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      console.error('[ZEEDER-VOICE] Speech recognition error:', event.error ?? 'unknown');
-      setIsListening(false);
-      onRecordingStateChange?.(false);
-    };
-
-    recognition.onend = () => {
-      console.log('[ZEEDER-VOICE] Speech recognition ended');
-      setIsListening(false);
-      onRecordingStateChange?.(false);
-      const transcript = transcriptRef.current;
-      console.log('[ZEEDER-VOICE] Transcript captured:', transcript ? `"${transcript}"` : '(empty)');
-      // Note: Do NOT clear transcript here — let the parent decide when to clear
-      // This preserves the "Reseller Effect" where users can read their spoken text
-
-      if (transcript) {
-        console.log('[ZEEDER-VOICE] Calling handleVoiceCommand with transcript');
-        handleVoiceCommand(transcript);
-      } else {
-        console.warn('[ZEEDER-VOICE] No transcript captured, not calling handleVoiceCommand');
-      }
-    };
-
-    try {
-      recognition.start();
-      recognitionRef.current = recognition;
-      setIsListening(true);
-      transcriptRef.current = '';
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to start speech recognition.';
-      console.error('[ZEEDER-VOICE]', message);
-      setIsListening(false);
-      onRecordingStateChange?.(false);
-    }
-  }, [isListening, isProcessing, handleVoiceCommand, onTranscriptChange, onRecordingStateChange]);
-
-  // ── Stop speech recognition ────────────────────────────────────────
-  const stopListening = useCallback(() => {
-    if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch { /* noop */ }
-      recognitionRef.current = null;
-    }
-  }, []);
+  useEffect(() => {
+    onRecordingStateChange?.(isListening);
+  }, [isListening, onRecordingStateChange]);
 
   // ── Determine visual state ─────────────────────────────────────────
   const isExecuting = isProcessing || mode === 'executing';
@@ -261,6 +180,13 @@ export default function SystemMicButton({ onTranscriptChange, onRecordingStateCh
       {isListening && (
         <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[7px] md:text-[8px] tracking-[0.15em] uppercase text-[#FFD700] font-agrandir whitespace-nowrap animate-pulse">
           Listening...
+        </span>
+      )}
+
+      {/* ── "Local Engine Active" badge (visible only on Web Speech fallback) ──── */}
+      {sttFallback && !isListening && (
+        <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[7px] md:text-[8px] tracking-[0.12em] uppercase text-amber-300 font-agrandir whitespace-nowrap">
+          Local Engine Active
         </span>
       )}
 
