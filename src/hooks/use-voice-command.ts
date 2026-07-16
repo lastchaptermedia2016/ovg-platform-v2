@@ -609,7 +609,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
         body: JSON.stringify({
           text: aiText.trim(),
           voice: 'hannah',
-          model: 'orpheus-v1',
+          model: 'canopylabs/orpheus-v1-english',
           metadata: { resellerSlug: currentResellerId.trim(), tenantId: currentTtsContext.tenantId, category: currentTtsContext.category },
         }),
         signal,

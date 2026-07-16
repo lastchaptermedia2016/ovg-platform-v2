@@ -74,13 +74,18 @@ export function ResellerProvider({
 
         setBranding(brandingData);
 
-        // Inject CSS variables immediately (flicker-free)
+        // Inject CSS variables immediately (flicker-free). We bridge the
+        // reseller's JSONB `branding_colors` onto BOTH the legacy
+        // `--brand-*` set and the active `--w-*` set consumed by the
+        // ChatWidget / Zeeder UI, so the database-driven reseller theme
+        // actually reaches the widget surface.
         if (typeof document !== "undefined") {
           const root = document.documentElement;
           root.style.setProperty("--brand-primary", brandingData.primaryColor);
           root.style.setProperty("--brand-accent", brandingData.accentColor);
           root.style.setProperty("--brand-name", `"${brandingData.name}"`);
-          
+          root.style.setProperty("--w-primary", brandingData.primaryColor);
+          root.style.setProperty("--w-accent", brandingData.accentColor);
         }
       } catch (error) {
         console.error("Error fetching reseller branding:", error);

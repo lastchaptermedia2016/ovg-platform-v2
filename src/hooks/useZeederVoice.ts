@@ -36,6 +36,21 @@ import { markVoiceNavigation } from '@/lib/voice/voiceNavSignal';
 import { transcodeBlobToWav } from '@/utils/audio/transcode-to-wav';
 import { getSpeechRecognition } from '@/types/voice-parser';
 
+/**
+ * Normalizes text so TTS engines pronounce South African Rands (ZAR) naturally.
+ * Converts patterns like "R3,250", "R3 250", or "R39" into "[Number] Rands" for smooth speech synthesis.
+ */
+export function normalizeTextForTTS(text: string): string {
+  if (!text) return "";
+  return text
+    .replace(/\bR\s?(\d{1,3}(?:[,\s]\d{3})*(?:\.\d+)?)\b/g, (match, numberGroup) => {
+      // Strip any thousands formatting commas or spaces
+      const cleanNumber = numberGroup.replace(/[,\s]/g, "");
+      return `${cleanNumber} Rands`;
+    })
+    .replace(/R(\d+)/g, "$1 Rands");
+}
+
 // ──────────────────────────── Types ─────────────────────────────────────
 
 /** Internal state for the voice bridge. */
@@ -115,6 +130,8 @@ export function useZeederVoice(): {
   transcript: string;
   /** True while a voice command is being processed. */
   isProcessing: boolean;
+  /** True while the concierge's TTS audio is actively playing back. */
+  isSpeaking: boolean;
   /** The last error message if an operation failed. */
   error: string | null;
   /** True when STT fell back to the device Web Speech engine (local-only). */
@@ -143,6 +160,8 @@ export function useZeederVoice(): {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [sttFallback, setSttFallback] = useState(false);
+  // ── TTS playback feedback (drives the "speaking" mic micro-state) ──
+  const [isSpeaking, setIsSpeaking] = useState(false);
 
   const clientProfileRef = useRef(clientProfile);
   useEffect(() => {
@@ -358,7 +377,7 @@ export function useZeederVoice(): {
       const ttsResponse = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: summary, voice: 'hannah' }),
+        body: JSON.stringify({ text: normalizeTextForTTS(summary), voice: 'hannah' }),
       });
       if (!ttsResponse.ok) {
         console.error('[ZEEDER-VOICE] TTS request failed');
@@ -367,7 +386,15 @@ export function useZeederVoice(): {
       const audioBlob = await ttsResponse.blob();
       const audioUrl = URL.createObjectURL(audioBlob);
       const audio = new Audio(audioUrl);
-      audio.onended = () => URL.revokeObjectURL(audioUrl);
+      audio.onended = () => {
+        URL.revokeObjectURL(audioUrl);
+        setIsSpeaking(false);
+      };
+      audio.onerror = () => {
+        URL.revokeObjectURL(audioUrl);
+        setIsSpeaking(false);
+      };
+      setIsSpeaking(true);
       await audio.play();
     } catch {
       console.error('[ZEEDER-VOICE] TTS playback failed');
@@ -512,6 +539,18 @@ export function useZeederVoice(): {
             (data.payload as { branding?: unknown } | undefined)?.branding,
           );
           if (!hasBranding) {
+            // The Studio uses route-based tabs (Branding vs Persona are distinct
+            // routes). A `tab`/`view` payload tells us which viewport to open;
+            // default to Branding when omitted. This lets a voice command like
+            // "take me to the persona page" auto-switch the active view rather
+            // than asking the user to click the tab manually.
+            const tab = (data.payload as { tab?: unknown; view?: unknown } | undefined)?.tab
+              ?? (data.payload as { tab?: unknown; view?: unknown } | undefined)?.view;
+            const targetPath =
+              tab === 'persona'
+                ? '/client/dashboard/studio/persona'
+                : '/client/dashboard/studio/branding';
+
             // Mark this as a voice-initiated navigation so the destination
             // VoiceProvider suppresses its generic welcome greeting; our own
             // confirmation below is the only spoken output (no channel overlap).
@@ -521,9 +560,9 @@ export function useZeederVoice(): {
             await speakSummary(
               data.summary ?? 'Welcome to your branding page, how can I help?',
             );
-            router.push('/client/dashboard/studio/branding');
+            router.push(targetPath);
             setState(prev => ({ ...prev, isProcessing: false }));
-            console.log('[ZEEDER-VOICE] Routed SYSTEM_UPDATE_BRANDING → /client/dashboard/studio/branding');
+            console.log(`[ZEEDER-VOICE] Routed SYSTEM_UPDATE_BRANDING → ${targetPath}`);
             return;
           }
         }
@@ -536,6 +575,16 @@ export function useZeederVoice(): {
             `[ZEEDER-VOICE] Endpoint responded with non-ZEEDER actionType: "${data.actionType}" — ${data.summary ?? 'no summary'}`,
           );
 
+          // CLIENT_NOP with a conversational summary: a genuine informational
+          // reply (e.g. "What is smart booking?" returns the sales text in
+          // summary). Speak it as a successful answer and do NOT fall through
+          // to any error/snag path.
+          if (data.actionType === 'CLIENT_NOP' && data.summary) {
+            await speakSummary(data.summary);
+            setState(prev => ({ ...prev, isProcessing: false }));
+            console.log('[ZEEDER-VOICE] Spoke CLIENT_NOP informational reply.');
+            return;
+          }
           // SYSTEM_HELP: elevate from speech-only to a visual capabilities modal.
           // Voice output is retained for accessibility, but the primary output
           // is the modal trigger owned by this hook's consumer.
@@ -632,6 +681,7 @@ export function useZeederVoice(): {
     isListening,
     transcript,
     isProcessing: state.isProcessing,
+    isSpeaking,
     error: state.error,
     sttFallback,
     clearError,

@@ -66,6 +66,7 @@ export default function SystemMicButton({ onTranscriptChange, onRecordingStateCh
     stopListening,
     isListening,
     isProcessing,
+    isSpeaking,
     transcript,
     error: voiceError,
     clearError,
@@ -100,23 +101,23 @@ export default function SystemMicButton({ onTranscriptChange, onRecordingStateCh
   const isExecuting = isProcessing || mode === 'executing';
 
   // ── CSS class computation ──────────────────────────────────────────
-  const borderColor = hasError
-    ? 'border-red-500'
-    : 'border-[#FFD700]';
+  // All gold values are driven by the reseller's dynamic brand accent
+  // (`--w-accent`, injected from branding_colors) with a luxury gold
+  // fallback, so the mic inherits the database-driven theme.
 
-  const bgColor = isListening
-    ? 'bg-[#FFD700]'
-    : 'bg-transparent';
+  const borderColor = hasError ? 'border-red-500' : 'border-[color:var(--w-accent,#FFD700)]';
 
   const glowClass = isExecuting
     ? 'zeeder-pulse-animation'
     : isListening
-      ? 'shadow-[0_0_16px_rgba(255,215,0,0.8)]'
-      : hasError
-        ? 'shadow-[0_0_12px_rgba(239,68,68,0.6)]'
-        : 'shadow-[0_0_6px_rgba(255,215,0,0.25)]';
+      ? 'shadow-[0_0_16px_var(--w-accent,#FFD700)]'
+      : isSpeaking
+        ? 'shadow-[0_0_10px_var(--w-accent,#FFD700)]'
+        : hasError
+          ? 'shadow-[0_0_12px_rgba(239,68,68,0.6)]'
+          : 'shadow-[0_0_6px_var(--w-accent,#FFD700)]';
 
-  const iconColor = isListening ? 'text-black' : 'text-[#FFD700]';
+  const iconColor = isListening ? 'text-black' : 'text-[color:var(--w-accent,#FFD700)]';
 
   return (
     <div className="relative flex flex-col items-center">
@@ -143,14 +144,14 @@ export default function SystemMicButton({ onTranscriptChange, onRecordingStateCh
           w-11 h-11 md:w-11 md:h-11
           rounded-full
           border ${borderColor}
-          ${bgColor}
           ${glowClass}
           transition-all duration-300 ease-out
-          focus:outline-none focus-visible:ring-2 focus-visible:ring-[#FFD700]/50 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950
+          focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--w-accent,#FFD700)]/50 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950
           disabled:opacity-60 disabled:cursor-not-allowed
           cursor-pointer select-none
           font-agrandir
         `}
+        style={isListening ? { backgroundColor: 'var(--w-accent, #FFD700)' } : undefined}
       >
         {/* ── Mic Icon ─────────────────────────────────────────────── */}
         <svg
@@ -172,14 +173,26 @@ export default function SystemMicButton({ onTranscriptChange, onRecordingStateCh
 
         {/* ── Processing spinner ring (visible only while executing) ── */}
         {isExecuting && (
-          <span className="absolute inset-0 rounded-full border-2 border-transparent border-t-[#FFD700] animate-spin pointer-events-none" />
+          <span className="absolute inset-0 rounded-full border-2 border-transparent border-t-[color:var(--w-accent,#FFD700)] animate-spin pointer-events-none" />
         )}
       </button>
 
       {/* ── "Listening..." label (visible only while capturing) ──── */}
       {isListening && (
-        <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[7px] md:text-[8px] tracking-[0.15em] uppercase text-[#FFD700] font-agrandir whitespace-nowrap animate-pulse">
+        <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[7px] md:text-[8px] tracking-[0.15em] uppercase text-[color:var(--w-accent,#FFD700)] font-agrandir whitespace-nowrap animate-pulse">
           Listening...
+        </span>
+      )}
+
+      {/* ── "Speaking..." label (visible only while TTS audio plays) ──── */}
+      {isSpeaking && !isListening && (
+        <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[7px] md:text-[8px] tracking-[0.15em] uppercase text-[color:var(--w-accent,#FFD700)] font-agrandir whitespace-nowrap animate-pulse flex items-center gap-1">
+          <span className="inline-flex gap-[2px]">
+            <span className="w-[2px] h-2 bg-[color:var(--w-accent,#FFD700)] animate-pulse" style={{ animationDelay: '0ms' }} />
+            <span className="w-[2px] h-2 bg-[color:var(--w-accent,#FFD700)] animate-pulse" style={{ animationDelay: '120ms' }} />
+            <span className="w-[2px] h-2 bg-[color:var(--w-accent,#FFD700)] animate-pulse" style={{ animationDelay: '240ms' }} />
+          </span>
+          Speaking...
         </span>
       )}
 

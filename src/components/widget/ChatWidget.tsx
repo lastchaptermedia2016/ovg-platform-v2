@@ -101,6 +101,14 @@ const ChatWidget = ({
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [mounted, setMounted] = useState(false);
 
+  // ── Cognitive Memory (relational recognition) state ─────────────
+  // Fetched from the client-safe /api/client/memories endpoint so the widget
+  // can surface a subtle "Recognized User" pill when the concierge has prior
+  // relational memory (client_name / company_name / preferences) about the
+  // visitor. Never blocks the chat; degrades silently to no indicator.
+  const [clientMemories, setClientMemories] = useState<Record<string, string>>({});
+  const [hasClientMemory, setHasClientMemory] = useState(false);
+
   // ── Preview test-drive voice state (only used when `preview` is true) ──
   const previewRecognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const [previewRecording, setPreviewRecording] = useState(false);
@@ -497,6 +505,33 @@ const ChatWidget = ({
     styleEl.textContent = css;
   }, [branding]);
 
+  // Fetch relational client memory (client_name / company_name / preferences)
+  // so the header can surface a subtle "Recognized User" indicator. Skipped in
+  // Studio preview (no real session) and silent on any failure.
+  useEffect(() => {
+    if (preview) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/client/memories", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          memories?: Record<string, string>;
+          hasMemory?: boolean;
+        };
+        if (cancelled) return;
+        const memories = data.memories ?? {};
+        setClientMemories(memories);
+        setHasClientMemory(Boolean(data.hasMemory) || Object.keys(memories).length > 0);
+      } catch {
+        /* non-fatal: no recognition pill */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [preview]);
+
   return (
     <>
       {/* ===== PEEK TEASER ===== */}
@@ -507,7 +542,7 @@ const ChatWidget = ({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 10, scale: 0.95 }}
             transition={{ type: "spring", stiffness: 300, damping: 24 }}
-            className="fixed bottom-24 right-6 z-[9998] max-w-[280px] rounded-2xl border border-pink-300/40 bg-gradient-to-br from-gray-900/90 to-gray-800/90 backdrop-blur-xl p-5 shadow-2xl"
+            className="fixed bottom-24 left-4 right-4 sm:left-auto sm:right-6 z-[9998] max-w-[calc(100vw-2rem)] sm:max-w-[280px] rounded-2xl border border-pink-300/40 bg-gradient-to-br from-gray-900/90 to-gray-800/90 backdrop-blur-xl p-5 shadow-2xl"
           >
             <button
               onClick={() => setShowPeek(false)}
@@ -535,7 +570,7 @@ const ChatWidget = ({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 10, scale: 0.95 }}
             transition={{ type: "spring", stiffness: 300, damping: 24 }}
-            className="fixed bottom-24 right-6 z-[10002] max-w-[280px] rounded-2xl border border-pink-300/40 bg-gradient-to-br from-gray-900/90 to-gray-800/90 backdrop-blur-xl p-5 shadow-2xl"
+            className="fixed bottom-24 left-4 right-4 sm:left-auto sm:right-6 z-[10002] max-w-[calc(100vw-2rem)] sm:max-w-[280px] rounded-2xl border border-pink-300/40 bg-gradient-to-br from-gray-900/90 to-gray-800/90 backdrop-blur-xl p-5 shadow-2xl"
           >
             <button
               onClick={() => setShowResetConfirm(false)}
@@ -628,7 +663,7 @@ const ChatWidget = ({
           className={
             preview
               ? "relative z-0 widget-body flex flex-col w-full h-full rounded-3xl border-2 overflow-hidden shadow-2xl bg-transparent"
-              : "fixed z-[9999] widget-body bottom-[max(1.5rem,env(safe-area-inset-bottom))] right-[max(1rem,env(safe-area-inset-right))] w-[94vw] max-w-[380px] sm:max-w-[420px] rounded-3xl border-2 overflow-hidden shadow-2xl bg-transparent"
+              : "fixed z-[9999] widget-body bottom-[max(1.5rem,env(safe-area-inset-bottom))] left-[max(0.5rem,env(safe-area-inset-left))] right-[max(1rem,env(safe-area-inset-right))] w-[calc(100vw-1rem)] max-w-[380px] sm:max-w-[420px] rounded-3xl border-2 overflow-hidden shadow-2xl bg-transparent"
           }
           style={{ borderColor: "var(--w-primary, #0097b2)" }}
         >
@@ -653,6 +688,24 @@ const ChatWidget = ({
                   </span>
                   <span className="text-[11px] text-white/70 font-medium">Online now</span>
                 </div>
+                {hasClientMemory && !preview && (
+                  <div
+                    className="mt-1 inline-flex items-center gap-1.5 rounded-full border px-2 py-[2px] text-[10px] font-medium tracking-wide backdrop-blur-md"
+                    style={{
+                      borderColor: "var(--w-accent, #D4AF37)",
+                      color: "var(--w-accent, #D4AF37)",
+                      backgroundColor: "color-mix(in srgb, var(--w-accent, #D4AF37) 12%, transparent)",
+                    }}
+                    title={clientMemories.preferences ? `Preferences: ${clientMemories.preferences}` : "We recognize you from prior conversations"}
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ backgroundColor: "var(--w-accent, #D4AF37)" }} />
+                    {clientMemories.client_name
+                      ? `Recognized · ${clientMemories.client_name}`
+                      : clientMemories.company_name
+                        ? `Recognized · ${clientMemories.company_name}`
+                        : "Cognitive Memory Active"}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -802,9 +855,10 @@ const ChatWidget = ({
               {voiceFeaturesEnabled && (
                 <Button
                   onClick={handleMicClick}
-                  className={`shrink-0 ${isRecording ? "text-blue-500 animate-pulse scale-110" : "text-pink-500 hover:text-pink-600"}`}
+                  aria-label={isRecording ? "Stop listening" : "Hold to talk"}
+                  className={`shrink-0 h-10 w-10 flex items-center justify-center rounded-full ${isRecording ? "text-blue-500 animate-pulse scale-110" : "text-pink-500 hover:text-pink-600"}`}
                 >
-                  {isRecording ? <MicOff className="h-6 w-6" /> : <Mic className="h-6 w-6" />}
+                  {isRecording ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
                 </Button>
               )}
 
@@ -814,15 +868,16 @@ const ChatWidget = ({
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 placeholder={isRecording ? "🎤 Listening..." : "Type your message..."}
-                className="flex-1 px-3 py-2 rounded-lg border border-gray-300 bg-white/90 text-black"
+                className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-gray-300 bg-white/90 text-black"
                 onKeyDown={e => e.key === "Enter" && sendMessageDirect(input)}
               />
 
               {/* Send Button */}
               <Button
                 onClick={() => sendMessageDirect(input)}
+                aria-label="Send message"
                 style={{ backgroundColor: "var(--w-primary, #0097b2)" }}
-                className="text-white px-4 shrink-0"
+                className="text-white h-10 w-10 flex items-center justify-center rounded-full shrink-0"
               >
                 <Send className="h-4 w-4" />
               </Button>

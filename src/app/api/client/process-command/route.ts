@@ -23,8 +23,17 @@ import { z } from 'zod';
 import { zeederActionRegistry, isZeederActionId, type ZeederActionId } from '@/lib/zeeder/action-registry';
 import { CLIENT_SYSTEM_REGISTRY, type ClientSystemItem } from '@/lib/client-system-registry';
 import { extractPersonaMode, hasPersonaModeIntent } from '@/lib/ai/extract-persona-mode';
+import { buildSystemPrompt } from '@/lib/ai/system-prompt-builder';
+import { getClientMemories, extractAndStoreMemories } from '@/lib/ai/memory-service';
 import { resolveTenantId } from '@/lib/resolveTenantId';
 import { logPlatformAction, persistChatMessage } from '@/lib/audit/platform-logger';
+import {
+  resolveActiveTools,
+  INTEGRATION_TOOL_BY_NAME,
+  FunctionCallSchema,
+  type ToolDefinition,
+} from '@/lib/ai/tools/integration-tools';
+import { executeIntegrationTool } from '@/lib/ai/tools/integration-executors';
 
 // ──────────────────────────── Types & Schemas ───────────────────────────
 
@@ -119,11 +128,27 @@ const CLIENT_HELP_INTENT_REGEX =
  * Informational / how-to queries ("how do I upload my logo", "where is the
  * color picker", "help me with the header text"). These are educational, not
  * capability listings, so they bypass the static `SYSTEM_HELP` block and are
- * forwarded to the LLM (`runSemanticFallback` → `buildClientAgentPrompt`) where
- * the active-page context rule produces a live on-screen guide.
+ * forwarded to the LLM (`runSemanticFallback`) where the active-page context
+ * rule produces a live on-screen guide from the hydrated system prompt.
  */
 const CLIENT_INFORMATIONAL_INTENT_REGEX =
   /(^|\b)(how do|how to|how can i|where is|where can i|can you show me|show me how|help me with|help me set up|guide me|walk me through|explain|what is|what are|tell me about)/i;
+
+/**
+ * Persona-page navigation intent. Matches explicit "go to / open / show / take
+ * me to the persona" phrasing (page/settings/configurations/tab/view) WITHOUT
+ * requiring a concrete mode ("sales"/"concierge"). This is distinct from
+ * `hasPersonaModeIntent` (which needs a change verb to avoid false positives on
+ * educational mentions). Pure navigation ("open the persona page") must resolve
+ * deterministically to the unified Studio dashboard — where Branding and Persona
+ * are co-located sibling viewports — exactly like the branding navigation path.
+ *
+ * A negative lookahead on the mode keywords ("sales"/"concierge") keeps mode
+ * directives ("switch persona to concierge") on the `hasPersonaModeIntent`
+ * path so the `aiPersona.personaMode` payload is still injected.
+ */
+const CLIENT_PERSONA_NAV_INTENT_REGEX =
+  /\b(open|show|take|go|navigate|visit|jump|get|load|display|access|launch)\b(?!.*\b(sales|concierge)\b).{0,25}\b(persona|ai persona|persona settings|persona configurations|persona tab|persona view|persona page)\b/i;
 
 /**
  * Identity questions ("what is your name", "who are you") must always resolve
@@ -134,15 +159,6 @@ const CLIENT_INFORMATIONAL_INTENT_REGEX =
 const CLIENT_IDENTITY_INTENT_REGEX =
   /(who\s+(?:are|re)\s+(?:you|u)\b)|(what(?:'s| is|\s+is)?\s+(?:your|ur|the)?\s*name\b)|(?:tell me\s+)?your\s+name\b|(your\s+identity\b)|(what\s+is\s+your\s+identity\b)/i;
 
-const CLIENT_SYSTEM_GLOSSARY = {
-  primaryColor: "The dominant hex code color used for the main buttons, headers, and accents of your active customer chat widget.",
-  logoUrl: "A direct link to your company logo image file (.png or .jpg). This renders prominently at the top of the chat window for brand recognition.",
-  header: "The configuration section for the very top area of your widget. You can set it to display your brand name, an avatar, or custom text.",
-  footer: "The links, copyright notes, or privacy policy anchors rendered at the very bottom edge of your embedded widget container.",
-  widgetBody: "The main conversation canvas where chat bubbles, input text boxes, and AI interactions actively render for your customers.",
-  widgetPosition: "The physical screen anchor point where your widget icon rests on your live pages (e.g., Bottom Right or Bottom Left).",
-  telemetry: "The streaming performance dashboard showing real-time metrics, response speeds, user engagement levels, and active socket connections.",
-};
 
 /**
  * Concrete, dispatchable example utterances surfaced in the `SYSTEM_HELP`
@@ -150,6 +166,76 @@ const CLIENT_SYSTEM_GLOSSARY = {
  * which would re-match `CLIENT_HELP_INTENT_REGEX` and create a repeat loop.
  */
 const HELP_VOICE_EXAMPLES = ['Update my branding', 'Show my telemetry'];
+
+/**
+ * Static product catalog (USD + ZAR) used for resilient, offline-safe
+ * answers when the LLM is unavailable. Mirrors the prompt-builder catalog so
+ * informational add-on questions ("What is smart booking?") always return a
+ * rich, correctly-priced reply even if the Groq call throws.
+ */
+interface ProductAddon {
+  match: RegExp;
+  name: string;
+  value: string;
+  setupUsd: number;
+  setupZar: number;
+  monthlyUsd: number;
+  monthlyZar: number;
+}
+
+const PRODUCT_ADDONS: ProductAddon[] = [
+  {
+    match: /(smart\s?booking|calendar\s?sync|book|appointment|schedul)/i,
+    name: 'Smart Booking & Calendar Sync',
+    value: 'let the AI concierge book appointments directly into your calendar.',
+    setupUsd: 199, setupZar: 3250, monthlyUsd: 39, monthlyZar: 640,
+  },
+  {
+    match: /(live\s?inventory|inventory|commerce|catalog|stock|product\s?avail)/i,
+    name: 'Live Inventory & Commerce',
+    value: 'surface live stock and product availability inside every conversation.',
+    setupUsd: 299, setupZar: 4900, monthlyUsd: 69, monthlyZar: 1130,
+  },
+  {
+    match: /(crm|lead\s?sync|hubspot|salesforce|pipeline)/i,
+    name: 'CRM Lead Sync',
+    value: 'auto-push qualified leads and transcripts into your CRM pipeline.',
+    setupUsd: 149, setupZar: 2450, monthlyUsd: 29, monthlyZar: 480,
+  },
+  {
+    match: /(vector|knowledge\s?base|rag|rag|faq|manual|pdf|embed)/i,
+    name: 'Vector Knowledge-Base',
+    value: 'train the assistant on your manuals, policies, and FAQs via PDF uploads.',
+    setupUsd: 249, setupZar: 4100, monthlyUsd: 49, monthlyZar: 800,
+  },
+  {
+    match: /(whatsapp|sms|handover|messaging|multi.?channel)/i,
+    name: 'WhatsApp / SMS Handover',
+    value: 'hand off web chat conversations to WhatsApp or SMS without losing context.',
+    setupUsd: 149, setupZar: 2450, monthlyUsd: 39, monthlyZar: 640,
+  },
+];
+
+/**
+ * Build a rich, on-brand reply for an add-on question from the static catalog,
+ * used as a fallback when the LLM is unreachable. Returns null when the text
+ * does not appear to be about an add-on (so other fallbacks can apply).
+ */
+function buildLocalAddonAnswer(text: string): string | null {
+  for (const addon of PRODUCT_ADDONS) {
+    if (addon.match.test(text)) {
+      const setup = '\u0024' + addon.setupUsd + ' / R' + addon.setupZar.toLocaleString('en-ZA');
+      const monthly = '\u0024' + addon.monthlyUsd + ' / R' + addon.monthlyZar.toLocaleString('en-ZA');
+      return (
+        addon.name + ' lets ' + addon.value + ' ' +
+        'Pricing: a once-off setup of ' + setup + ' and a monthly recurring fee of ' + monthly + '. ' +
+        'Your Reseller can also activate and set up these premium integrations directly on your behalf — ' +
+        'just head to the "Integrations" tab in your Studio dashboard to configure it.'
+      );
+    }
+  }
+  return null;
+}
 
 /**
  * Capability labels surfaced for a client `SYSTEM_HELP` response.
@@ -166,81 +252,60 @@ function buildClientCapabilities(): string[] {
 }
 
 /**
+ * Render the active integration tools as an injection-safe "available
+ * functions" contract appended to the system prompt. The LLM is instructed to
+ * emit a `functionCall` object inside its JSON response when it decides to use
+ * one. This avoids the Groq `tools` + `response_format: json_object`
+ * incompatibility while keeping the tool surface dynamic and client-scoped.
+ *
+ * Returns an empty string when no integrations are active, so the prompt is
+ * unchanged for tenants without integrations (no routing regression).
+ */
+function buildIntegrationToolsPrompt(tools: ToolDefinition[]): string {
+  if (tools.length === 0) return '';
+  const blocks = tools.map((tool) => {
+    const params = Object.entries(tool.parameters)
+      .map(([key, p]) => `      - "${key}" (${p.type}): ${p.description}`)
+      .join('\n');
+    return [
+      `   - ${tool.name}: ${tool.description}`,
+      `     Parameters:`,
+      params,
+    ].join('\n');
+  });
+  return [
+    '',
+    '=== AVAILABLE INTEGRATION FUNCTIONS ===',
+    'If the user request clearly matches an integration function below, respond with a `functionCall` object (in addition to the standard `actionType`/`summary`) like:',
+    '   { "actionType": "CLIENT_NOP", "summary": "...", "functionCall": { "name": "<function>", "arguments": { ... } } }',
+    'Only emit `functionCall` for functions listed here and only when the user explicitly asks for that capability. Do not invent functions.',
+    ...blocks,
+  ].join('\n');
+}
+
+/**
+ * Safely extract a `functionCall` from the LLM's parsed JSON response.
+ * Returns null when absent or invalid so the pipeline degrades gracefully.
+ */
+function parseFunctionCall(
+  parsed: Record<string, unknown>,
+): { name: string; arguments: Record<string, unknown> } | null {
+  const raw = parsed.functionCall;
+  if (!raw || typeof raw !== 'object') return null;
+  const result = FunctionCallSchema.safeParse(raw);
+  return result.success ? result.data : null;
+}
+
+/**
  * Tier 2 "Pivot & Pull" behavioral contract for the semantic fallback layer.
  *
- * Injected only when the deterministic Tier 1 regex pass fails to resolve an
- * intent. The prompt is strictly client-scoped: it enumerates the portal's
- * real capabilities and forbids any reseller/administrative concept, so the
- * LLM can never escalate or leak a higher-privilege surface. The schema is
- * deliberately narrow — only the two client-safe dispatchable intents may
- * shift the view; everything else resolves to `CLIENT_NOP` with a
- * conversational pull-back in `summary`.
+ * The conversational system prompt is now built dynamically and injection-safe
+ * by `buildSystemPrompt` (from `@/lib/ai/system-prompt-builder`) inside
+ * `runSemanticFallback`, which hydrates it from the server-resolved tenant's
+ * live branding/config. The prompt is strictly client-scoped: it enumerates
+ * the portal's real capabilities and forbids any reseller/administrative
+ * concept, so the LLM can never escalate or leak a higher-privilege surface.
  */
-function buildClientAgentPrompt(
-  _availableCommands: string[],
-  currentPath: string = '',
-  previewDraft: PreviewDraft = {},
-): string {
-  const isCurrentlyOnBranding = currentPath === '/client/dashboard/studio/branding';
-
-  const hasDraft = Boolean(previewDraft.brandName || previewDraft.vibe || previewDraft.persona);
-  const draftSection = hasDraft
-    ? `
-
-ACTIVE PREVIEW / UNSAVED STUDIO SETTINGS (TEST MODE):
-The user is test-driving the widget with these live, unsaved settings. Reflect them in your identity, tone, and wording as if they were already live:
-${previewDraft.brandName ? `- Brand name / widget title: "${previewDraft.brandName}". Always refer to the brand/company by this exact name (instead of "Omniverge Global").` : ''}
-${previewDraft.persona ? `- Persona mode: "${previewDraft.persona}". Adopt the matching assistant style (sales = persuasive, conversion-focused; concierge = warm, premium hospitality).` : ''}
-${previewDraft.vibe ? `- Persona vibe / system instructions: ${previewDraft.vibe}` : ''}
-`
-    : '';
-
-  return `You are ZEEDER, an authentic, warm, and supportive AI assistant built directly into the Zeeder Client Portal.
-Your name is ZEEDER. When the user asks who you are or what your name is, you MUST answer: "I'm ZEEDER, your Client Portal assistant." Never describe yourself as a generic or nameless chatbot without naming ZEEDER.
-Your goal is to make the user feel like they are collaborating with a helpful, friendly peer—never a rigid machine.
-
-CURRENT SCREEN STATE:
-The user is currently viewing this exact URL path in their browser: "${currentPath}".
-${isCurrentlyOnBranding ? '-> CRITICAL: The user is ALREADY looking directly at the Branding Studio page right now.' : ''}${draftSection}
-
-PORTAL FEATURE GLOSSARY:
-Use this absolute source of truth to answer any educational questions about how the system works:
-${JSON.stringify(CLIENT_SYSTEM_GLOSSARY, null, 2)}
-
-CORE BEHAVIORAL BORDERS:
-1. EDUCATIONAL REQUESTS: If the user asks an educational question (e.g., "What is a widget body?", "What does Logo URL do?"), use the GLOSSARY to explain it clearly in one or two warm, human sentences.
-  2. CONTEXTUAL SCREEN AWARENESS (THE PIVOT & PULL):
-     - IF the user is ALREADY on the Branding Studio page (${isCurrentlyOnBranding}), do NOT offer to take them there. Instead, say something like: "Since we're looking right at the Branding Studio together on your screen, the widget body is this main canvas area where your text chat bubbles show up. Everything you change here updates in real time!"
-     - IF they are on a different page, use your classic pivot: "The widget body is the canvas where bubbles render. Would you like me to open up the Branding Studio so we can look at it?"
-     - DYNAMIC PAGE CONTEXT RULE (ON-SCREEN GUIDE): IF the user asks how to configure branding, upload a logo, or change the header / widget title text AND they are ALREADY on the Branding Studio page (${isCurrentlyOnBranding}), act as an active on-screen guide — never a navigator. Do NOT tell them to go to another page; they're already there. Point them to the exact sidebar controls on their LEFT and walk them through the live action in real time:
-        • Change header / widget title text: "On the left panel, type your company name into the 'Widget Title Text / Company Name' box — the header updates instantly in the preview on your right."
-        • Upload a logo: "Find the 'Logo URL' field on the left — paste a direct image link, or tap Upload to add a PNG, JPG, WEBP, GIF, or SVG."
-        • Set colors / backgrounds: "Use the 'Primary Color' picker and the Header / Footer / Widget Body layer controls on the left to apply colors, gradients, or images — every change shows live in the preview."
-       Be punchy: name the visible control directly, reference the live preview, and keep it real-time.
-  3. ACTION WHITELIST: If they explicitly ask to go somewhere or configure something, return the appropriate action type: 'CLIENT_NOP' | 'SYSTEM_UPDATE_BRANDING' | 'SYSTEM_TELEMETRY'. If they are just asking a question, keep actionType as 'CLIENT_NOP'.
-     - PERSONA MODE: If the user asks to change their persona mode (e.g., "switch to sales mode", "set persona to concierge", "use sales persona"), return 'SYSTEM_UPDATE_BRANDING' WITH aiPersona.personaMode set to the requested mode ('sales' or 'concierge') in the payload. This is a client-surface configuration change, not a question.
-   4. COLOR NORMALIZATION & GRADIENTS (brandingCapabilities): Every color endpoint is a strict 6-character hex string starting with # (e.g., "#0000FF"). Never emit CSS gradients, rgb()/rgba(), hsl(), or free text as a single value — instead break each gradient into its own two clean hex endpoints.
-      - SOLID colors: "primaryColor" => "#0000FF"; "headerColor" => "#0000FF". Normalize names ("red") or 3-digit hex ("#f00") to the 6-char equivalent.
-      - GRADIENTS (supported across all three surfaces from one command): extract a clean two-stop hex pair per surface and set backgroundType to "gradient".
-         • Header: payload.theme.primaryGradientStart + payload.theme.primaryGradientEnd
-         • Footer: payload.theme.secondaryGradientStart + payload.theme.secondaryGradientEnd
-         • Widget body background: payload.widget.bodyGradientStart + payload.widget.bodyGradientEnd
-         Example — "make the header, footer, and body a blue and green gradient":
-           actionType "SYSTEM_UPDATE_BRANDING",
-           payload { theme: { backgroundType: "gradient", primaryGradientStart: "#0000FF", primaryGradientEnd: "#008000", secondaryGradientStart: "#0000FF", secondaryGradientEnd: "#008000" }, widget: { bodyGradientStart: "#0000FF", bodyGradientEnd: "#008000" } }
-      - If you cannot resolve a clean hex value for a given endpoint, omit that single field rather than returning an invalid string — the current color is preserved by the partial merge.
-      - When you successfully apply a multi-surface gradient, set summary to: "I've applied that beautiful blue and green gradient style across your widget header, body background, and footer for you to preview!"
-
-
-
- RESPONSE FORMAT:
- Return a strict JSON object:
- {
-   "actionType": "CLIENT_NOP",
-   "summary": "Your screen-aware, contextually brilliant explanation.",
-   "payload": { "aiPersona": { "personaMode": "sales" } }
- }`;
-}
 
 /**
  * Allowed action types the semantic fallback may surface. Anything outside this
@@ -437,6 +502,33 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
     resolvedActionId = parseIntent(text);
   }
 
+  // ── Persona-page navigation → deterministic Studio navigation ─────────
+  // Pure navigation ("open the persona page", "take me to persona settings")
+  // has no change verb and no concrete mode, so it must NOT fall through to the
+  // LLM (which would collapse it to CLIENT_NOP). Resolve it deterministically —
+  // the Persona viewport lives on the unified Studio dashboard alongside
+  // Branding, so routing to SYSTEM_UPDATE_BRANDING is the correct, consistent
+  // destination (mirrors how "branding" navigation resolves). Screen-aware:
+  // if already on the Studio dashboard, just guide the user to the tab.
+  if (CLIENT_PERSONA_NAV_INTENT_REGEX.test(text.trim())) {
+    // The Persona viewport is a distinct route on the unified Studio dashboard
+    // (/client/dashboard/studio/persona). Rather than asking the user to click
+    // the tab manually, always navigate them there by returning the navigation
+    // action with an explicit `tab: 'persona'` payload. The voice hook reads
+    // this and router.push()es to the persona route directly.
+    const data: ClientCommandResponse = {
+      success: true,
+      actionType: 'SYSTEM_UPDATE_BRANDING',
+      targetIds: [],
+      payload: { ...payloadOverrides, tab: 'persona' },
+      summary:
+        "Sure thing! I've opened your AI Persona settings — you can fine-tune its voice, tone, and behavior right here.",
+    };
+    const response = NextResponse.json(data);
+    await tryPersistCommand(data, 'SYSTEM_UPDATE_BRANDING', data.payload);
+    return response;
+  }
+
   // ── Persona intent without a target mode → screen-aware clarification ──
   // The utterance asks to adjust the persona/AI mode but omits the concrete
   // target ("sales" | "concierge"). Resolve this deterministically (no LLM
@@ -488,7 +580,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
 
   // ── Informational / how-to queries → LLM (never the canned HELP block) ──
   // Questions like "how do I upload my logo" are educational, not capability
-  // listings. Route them to the semantic fallback (buildClientAgentPrompt) so
+  // listings. Route them to the semantic fallback (runSemanticFallback) so
   // the agent returns a page-aware, step-by-step UI guide instead of the static
   // SYSTEM_HELP response. This must run after the identity check so "what is
   // your name" still resolves to the deterministic ZEEDER identity reply.
@@ -578,6 +670,32 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
 // ──────────────────────────── Semantic Fallback ──────────────────────────
 
 /**
+ * Server-authoritatively resolve the current tenant's live branding/config row
+ * by the resolved `tenantId`. Used to hydrate the LLM system prompt so the AI
+ * concierge has situational memory of the host business identity and active
+ * tenant settings. Failures degrade to `null` (the builder falls back to safe
+ * defaults) so the command pipeline is never blocked by a branding read.
+ */
+async function fetchTenantDetails(
+  supabase: SupabaseClient | null,
+  tenantId: string | null,
+): Promise<Record<string, unknown> | null> {
+  if (!supabase || !tenantId) return null;
+  try {
+    const { data, error } = await supabase
+      .from('tenants')
+      .select('id, tenant_id, name, branding_colors, system_prompt, preferred_voice, pricing_tier_key, show_ovg_branding, widget_config')
+      .eq('id', tenantId)
+      .maybeSingle();
+    if (error || !data) return null;
+    return data as Record<string, unknown>;
+  } catch (err) {
+    console.error('[process-command] tenant detail fetch error:', err);
+    return null;
+  }
+}
+
+/**
  * Tier 2 conversational fallback, invoked only when Tier 1 deterministic
  * parsing fails to resolve an intent.
  *
@@ -597,12 +715,16 @@ interface PersistContext {
 
 async function runSemanticFallback(
   text: string,
-  currentPath: string = '',
+  _currentPath: string = '',
   previewDraft: PreviewDraft = {},
   persistCtx?: PersistContext,
 ): Promise<NextResponse<ClientCommandResponse>> {
   const availableCommands = buildClientCapabilities();
   const capabilityPayload: Record<string, unknown> = { availableCommands, brandingCapabilities: {} };
+
+  // Relational memory: recall who we are talking to from prior turns so the
+  // hydrated system prompt can reference the client's name / business.
+  const memories = await getClientMemories(persistCtx?.tenantId ?? null, persistCtx?.userId ?? null);
 
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
@@ -616,18 +738,51 @@ async function runSemanticFallback(
     if (persistCtx) {
       await tryPersistCommandInCtx(persistCtx, text, data, 'CLIENT_NOP', {});
     }
+    void extractAndStoreMemories(persistCtx?.tenantId ?? null, persistCtx?.userId ?? null, text);
     return NextResponse.json(data);
   }
 
   try {
     const groq = new Groq({ apiKey });
+
+    // Server-authoritative tenant hydration: fetch the live tenant row by the
+    // resolved tenantId and build an injection-safe system prompt that carries
+    // the host business identity, brand styling, and active settings.
+    const tenantDetails = await fetchTenantDetails(persistCtx?.supabase ?? null, persistCtx?.tenantId ?? null);
+    const hydratedSystemPrompt = buildSystemPrompt(
+      tenantDetails,
+      {
+        vibe: previewDraft.vibe,
+        persona: previewDraft.persona,
+        businessName: previewDraft.brandName,
+      },
+      memories,
+    );
+
+    // ── Dynamic integration tool injection ──────────────────────────
+    // Read the client's saved `widget_config.integrations` and expose only the
+    // tools whose integration is active & configured. This makes the model
+    // aware of the tenant's real capability set without any client-supplied
+    // flag. The resolved tools are rendered into the system prompt below.
+    const widgets =
+      (tenantDetails?.widget_config as Record<string, unknown> | null | undefined) ?? null;
+    const integrations =
+      widgets && typeof widgets === 'object'
+        ? (widgets.integrations as Record<string, Record<string, unknown>> | undefined)
+        : undefined;
+    const activeTools = resolveActiveTools(integrations);
+    const toolsPrompt = buildIntegrationToolsPrompt(activeTools);
+    const enrichedSystemPrompt = toolsPrompt
+      ? `${hydratedSystemPrompt}\n${toolsPrompt}`
+      : hydratedSystemPrompt;
+
     const completion = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       temperature: 0.7,
       max_tokens: 300,
       response_format: { type: 'json_object' },
         messages: [
-          { role: 'system', content: buildClientAgentPrompt(availableCommands, currentPath, previewDraft) },
+          { role: 'system', content: enrichedSystemPrompt },
           { role: 'user', content: text },
         ],
     });
@@ -657,9 +812,28 @@ async function runSemanticFallback(
       };
     }
 
+    // ── Integration tool execution ──────────────────────────────────
+    // If the LLM emitted a `functionCall` for a tool this tenant is allowed to
+    // use, execute the (mock) handler and fold the confirmation into the
+    // summary. Unknown/disabled tools are ignored so the pipeline stays safe.
+    const functionCall = parseFunctionCall(parsed as Record<string, unknown>);
+    let toolResultMessage: string | null = null;
+    if (functionCall && INTEGRATION_TOOL_BY_NAME[functionCall.name]) {
+      const isAllowed = activeTools.some((t) => t.name === functionCall.name);
+      if (isAllowed) {
+        const result = executeIntegrationTool(functionCall);
+        toolResultMessage = result.message;
+        responsePayload = {
+          ...responsePayload,
+          toolCall: { name: functionCall.name, ok: result.ok, detail: result.detail ?? {} },
+        };
+      }
+    }
+
     const summary =
-      parsed.summary?.toString().trim() ||
-      "I didn't quite catch that. What can I help you configure in your portal today?";
+      toolResultMessage ??
+      (parsed.summary?.toString().trim() ||
+        "I didn't quite catch that. What can I help you configure in your portal today?");
 
     const data: ClientCommandResponse = {
       success: true,
@@ -671,15 +845,24 @@ async function runSemanticFallback(
     if (persistCtx) {
       await tryPersistCommandInCtx(persistCtx, text, data, actionType, responsePayload);
     }
+    // Fire-and-forget: learn new facts from this turn without blocking the
+    // response. Memory extraction failures are non-fatal.
+    void extractAndStoreMemories(persistCtx?.tenantId ?? null, persistCtx?.userId ?? null, text);
     return NextResponse.json(data);
   } catch {
+    // Resilient fallback: if the LLM is unreachable we still answer
+    // informational add-on questions from the static catalog so the user
+    // never hears a generic snag for "What is smart booking?".
+    const localAnswer = buildLocalAddonAnswer(text);
+    const summary =
+      localAnswer ??
+      "I'm here to help, though I hit a slight snag processing that. Would you like to update your branding or check your telemetry signals?";
     const data: ClientCommandResponse = {
       success: true,
       actionType: 'CLIENT_NOP',
       targetIds: [],
       payload: capabilityPayload,
-      summary:
-        "I'm here to help, though I hit a slight snag processing that. Would you like to update your branding or check your telemetry signals?",
+      summary,
     };
     if (persistCtx) {
       await tryPersistCommandInCtx(persistCtx, text, data, 'CLIENT_NOP', {});

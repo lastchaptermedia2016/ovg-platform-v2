@@ -1,4 +1,5 @@
 import type { CanonicalBranding, LayerConfig } from "@/lib/schemas/tenant-config.canonical";
+import type { BrandingData } from "@/types";
 
 function hexToRgb(hex: string): string {
   const normalized = hex.replace(/^#/, "");
@@ -38,29 +39,67 @@ function layerVars(prefix: string, layer: LayerConfig | undefined): string[] {
   return vars;
 }
 
-export function generateBrandingCSS(branding: CanonicalBranding): string {
+/**
+ * Theme-bridge: map a branding payload onto the active `--w-*` CSS variable
+ * set consumed by the ChatWidget and Zeeder UI.
+ *
+ * Accepts both of the platform's branding shapes:
+ * - `CanonicalBranding` — the full Studio config (header/footer/body layers,
+ *   widget position, custom CSS) injected into the Studio preview.
+ * - `BrandingData` — the flat reseller payload sourced from the live
+ *   `resellers.branding_colors` JSONB. This is the run-time counterpart that
+ *   makes the database-driven reseller theme reach the widget's `--w-primary` /
+ *   `--w-accent` consumers (not just the Studio-preview config).
+ *
+ * When a `CanonicalBranding` is passed, the layered variables are also emitted.
+ *
+ * @param branding - The branding payload.
+ * @param options.accentFallback - Brand accent fallback used when no accent is set.
+ */
+export function generateBrandingCSS(
+  branding: CanonicalBranding,
+  options?: { accentFallback?: string },
+): string;
+export function generateBrandingCSS(
+  branding: BrandingData,
+  options?: { accentFallback?: string },
+): string;
+export function generateBrandingCSS(
+  branding: CanonicalBranding | BrandingData,
+  _options?: { accentFallback?: string },
+): string {
+  // Resolve both shapes onto the shared `--w-*` variable contract.
+  const canonical = branding as CanonicalBranding;
+  const flat = branding as BrandingData;
+  const primary = canonical.primaryColor ?? flat.primaryColor;
+  const accent = canonical.accentColor ?? flat.accentColor;
+  const logoUrl = canonical.logoUrl ?? flat.logoUrl;
+
   const vars: string[] = [];
 
-  if (branding.primaryColor) {
-    vars.push(`--w-primary: ${branding.primaryColor};`);
+  if (primary) {
+    vars.push(`--w-primary: ${primary};`);
   }
-  if (branding.accentColor) {
-    vars.push(`--w-accent: ${branding.accentColor};`);
+  if (accent) {
+    vars.push(`--w-accent: ${accent};`);
   }
-  if (branding.logoUrl) {
-    vars.push(`--w-logo: url('${branding.logoUrl}');`);
-  }
-
-  vars.push(...layerVars("header", branding.header));
-  vars.push(...layerVars("footer", branding.footer));
-  vars.push(...layerVars("body", branding.widgetBody));
-
-  if (branding.widgetPosition) {
-    vars.push(`--w-position: ${branding.widgetPosition};`);
+  if (logoUrl) {
+    vars.push(`--w-logo: url('${logoUrl}');`);
   }
 
-  if (branding.customCssCode) {
-    vars.push(branding.customCssCode);
+  // Only CanonicalBranding carries layered section config.
+  if (canonical.header || canonical.footer || canonical.widgetBody || canonical.widgetPosition || canonical.customCssCode) {
+    vars.push(...layerVars("header", canonical.header));
+    vars.push(...layerVars("footer", canonical.footer));
+    vars.push(...layerVars("body", canonical.widgetBody));
+
+    if (canonical.widgetPosition) {
+      vars.push(`--w-position: ${canonical.widgetPosition};`);
+    }
+
+    if (canonical.customCssCode) {
+      vars.push(canonical.customCssCode);
+    }
   }
 
   return `:root {\n  ${vars.join("\n  ")}\n}`;

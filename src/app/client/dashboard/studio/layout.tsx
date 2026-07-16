@@ -23,6 +23,11 @@ const navItems = [
     label: 'Persona',
     description: 'AI behavior, tone, and voice',
   },
+  {
+    href: '/client/dashboard/studio/integrations',
+    label: 'Integrations',
+    description: 'Smart booking, CRM, commerce & knowledge add-ons',
+  },
 ];
 
 /**

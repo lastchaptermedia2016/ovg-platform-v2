@@ -5,6 +5,43 @@ export const dynamic = "force-dynamic"; // Prevents build-time API key errors
 const DEFAULT_VOICE = "hannah";
 const TTS_MODEL = "canopylabs/orpheus-v1-english";
 
+/**
+ * Maps legacy / ambiguous caller-supplied model ids to the canonical Groq TTS
+ * model. The Reseller (Hannah) surface historically sent `orpheus-v1`, which is
+ * not a valid Groq model id and triggered a 500 from upstream. Centralizing the
+ * alias map here means no caller can break TTS by passing a bad model string.
+ */
+const LEGACY_MODEL_ALIASES: Record<string, string> = {
+  "orpheus-v1": TTS_MODEL,
+  "orpheus": TTS_MODEL,
+  "orpheus-english": TTS_MODEL,
+};
+
+/** Canonical Groq TTS models accepted by the upstream API. */
+const KNOWN_TTS_MODELS = new Set<string>([
+  TTS_MODEL,
+  "canopylabs/orpheus-arabic-saudi",
+  "playai-tts",
+  "playai-tts-arabic",
+]);
+
+/**
+ * Normalize an incoming `model` value to a valid Groq TTS model id.
+ *
+ * Resolution order:
+ * 1. Empty / undefined → canonical default.
+ * 2. Known alias (`orpheus-v1`, etc.) → canonical id.
+ * 3. Already a known valid model → passed through unchanged.
+ * 4. Anything else (unrecognized) → canonical default (fail-safe, never 500).
+ */
+function normalizeModel(model?: string): string {
+  if (!model || !model.trim()) return TTS_MODEL;
+  const trimmed = model.trim();
+  if (LEGACY_MODEL_ALIASES[trimmed]) return LEGACY_MODEL_ALIASES[trimmed];
+  if (KNOWN_TTS_MODELS.has(trimmed)) return trimmed;
+  return TTS_MODEL;
+}
+
 interface SpeechInput {
   text?: string;
   voice?: string;
@@ -32,6 +69,7 @@ async function generateSpeech(input: SpeechInput): Promise<Response> {
   }
 
   const voice = input.voice || DEFAULT_VOICE;
+  const model = normalizeModel(input.model);
   const apiKey = process.env.GROQ_API_KEY;
 
   // Bridge dual frontend patterns: top-level resellerSlug (ClientBrandingStudio)
@@ -40,8 +78,9 @@ async function generateSpeech(input: SpeechInput): Promise<Response> {
   const _activeResellerSlug = input.resellerSlug ?? input.metadata?.resellerSlug;
 
   if (!apiKey) {
-    return new Response(JSON.stringify({ error: "API Key Missing" }), {
-      status: 500,
+    console.error("[API] Speech generation failed: GROQ_API_KEY is not configured.");
+    return new Response(JSON.stringify({ error: "Speech service unavailable" }), {
+      status: 503,
     });
   }
 
@@ -50,7 +89,7 @@ async function generateSpeech(input: SpeechInput): Promise<Response> {
     const groq = new Groq({ apiKey });
 
     const wav = await groq.audio.speech.create({
-      model: input.model || TTS_MODEL,
+      model,
       voice,
       response_format: "wav",
       input: text,
@@ -67,9 +106,23 @@ async function generateSpeech(input: SpeechInput): Promise<Response> {
       },
     });
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error("❌ [API] Speech generation failed:", errorMessage);
-    return new Response(JSON.stringify({ error: errorMessage }), { status: 500 });
+    // Surface the exact upstream Groq error for diagnostics without leaking
+    // the API key or any auth tokens. Map to the closest standard HTTP status.
+    const status =
+      typeof (error as { status?: number })?.status === "number"
+        ? (error as { status: number }).status
+        : 500;
+    const message =
+      error instanceof Error
+        ? error.message
+        : typeof error === "string"
+          ? error
+          : "Unknown speech generation error";
+    console.error("[API] Speech generation failed:", message);
+    return new Response(
+      JSON.stringify({ error: "Speech generation failed", detail: message }),
+      { status: status >= 400 && status < 600 ? status : 500 },
+    );
   }
 }
 

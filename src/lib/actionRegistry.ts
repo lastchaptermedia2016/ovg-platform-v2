@@ -271,6 +271,14 @@ export async function dispatchUpdateStudioConfig(
     nextConfig.features = deepMerge(currentFeatures, params.features as Record<string, unknown>);
   }
 
+  // Merged by the integrations service, which has already deep-merged the new
+  // integration config into the full integrations map. Persist it as-is under
+  // the canonical `integrations` key so it shares the widget_config source of
+  // truth with branding and persona.
+  if (params.integrations !== undefined) {
+    nextConfig.integrations = params.integrations as Record<string, unknown>;
+  }
+
   // Deprecation monitoring: warn if any legacy widget_studio-specific keys
   // are still being submitted so the cleanup can be tracked.
   const legacyKeys = Object.keys(params).filter((key) => key === 'widget_studio');

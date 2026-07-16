@@ -160,9 +160,54 @@ export type ClientBranding = z.infer<typeof ClientBrandingSchema>;
  *   }
  * }
  */
+
+// Per-integration configuration. Kept deliberately permissive (passthrough)
+// so new add-on fields can be added without a schema migration, but the
+// explicit fields below are validated for shape/type safety.
+export const ClientIntegrationConfigSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    // Smart Booking
+    calendarLink: z.string().url().or(z.string().startsWith('/')).nullable().optional(),
+    bookingWindow: z.enum(['Business hours', '24/7', 'Weekdays only']).optional(),
+    // Live Inventory
+    inventoryApi: z.string().url().or(z.string().startsWith('/')).nullable().optional(),
+    syncFrequency: z.enum(['Every 5 min', 'Every 30 min', 'Hourly']).optional(),
+    // CRM Lead Sync
+    crmProvider: z.enum(['HubSpot', 'Salesforce', 'Pipedrive', 'Zoho']).optional(),
+    crmApiKey: z.string().optional(),
+    crmPushCadence: z.enum(['Realtime', 'Every 15 min', 'Daily batch']).optional(),
+    // Vector Knowledge-Base
+    vectorSources: z.array(z.string()).optional(),
+    // WhatsApp / SMS
+    messagingChannel: z.enum(['WhatsApp', 'SMS', 'Both']).optional(),
+    twilioAuthToken: z.string().optional(),
+    businessPhone: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+export type ClientIntegrationConfig = z.infer<typeof ClientIntegrationConfigSchema>;
+
+// The full integrations payload: a map of integration id → config.
+export const ClientIntegrationsSchema = z
+  .record(ClientIntegrationConfigSchema)
+  .optional();
+
+export type ClientIntegrations = z.infer<typeof ClientIntegrationsSchema>;
+
+// Field names whose values are treated as sensitive credentials. They are
+// encrypted at the API boundary before being persisted into widget_config.
+export const SENSITIVE_INTEGRATION_FIELDS = [
+  'crmApiKey',
+  'twilioAuthToken',
+] as const;
+
+export type SensitiveIntegrationField = (typeof SENSITIVE_INTEGRATION_FIELDS)[number];
+
 export const ClientWidgetStudioSchema = z.object({
   aiPersona: ClientAIPersonaSchema.optional(),
   branding: ClientBrandingSchema.optional(),
+  integrations: ClientIntegrationsSchema,
   features: z
     .object({
       aiInsightBadge: z.boolean().optional(),

@@ -24,6 +24,19 @@
   --font-geist-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
+/* ── Responsive safety net ─────────────────────────────────────────── */
+/* Guarantee no horizontal scrollbars from 320px → ultra-wide. Applied to */
+/* body only (the scroll container); fixed/sticky overlays remain intact   */
+/* because they are positioned relative to the viewport, not the body.    */
+html {
+  overflow-x: hidden;
+}
+
+body {
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
 @theme {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
