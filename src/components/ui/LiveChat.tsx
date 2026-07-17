@@ -110,22 +110,20 @@ export function LiveChat({ tenantId }: LiveChatProps) {
     const content = input.trim();
     if (!content || !tenantId || sending) return;
 
-    const supabase = createClient();
-    const { data: userData } = await supabase.auth.getUser();
-    const senderId = userData.user?.id;
-    if (!senderId) {
-      setError('You must be signed in to send messages.');
-      return;
-    }
-
     setInput('');
     setSending(true);
     setError(null);
     try {
-      const { error: insertError } = await supabase
-        .from('chat_messages')
-        .insert({ tenant_id: tenantId, sender_id: senderId, content });
-      if (insertError) throw insertError;
+      const response = await fetch('/api/chat/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId, content }),
+      });
+
+      const result = await response.json();
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to send message');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to send message');
     } finally {

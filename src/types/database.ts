@@ -21,8 +21,8 @@ export const TenantSchema = z.object({
     ),
   custom_assets: z
     .object({
-      header_url: z.string().nullable(),
-      footer_url: z.string().nullable(),
+      header_url: z.string().nullable().optional(),
+      footer_url: z.string().nullable().optional(),
     })
     .optional(),
   show_ovg_branding: z.boolean().default(false),

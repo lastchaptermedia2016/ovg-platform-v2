@@ -7,8 +7,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useVoiceCommand } from "@/hooks/use-voice-command";
-import { useWidgetPresence } from "@/hooks/useWidgetPresence";
 import { generateBrandingCSS } from "@/lib/branding/css-generator";
+import { cornerStyle } from "@/lib/branding/widget-position";
 import type { CanonicalBranding } from "@/lib/schemas/tenant-config.canonical";
 import { getSpeechRecognition, type SpeechRecognitionInstance, type SpeechRecognitionResultEvent } from "@/types/voice-parser";
 import "./widget.css";
@@ -56,6 +56,7 @@ interface WidgetMessage {
 interface ChatWidgetProps {
   tenantId: string;
   branding?: CanonicalBranding | null;
+  widgetPosition?: CanonicalBranding['widgetPosition'];
   /**
    * Studio preview mode. Renders the chat window as a contained, always-open
    * surface (no consent gate, no floating bubble), suppresses realtime
@@ -83,21 +84,34 @@ interface ChatWidgetProps {
 const ChatWidget = ({
   tenantId,
   branding,
+  widgetPosition,
   preview = false,
   liveDraft,
   voiceFeaturesEnabled = true,
 }: ChatWidgetProps) => {
-  const presenceStatus = useWidgetPresence(preview ? null : tenantId);
-
   const [config] = useState<WidgetConfig>(defaultConfig);
   const [isOpen, setIsOpen] = useState(false);
   const [showConsent, setShowConsent] = useState(false);
-  const [hasConsent, setHasConsent] = useState(() => preview ? true : localStorage.getItem("ovgweb_ai_consent") === "true");
+  const [hasConsent, setHasConsent] = useState(() => {
+    if (preview) return true;
+    try {
+      return typeof window !== 'undefined' && localStorage.getItem("ovgweb_ai_consent") === "true";
+    } catch {
+      return false;
+    }
+  });
   const [showPeek, setShowPeek] = useState(false);
   const [showSyncBadge, setShowSyncBadge] = useState(false);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
-  const [voiceEnabled, setVoiceEnabled] = useState(() => preview ? true : localStorage.getItem("ovgweb_voice_mute") !== "true");
+  const [voiceEnabled, setVoiceEnabled] = useState(() => {
+    if (preview) return true;
+    try {
+      return typeof window !== 'undefined' && localStorage.getItem("ovgweb_voice_mute") !== "true";
+    } catch {
+      return true;
+    }
+  });
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [mounted, setMounted] = useState(false);
 
@@ -124,6 +138,15 @@ const ChatWidget = ({
         { id: "preview-2", role: "user", text: "Can you tell me about your services?", timestamp: now + 1 },
         { id: "preview-3", role: "assistant", text: "Absolutely — we tailor AI-powered solutions to help your business grow smarter. What are you working on?", timestamp: now + 2 },
       ];
+    }
+    if (typeof window === 'undefined') {
+      const initialGreeting: WidgetMessage = {
+        id: Date.now().toString(),
+        role: "assistant",
+        text: "Hi there! I'm OVG, the AI concierge for Omniverge Global. We help businesses like yours grow smarter using strategic marketing and AI. What brings you to our site today?",
+        timestamp: Date.now(),
+      };
+      return [initialGreeting];
     }
     try {
       const saved = JSON.parse(localStorage.getItem("ovgweb_chat_messages") || "[]");
@@ -325,6 +348,15 @@ const ChatWidget = ({
       }
 
       localStorage.setItem("ovgweb_chat_messages", JSON.stringify(newMsgs));
+
+      void fetch('/api/chat/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId, message: userInputText }),
+      }).catch(() => {
+        /* non-blocking best-effort sync */
+      });
+
       console.log("💬 [ChatWidget] Routing client chat payload to client-isolated orchestration endpoint");
       const response = await fetch("/api/client/process-command", {
         method: "POST",
@@ -464,13 +496,6 @@ const ChatWidget = ({
       handleAcceptConsent();
     }
   }, [isOpen, messages.length, hasConsent, handleAcceptConsent]);
-
-  // Sync broadcast status with local UI state for visual feedback
-  useEffect(() => {
-    if (presenceStatus === "interacting") {
-      // UI can react to presence changes if needed
-    }
-  }, [presenceStatus]);
 
   // Auto-scroll
   useEffect(() => {
@@ -663,9 +688,12 @@ const ChatWidget = ({
           className={
             preview
               ? "relative z-0 widget-body flex flex-col w-full h-full rounded-3xl border-2 overflow-hidden shadow-2xl bg-transparent"
-              : "fixed z-[9999] widget-body bottom-[max(1.5rem,env(safe-area-inset-bottom))] left-[max(0.5rem,env(safe-area-inset-left))] right-[max(1rem,env(safe-area-inset-right))] w-[calc(100vw-1rem)] max-w-[380px] sm:max-w-[420px] rounded-3xl border-2 overflow-hidden shadow-2xl bg-transparent"
+              : "z-[9999] widget-body w-[calc(100vw-1rem)] max-w-[380px] sm:max-w-[420px] rounded-3xl border-2 overflow-hidden shadow-2xl bg-transparent"
           }
-          style={{ borderColor: "var(--w-primary, #0097b2)" }}
+          style={{
+            borderColor: "var(--w-primary, #0097b2)",
+            ...(preview ? {} : cornerStyle(widgetPosition)),
+          }}
         >
           {/* Header */}
           <div className="relative widget-header p-5 flex justify-between items-center overflow-hidden">

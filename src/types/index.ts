@@ -10,8 +10,8 @@ export const TenantSchema = z.object({
     secondary: z.string(),
   }).nullable().optional(),
   custom_assets: z.object({
-    header_url: z.string().nullable(),
-    footer_url: z.string().nullable(),
+    header_url: z.string().nullable().optional(),
+    footer_url: z.string().nullable().optional(),
   }).optional(),
   show_ovg_branding: z.boolean().default(false),
   pricing_tier_key: z.string().optional(),

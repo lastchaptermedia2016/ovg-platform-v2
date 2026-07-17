@@ -107,6 +107,28 @@ export default function AuthPage() {
     checkUser();
   }, [router, supabase]);
 
+  const handleOAuthSignIn = async (provider: 'google' | 'apple') => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const { error: oauthError } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo: `${window.location.origin}/api/auth/callback?next=/reseller`,
+        },
+      });
+
+      if (oauthError) {
+        setError(oauthError.message);
+        setIsLoading(false);
+      }
+    } catch {
+      setError('An unexpected error occurred. Please try again.');
+      setIsLoading(false);
+    }
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
@@ -359,6 +381,45 @@ export default function AuthPage() {
                   Sign Up
                 </button>
               </div>
+            </div>
+          </div>
+
+          {/* OAuth Providers */}
+          <div className="space-y-4">
+            <button
+              onClick={() => handleOAuthSignIn('google')}
+              disabled={isLoading}
+              className="w-full h-12 flex items-center justify-center gap-4 px-5 bg-white/5 border border-cyan-500/40 rounded-lg text-white text-sm font-medium tracking-wide hover:border-cyan-400 hover:bg-white/10 hover:shadow-[0_0_15px_rgba(0,229,255,0.2)] transition-all duration-200 disabled:opacity-50"
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.03 2.53-2.16 3.31v2.77h3.49c2.04-1.88 3.24-4.64 3.24-7.89z" fill="#4285F4"/>
+                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.49-2.77c-.98.66-2.23 1.06-3.79 1.06-2.91 0-5.37-1.96-6.25-4.63H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                <path d="M5.75 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.57-2.84z" fill="#FBBC05"/>
+                <path d="M12 5.38c1.64 0 3.11.56 4.27 1.67l3.2-3.2C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.57 2.84c.88-2.67 3.34-4.53 6.25-4.53z" fill="#EA4335"/>
+              </svg>
+              Continue with Google
+            </button>
+          {process.env.NEXT_PUBLIC_ENABLE_APPLE_AUTH === 'true' && (
+            <button
+              onClick={() => handleOAuthSignIn('apple')}
+              disabled={isLoading}
+              className="w-full h-12 flex items-center justify-center gap-4 px-5 bg-white/5 border border-cyan-500/40 rounded-lg text-white text-sm font-medium tracking-wide hover:border-cyan-400 hover:bg-white/10 hover:shadow-[0_0_15px_rgba(0,229,255,0.2)] transition-all duration-200 disabled:opacity-50"
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="currentColor">
+                <path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/>
+              </svg>
+              Continue with Apple
+            </button>
+          )}
+          </div>
+
+          {/* Divider */}
+          <div className="relative my-6">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-white/10"></div>
+            </div>
+            <div className="relative flex justify-center text-sm">
+              <span className="px-2 bg-transparent text-white/60">Or continue with email</span>
             </div>
           </div>
 

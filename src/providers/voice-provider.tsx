@@ -63,9 +63,9 @@ export interface VoiceControls {
   persistProposal: () => void;
 }
 
-const VoiceStateContext = createContext<VoiceState | null>(null);
-const VoiceControlsContext = createContext<VoiceControls | null>(null);
-const VoiceColleagueContext = createContext<UseAgenticColleagueReturn | null>(null);
+export const VoiceStateContext = createContext<VoiceState | null>(null);
+export const VoiceControlsContext = createContext<VoiceControls | null>(null);
+export const VoiceColleagueContext = createContext<UseAgenticColleagueReturn | null>(null);
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Provider
@@ -174,6 +174,18 @@ export function VoiceProvider({
         ? 'speaking'
         : 'idle';
 
+  // ── Media stream diagnostics ────────────────────────────────────────────────
+  useEffect(() => {
+    if (!isListening) return;
+    console.log('[VoiceMic] isListening became true — running media stream diagnostics');
+    console.log('[VoiceMic] MediaRecorder available:', typeof MediaRecorder !== 'undefined');
+    console.log('[VoiceMic] SpeechRecognition available:', typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window));
+    console.log('[VoiceMic] navigator.mediaDevices available:', typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia);
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function') {
+      console.warn('[VoiceMic] ⚠️ VoiceProvider does not initialize MediaRecorder or SpeechRecognition — audio capture is handled by separate hooks (use-voice-command / useZeederVoice)');
+    }
+  }, [isListening]);
+
   // ── Navigation safety ─────────────────────────────────────────────────────
   // The StudioDraft lives in the parent StudioDraftProvider, so a proposed draft
   // "carries" across pages automatically. We only surface a prompt to either
@@ -190,15 +202,30 @@ export function VoiceProvider({
 
   // ── PTT controls ────────────────────────────────────────────────────────────
   const startListening = useCallback(() => {
+    console.log('[VoiceMic] startListening invoked — flipping isListening to true');
     setIsListening(true);
   }, []);
 
   const stopListening = useCallback(() => {
+    console.log('[VoiceMic] stopListening invoked — flipping isListening to false');
     setIsListening(false);
   }, []);
 
   const togglePushToTalk = useCallback(() => {
-    setIsListening((prev) => !prev);
+    setIsListening((prev) => {
+      const next = !prev;
+      console.log('[VoiceMic] togglePushToTalk:', { from: prev, to: next });
+      if (next) {
+        console.log('[VoiceMic] Attempting to acquire microphone audio stream...');
+        console.log('[VoiceMic] navigator.mediaDevices available:', typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia);
+        console.log('[VoiceMic] MediaRecorder available:', typeof MediaRecorder !== 'undefined');
+        console.log('[VoiceMic] SpeechRecognition available:', typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window));
+        if (typeof navigator === 'undefined' || !navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+          console.error('[VoiceMic] ❌ getUserMedia is NOT available in this environment — media stream cannot be initialized');
+        }
+      }
+      return next;
+    });
   }, []);
 
   const submitUtterance = useCallback(
@@ -301,19 +328,54 @@ export function VoiceProvider({
 
 export function useVoiceState(): VoiceState {
   const ctx = useContext(VoiceStateContext);
-  if (!ctx) throw new Error('useVoiceState must be used within a VoiceProvider');
+  if (!ctx) {
+    return {
+      status: 'idle',
+      isListening: false,
+      isProcessing: false,
+      isSpeaking: false,
+      currentRoute: null,
+      pendingNavigation: false,
+    };
+  }
   return ctx;
 }
 
 export function useVoiceControls(): VoiceControls {
   const ctx = useContext(VoiceControlsContext);
-  if (!ctx) throw new Error('useVoiceControls must be used within a VoiceProvider');
+  if (!ctx) {
+    return {
+      startListening: () => {},
+      stopListening: () => {},
+      togglePushToTalk: () => {},
+      submitUtterance: async () => {},
+      commitChanges: async () => {},
+      cancelProposal: () => {},
+      persistProposal: () => {},
+    };
+  }
   return ctx;
 }
 
-/** Convenience accessor for the underlying colleague (plan, outcome, etc.). */
 export function useVoiceColleague(): UseAgenticColleagueReturn {
   const ctx = useContext(VoiceColleagueContext);
-  if (!ctx) throw new Error('useVoiceColleague must be used within a VoiceProvider');
+  if (!ctx) {
+    return {
+      isProcessing: false,
+      lastPlan: null,
+      pendingIntents: [],
+      confirmationText: null,
+      clarification: null,
+      critique: null,
+      uiTrigger: null,
+      lastOutcome: null,
+      lastSpoken: null,
+      error: null,
+      processUtterance: async () => {},
+      commitChanges: async () => {},
+      acceptCritique: () => {},
+      interrupt: () => {},
+    };
+  }
   return ctx;
 }

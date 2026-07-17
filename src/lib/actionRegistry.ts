@@ -19,6 +19,12 @@ export interface ActionResult<T = unknown> {
   success: boolean;
   data?: T;
   error?: string;
+  /**
+   * Set when the primary config write succeeded but a secondary side-effect
+   * (e.g. reseller branding propagation) failed. Lets the caller/UI show a
+   * partial-success message instead of a false clean "saved successfully".
+   */
+  partialFailure?: { step: string; error: string };
 }
 
 export interface ActionDefinition<TParams = unknown, TResult = unknown> {
@@ -334,7 +340,12 @@ export async function dispatchUpdateStudioConfig(
     );
 
     if (rpcError) {
-      console.error('[dispatchUpdateStudioConfig] Reseller propagation failed:', rpcError);
+      const message = rpcError instanceof Error ? rpcError.message : JSON.stringify(rpcError);
+      console.error('[dispatchUpdateStudioConfig] Reseller propagation failed:', message);
+      return {
+        success: true,
+        partialFailure: { step: 'reseller-branding-propagation', error: message },
+      };
     }
   }
 

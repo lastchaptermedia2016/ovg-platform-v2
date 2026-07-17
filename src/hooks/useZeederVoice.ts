@@ -35,6 +35,7 @@ import type { CanonicalBranding } from '@/lib/schemas/tenant-config.canonical';
 import { markVoiceNavigation } from '@/lib/voice/voiceNavSignal';
 import { transcodeBlobToWav } from '@/utils/audio/transcode-to-wav';
 import { getSpeechRecognition } from '@/types/voice-parser';
+import { useVoiceState } from '@/providers/voice-provider';
 
 /**
  * Normalizes text so TTS engines pronounce South African Rands (ZAR) naturally.
@@ -665,6 +666,18 @@ export function useZeederVoice(): {
   useEffect(() => {
     handleVoiceCommandRef.current = handleVoiceCommand;
   }, [handleVoiceCommand]);
+
+  const { isListening: globalIsListening } = useVoiceState();
+
+  useEffect(() => {
+    if (globalIsListening) {
+      console.log('[AudioEngine] Global isListening is TRUE. Initializing media pipeline capture...');
+      startListening();
+    } else {
+      console.log('[AudioEngine] Global isListening is FALSE. Tearing down audio channels...');
+      stopListening();
+    }
+  }, [globalIsListening, startListening, stopListening]);
 
   const clearError = useCallback(() => {
     setState(prev => ({ ...prev, error: null }));

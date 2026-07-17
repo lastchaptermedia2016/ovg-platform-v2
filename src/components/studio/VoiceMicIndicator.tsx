@@ -1,5 +1,6 @@
 'use client';
 
+import { useCallback, useState } from 'react';
 import { useVoiceState, useVoiceControls } from '@/providers/voice-provider';
 
 const STATUS_LABEL: Record<string, string> = {
@@ -17,14 +18,33 @@ const STATUS_LABEL: Record<string, string> = {
 export function VoiceMicIndicator() {
   const { status, isListening, pendingNavigation } = useVoiceState();
   const { togglePushToTalk } = useVoiceControls();
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const handleToggle = useCallback(async () => {
+    setLocalError(null);
+    try {
+      console.log('[VoiceMicIndicator] Button clicked — invoking togglePushToTalk');
+      await togglePushToTalk();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to toggle microphone';
+      console.error('[VoiceMicIndicator] togglePushToTalk error:', err);
+      setLocalError(msg);
+    }
+  }, [togglePushToTalk]);
 
   return (
     <div className="fixed bottom-4 right-4 z-50 flex flex-col items-end gap-2">
       {pendingNavigation && <PendingNavigationPrompt />}
+      {localError && (
+        <div className="w-72 max-w-[min(18rem,calc(100vw-2rem))] rounded-lg border border-rose-400/40 bg-slate-950/90 p-3 text-xs text-rose-300 shadow-xl backdrop-blur-xl">
+          <p className="font-semibold">Microphone Error</p>
+          <p className="mt-1 text-zinc-300">{localError}</p>
+        </div>
+      )}
       <button
         type="button"
         aria-label={isListening ? 'Stop push-to-talk' : 'Start push-to-talk (Space)'}
-        onClick={togglePushToTalk}
+        onClick={handleToggle}
         className={`flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-semibold backdrop-blur-xl transition-colors ${
           isListening
             ? 'border-cyan-400/60 bg-cyan-500/20 text-cyan-200'

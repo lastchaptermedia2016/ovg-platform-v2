@@ -2,10 +2,11 @@
 
 import { useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import PodPanel from "@/features/widget/components/PodPanel";
+import { cornerStyle } from "@/lib/branding/widget-position";
 
 export interface PodBubbleProps {
   tenantId: string;
+  widgetPosition?: string;
   brandingColor?: string;
   voiceId?: string | null;
   name?: string;
@@ -21,6 +22,7 @@ function useHydrated() {
 
 export default function PodBubble({
   tenantId,
+  widgetPosition,
   brandingColor = "#0097b2",
   voiceId,
   name,
@@ -28,20 +30,16 @@ export default function PodBubble({
   const [isOpen, setIsOpen] = useState(false);
   const isMounted = useHydrated();
 
-  // Return null on server to prevent hydration mismatch
   if (!isMounted) {
     return null;
   }
 
-  // Production Excellence: Portal the bubble to document.body
   const bubbleContent = (
     <button
       onClick={() => setIsOpen(!isOpen)}
       aria-label={isOpen ? "Close Chat" : "Open Chat"}
       style={{
-        position: "fixed",
-        bottom: "2rem",
-        right: "2rem",
+        ...cornerStyle(widgetPosition as Parameters<typeof cornerStyle>[0]),
         zIndex: 9999,
         width: "64px",
         height: "64px",
@@ -72,7 +70,6 @@ export default function PodBubble({
         e.currentTarget.style.transform = "scale(1.1) translateY(-4px)";
       }}
     >
-      {/* Premium Glow Ring */}
       <div
         style={{
           position: "absolute",
@@ -84,7 +81,6 @@ export default function PodBubble({
         }}
       />
 
-      {/* Lightning Icon */}
       <div
         style={{
           position: "relative",
@@ -108,7 +104,6 @@ export default function PodBubble({
         </svg>
       </div>
 
-      {/* Close Icon */}
       <div
         style={{
           position: "absolute",
@@ -135,18 +130,5 @@ export default function PodBubble({
     </button>
   );
 
-  return (
-    <>
-      <PodPanel
-        isOpen={isOpen}
-        onClose={() => setIsOpen(false)}
-        tenantId={tenantId}
-        voiceId={voiceId}
-        name={name}
-      />
-
-      {/* Portal the bubble to document.body */}
-      {createPortal(bubbleContent, document.body)}
-    </>
-  );
+  return createPortal(bubbleContent, document.body);
 }

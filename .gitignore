@@ -43,3 +43,18 @@ next-env.d.ts
 # IDE/Tooling artifacts
 .kilo/
 *.kilo
+
+# Dependencies & Runtimes
+node_modules/
+.venv/
+
+# Build Outputs & Generated Cache
+.next/
+dist/
+build/
+out/
+
+# System Caches & Logs
+.kiro/
+.vscode/
+*.log

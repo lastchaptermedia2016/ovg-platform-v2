@@ -19,7 +19,7 @@ interface BrandingStudioProps {
 }
 
 interface Feedback {
-  type: 'success' | 'error';
+  type: 'success' | 'error' | 'warning';
   message: string;
 }
 
@@ -178,10 +178,17 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
       const result = await response.json();
       console.log('[BrandingStudio] Save successful:', result);
 
-      setFeedback({
-        type: 'success',
-        message: 'Configuration saved successfully!',
-      });
+      if (result.partialFailure) {
+        setFeedback({
+          type: 'warning',
+          message: 'Configuration saved, but reseller sync failed — branding may not update everywhere.',
+        });
+      } else {
+        setFeedback({
+          type: 'success',
+          message: 'Configuration saved successfully!',
+        });
+      }
 
       if (onSave) {
         onSave(draftConfig as BrandingConfig);
@@ -372,12 +379,14 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
           className={`mt-5 p-4 rounded-lg flex items-start gap-3 ${
             feedback.type === 'success'
               ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300'
-              : 'bg-red-500/15 border border-red-500/30 text-red-300'
+              : feedback.type === 'warning'
+                ? 'bg-amber-500/15 border border-amber-500/30 text-amber-300'
+                : 'bg-red-500/15 border border-red-500/30 text-red-300'
           }`}
           role="alert"
         >
           <span className="text-lg mt-0.5">
-            {feedback.type === 'success' ? '✓' : '⚠'}
+            {feedback.type === 'success' ? '✓' : feedback.type === 'warning' ? '⚠' : '⚠'}
           </span>
           <div className="flex-1">
             <p className="text-sm">{feedback.message}</p>

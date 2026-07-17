@@ -100,6 +100,7 @@ export async function POST(request: NextRequest) {
       studioConfig: validatedParams,
       updatedAt: new Date().toISOString(),
       error: result.error,
+      partialFailure: result.partialFailure,
     });
 
   } catch (error) {

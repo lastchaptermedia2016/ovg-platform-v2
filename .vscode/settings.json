@@ -1,3 +1,12 @@
 {
-    "geminicodeassist.chat.changeView": "Default diff view"
+  "files.watcherExclude": {
+    "**/.next/**": true,
+    "**/node_modules/**": true,
+    "**/.git/objects/**": true,
+    "**/dist/**": true
+  },
+  "files.exclude": {
+    "**/.next": true,
+    "**/node_modules": true
+  }
 }

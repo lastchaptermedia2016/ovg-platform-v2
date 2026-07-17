@@ -772,9 +772,21 @@ async function runSemanticFallback(
         : undefined;
     const activeTools = resolveActiveTools(integrations);
     const toolsPrompt = buildIntegrationToolsPrompt(activeTools);
+    const JSON_RESPONSE_DIRECTIVE = [
+      '',
+      '=== RESPONSE FORMAT (STRICT) ===',
+      'You MUST respond with a SINGLE valid JSON object and nothing else — no markdown, no code fences, no prose outside the JSON.',
+      'Required keys:',
+      '  - "actionType": one of "CLIENT_NOP" | "SYSTEM_UPDATE_BRANDING" | "SYSTEM_TELEMETRY" (use "CLIENT_NOP" for normal conversational replies).',
+      '  - "summary": the plain-text reply shown to the user.',
+      'Optional keys:',
+      '  - "functionCall": { "name": "<function>", "arguments": { ... } } when calling an integration function listed above.',
+      'Example: { "actionType": "CLIENT_NOP", "summary": "Hi! How can I help you today?" }',
+    ].join('\n');
+
     const enrichedSystemPrompt = toolsPrompt
-      ? `${hydratedSystemPrompt}\n${toolsPrompt}`
-      : hydratedSystemPrompt;
+      ? `${hydratedSystemPrompt}\n${toolsPrompt}${JSON_RESPONSE_DIRECTIVE}`
+      : `${hydratedSystemPrompt}${JSON_RESPONSE_DIRECTIVE}`;
 
     const completion = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
@@ -849,7 +861,13 @@ async function runSemanticFallback(
     // response. Memory extraction failures are non-fatal.
     void extractAndStoreMemories(persistCtx?.tenantId ?? null, persistCtx?.userId ?? null, text);
     return NextResponse.json(data);
-  } catch {
+  } catch (err) {
+    console.error('[process-command] Semantic fallback catch triggered:', {
+      error: err instanceof Error ? err.message : JSON.stringify(err),
+      stack: err instanceof Error ? err.stack : undefined,
+      hasApiKey: Boolean(process.env.GROQ_API_KEY),
+      text,
+    });
     // Resilient fallback: if the LLM is unreachable we still answer
     // informational add-on questions from the static catalog so the user
     // never hears a generic snag for "What is smart booking?".

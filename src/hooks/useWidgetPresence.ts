@@ -57,7 +57,7 @@ export function useWidgetPresence(
 
     let isActive = true;
 
-    channel.on("broadcast", { event: "status" }, (payload) => {
+    channel.on("broadcast", { event: "status_change" }, (payload) => {
       if (!isActive) return;
       const eventType = (payload as { status?: string }).status || "online";
       lastEventRef.current = { type: eventType, timestamp: Date.now() };

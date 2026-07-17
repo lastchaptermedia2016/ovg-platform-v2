@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect, type MutableRefObject } from 'react';
+import { useState, useRef, useCallback, useEffect, useContext, type MutableRefObject } from 'react';
 import { isInvalidSlug } from '@/lib/utils/guard';
 import { useCommandDeck } from '@/contexts/CommandDeckContext';
 import { transcodeBlobToWav } from '@/utils/audio/transcode-to-wav';
 import { createClient as createBrowserClient } from '@/lib/supabase/client';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { getSpeechRecognition, type SpeechRecognitionInstance, type SpeechRecognitionResultEvent } from '@/types/voice-parser';
+import { VoiceStateContext } from '@/providers/voice-provider';
 
 interface UseVoiceCommandReturn {
   /** True while the mic is actively capturing audio. */
@@ -825,6 +826,21 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     cleanup();
     broadcastStatus("online");
   }, [cleanup, broadcastStatus]);
+
+  const voiceState = useContext(VoiceStateContext);
+  const globalIsListening = voiceState?.isListening ?? false;
+
+  /* eslint-disable react-hooks/set-state-in-effect -- Reactive coupling to centralized VoiceProvider isListening state */
+  useEffect(() => {
+    if (globalIsListening) {
+      console.log('[AudioEngine] Global isListening is TRUE. Initializing media pipeline capture...');
+      startRecording();
+    } else {
+      console.log('[AudioEngine] Global isListening is FALSE. Tearing down audio channels...');
+      abortRecording();
+    }
+  }, [globalIsListening, startRecording, abortRecording]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const resetState = useCallback(() => {
     isProcessingRef.current = false;

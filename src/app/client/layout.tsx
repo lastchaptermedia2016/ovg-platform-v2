@@ -7,6 +7,8 @@ import { OverlayController } from '@/components/client/OverlayController';
 import { ZeederProvider, type ZeederClientProfile } from '@/contexts/ZeederContext';
 import { StudioDraftProvider } from '@/contexts/StudioDraftContext';
 import SystemMicButton from '@/components/ui/zeeder/SystemMicButton';
+import { VoiceProvider } from '@/providers/voice-provider';
+import type { AuthContext } from '@/lib/actions/auth-middleware';
 import { createClient as createSupabaseClient } from '@/lib/supabase/client';
 import { resolveClientSlug } from '@/lib/db/resolve-client-slug';
 
@@ -18,6 +20,7 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
   const [clientProfile, setClientProfile] = useState<ZeederClientProfile | null>(null);
   const [transcript, setTranscript] = useState('');
   const [isRecording, setIsRecording] = useState(false);
+  const [authContext, setAuthContext] = useState<AuthContext | null>(null);
 
   // ── Fetch authenticated client identity ────────────────────────────
   useEffect(() => {
@@ -51,6 +54,32 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
         };
         console.log('[TRACE ClientLayout] Setting clientProfile:', profile);
         setClientProfile(profile);
+
+        let tenantId = '';
+        try {
+          const { data: userResellerData } = await supabase
+            .from('user_resellers')
+            .select('reseller_id')
+            .eq('user_id', session.user.id)
+            .maybeSingle();
+          if (userResellerData?.reseller_id) {
+            const { data: tenantData } = await supabase
+              .from('tenants')
+              .select('id')
+              .eq('reseller_id', userResellerData.reseller_id)
+              .limit(1)
+              .maybeSingle();
+            tenantId = tenantData?.id ?? '';
+          }
+        } catch {
+          tenantId = '';
+        }
+
+        setAuthContext({
+          userId: session.user.id,
+          tenantId,
+          role: session.user.user_metadata?.role,
+        });
       }
     });
   }, []);
@@ -94,9 +123,9 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
     };
   }, [mobileMenuOpen]);
 
-  return (
-    <StudioDraftProvider>
-    <ZeederProvider clientProfile={clientProfile ?? undefined}>
+  const supabase = createSupabaseClient();
+
+  const innerContent = (
     <div className="font-agrandir antialiased text-white min-h-screen bg-transparent overflow-x-clip flex flex-col">
       {/* Fixed Background Matrix — binary/code matrix bleed with deep dark preservation */}
       <div className="fixed top-0 left-0 w-[100vw] h-[100vh] z-[-10] bg-[url('/clientsbg.jpg')] bg-cover bg-center bg-no-repeat">
@@ -269,6 +298,21 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
         </div>
       </div>
     </div>
+  );
+
+  return (
+    <StudioDraftProvider>
+    <ZeederProvider clientProfile={clientProfile ?? undefined}>
+    {authContext ? (
+      <VoiceProvider
+        authContext={authContext}
+        supabase={supabase}
+        enableGlobalHotkey={true}
+        enableAudio={true}
+      >
+        {innerContent}
+      </VoiceProvider>
+    ) : innerContent}
     </ZeederProvider>
     </StudioDraftProvider>
   );

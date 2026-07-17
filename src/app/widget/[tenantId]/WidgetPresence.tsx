@@ -1,6 +1,7 @@
 "use client";
 
 import { useWidgetPresence } from "@/hooks/useWidgetPresence";
+import { cornerStyle } from "@/lib/branding/widget-position";
 
 const STATUS_STYLES: Record<string, React.CSSProperties> = {
   online: {
@@ -30,8 +31,10 @@ const STATUS_STYLES: Record<string, React.CSSProperties> = {
 
 export default function WidgetPresence({
   tenantId,
+  widgetPosition,
 }: {
   tenantId: string;
+  widgetPosition?: string;
 }) {
   const status = useWidgetPresence(tenantId, {
     heartbeatIntervalMs: 10000,
@@ -41,9 +44,7 @@ export default function WidgetPresence({
   return (
     <div
       style={{
-        position: "fixed",
-        top: "1rem",
-        right: "1rem",
+        ...cornerStyle(widgetPosition as Parameters<typeof cornerStyle>[0]),
         zIndex: 9998,
         display: "inline-flex",
         alignItems: "center",
