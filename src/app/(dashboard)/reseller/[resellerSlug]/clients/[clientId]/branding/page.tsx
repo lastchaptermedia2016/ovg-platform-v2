@@ -8,6 +8,7 @@ import { ClientBrandingStudio } from '@/components/reseller/ClientBrandingStudio
 import { IntegrationSuite } from '@/components/reseller/IntegrationSuite';
 import type { BookingProviderType } from '@/interfaces/booking-provider.interface';
 import type { Client, Tenant } from '@/types';
+import type { SuggestedAction } from '@/lib/schemas/tenant-config.canonical';
 
 interface BookingIntegrationState {
   enabled: boolean;
@@ -121,6 +122,7 @@ export default function ClientBrandingPage() {
         const widgetConfig = (clientData as Record<string, unknown>).widget_config as Record<string, unknown> | undefined;
         const branding = (widgetConfig?.branding || {}) as Record<string, unknown>;
         const features = (widgetConfig?.features || {}) as Record<string, unknown> | undefined;
+        const suggestedActionsRaw = (widgetConfig?.suggestedActions as unknown[] | undefined) ?? [];
 
         return {
           branding: {
@@ -137,6 +139,7 @@ export default function ClientBrandingPage() {
             aiDesignMirror?: boolean;
             customCss?: boolean;
           } | undefined,
+          suggestedActions: suggestedActionsRaw as SuggestedAction[],
         };
       })()
     : {};

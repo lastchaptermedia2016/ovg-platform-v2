@@ -204,10 +204,17 @@ export const SENSITIVE_INTEGRATION_FIELDS = [
 
 export type SensitiveIntegrationField = (typeof SENSITIVE_INTEGRATION_FIELDS)[number];
 
+export const ClientSuggestedActionSchema = z.object({
+  label: z.string().min(1),
+  actionType: z.enum(['message', 'link']),
+  payload: z.string().min(1),
+});
+
 export const ClientWidgetStudioSchema = z.object({
   aiPersona: ClientAIPersonaSchema.optional(),
   branding: ClientBrandingSchema.optional(),
   integrations: ClientIntegrationsSchema,
+  suggestedActions: z.array(ClientSuggestedActionSchema).optional(),
   features: z
     .object({
       aiInsightBadge: z.boolean().optional(),

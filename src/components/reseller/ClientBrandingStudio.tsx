@@ -18,7 +18,8 @@ import { createHarmoniousGreeting, VisualStyle } from '@/lib/voice-visual-harmon
 import { isInvalidSlug } from '@/lib/utils/guard';
 import { type IncomingAIAction } from '@/hooks/use-voice-command';
 import { useHannah } from '@/contexts/HannahContext';
-import type { CanonicalBranding, CanonicalFeatures } from '@/lib/schemas/tenant-config.canonical';
+import type { CanonicalBranding, CanonicalFeatures, SuggestedAction } from '@/lib/schemas/tenant-config.canonical';
+import { SuggestedActionsEditor } from '@/components/admin/SuggestedActionsEditor';
 
 interface ClientWithBranding extends ClientType {
   industry?: string;
@@ -38,6 +39,8 @@ interface InitialConfig {
   };
   /** Default TTS voice param sent to /api/ai/speech. */
   defaultTtsVoice?: string;
+  /** Dynamic quick-action pills shown above the widget chat input. */
+  suggestedActions?: SuggestedAction[];
 }
 
 interface ClientBrandingStudioProps {
@@ -185,6 +188,13 @@ export function ClientBrandingStudio({
     widgetBodyOpacity: 1.0,
     widgetBodyBackground: 'rgba(31, 41, 55, 1.0)',
   });
+
+  const [suggestedActions, setSuggestedActions] = useState<SuggestedAction[]>(
+    initialConfig?.suggestedActions ?? []
+  );
+  // Reseller acts on behalf of the client only after an explicit unlock,
+  // keeping the default stance read-only (audit persists via logConfigChange).
+  const [isAdminOverrideActive, setIsAdminOverrideActive] = useState(false);
 
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
@@ -622,6 +632,7 @@ export function ClientBrandingStudio({
         ai_settings: {
           voiceId: config.defaultTtsVoice,
         },
+        suggestedActions,
       },
     };
 
@@ -644,7 +655,7 @@ export function ClientBrandingStudio({
       setSaveMessage(`Error: ${errorMessage}`);
       return false;
     }
-  }, [config, clientId]);
+  }, [config, clientId, suggestedActions]);
 
   // Handle save — uses atomic commit pipeline with version_stamp optimistic locking
   const handleSave = useCallback(async () => {
@@ -1970,6 +1981,36 @@ export function ClientBrandingStudio({
               ))}
             </div>
           </div>
+        </div>
+
+        {/* Quick Action Pills — Reseller override path */}
+        <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-xl p-6 space-y-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <span className="text-[#FFD700]">◆</span>
+                Quick Action Pills
+              </h2>
+              <p className="text-white/50 text-xs mt-1">
+                Manage the suggested action pills shown in this client&apos;s widget.
+              </p>
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <span className="text-xs text-white/70">Unlock Client Configuration Management (Edit on Behalf)</span>
+              <input
+                type="checkbox"
+                checked={isAdminOverrideActive}
+                onChange={(e) => setIsAdminOverrideActive(e.target.checked)}
+                className="w-4 h-4 accent-[#0097b2]"
+                aria-label="Unlock client configuration management"
+              />
+            </label>
+          </div>
+          <SuggestedActionsEditor
+            value={suggestedActions}
+            onChange={setSuggestedActions}
+            isReadOnly={!isAdminOverrideActive}
+          />
         </div>
 
         {/* Save Button */}

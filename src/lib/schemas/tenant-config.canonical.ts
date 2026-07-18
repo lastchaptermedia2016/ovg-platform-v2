@@ -203,6 +203,23 @@ export const CanonicalIntegrationsSchema = z.object({
 export type CanonicalIntegrations = z.infer<typeof CanonicalIntegrationsSchema>;
 
 // ============================================================================
+// Suggested Actions Schema
+// ============================================================================
+
+/**
+ * A single dynamic quick-action pill surfaced above the chat input when the
+ * conversation is still empty. `message` actions forward `payload` to the chat
+ * pipeline; `link` actions open `payload` in a new tab.
+ */
+export const SuggestedActionSchema = z.object({
+  label: z.string().min(1),
+  actionType: z.enum(['message', 'link']),
+  payload: z.string().min(1),
+});
+
+export type SuggestedAction = z.infer<typeof SuggestedActionSchema>;
+
+// ============================================================================
 // AI Settings Schema
 // ============================================================================
 
@@ -241,6 +258,9 @@ export const CanonicalWidgetConfigSchema = z.object({
   theme: CanonicalThemeSchema.optional(),
   integrations: CanonicalIntegrationsSchema.optional(),
   ai_settings: CanonicalAISettingsSchema.optional(),
+  // Dynamic quick-action pills rendered above the chat input while the
+  // conversation is empty. Parsed by the widget surface; see SuggestedActionSchema.
+  suggestedActions: z.array(SuggestedActionSchema).optional(),
   // Legacy compatibility: aiPersona path (maps to ai_settings fields)
   aiPersona: CanonicalAIPersonaSchema.optional(),
   // Legacy compatibility: flat header/footer fields (deprecated, use nested)

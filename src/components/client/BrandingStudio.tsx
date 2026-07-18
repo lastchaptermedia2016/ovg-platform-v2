@@ -6,7 +6,8 @@ import { resolveTenantId } from '@/lib/resolveTenantId';
 import { useStudioDraft, toCanonicalBranding } from '@/contexts/StudioDraftContext';
 import type { LayerDraft } from '@/contexts/StudioDraftContext';
 import { LayerControls } from '@/components/client/studio/LayerControls';
-import type { CanonicalBranding } from '@/lib/schemas/tenant-config.canonical';
+import { SuggestedActionsEditor } from '@/components/admin/SuggestedActionsEditor';
+import type { CanonicalBranding, SuggestedAction } from '@/lib/schemas/tenant-config.canonical';
 
 interface BrandingConfig {
   primaryColor: string;
@@ -26,6 +27,7 @@ interface Feedback {
 export function BrandingStudio({ onSave }: BrandingStudioProps) {
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [tenantIdError, setTenantIdError] = useState<string | null>(null);
+  const [suggestedActions, setSuggestedActions] = useState<SuggestedAction[]>([]);
 
   useEffect(() => {
     const supabase = createSupabaseClient();
@@ -39,6 +41,15 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
         } else {
           setTenantId(tenantIdResult);
           console.log('[BrandingStudio] Resolved tenantId:', tenantIdResult);
+          const { data: cfgRow } = await createSupabaseClient()
+            .from('tenants')
+            .select('widget_config')
+            .eq('id', tenantIdResult)
+            .maybeSingle();
+          const cfg = (cfgRow?.widget_config as Record<string, unknown> | null | undefined) ?? null;
+          if (cfg && Array.isArray(cfg.suggestedActions)) {
+            setSuggestedActions(cfg.suggestedActions as SuggestedAction[]);
+          }
         }
       }
     });
@@ -153,6 +164,7 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
 
       const studioConfig = {
         branding: canonicalBranding,
+        suggestedActions,
       };
 
       const response = await fetch('/api/client/update-studio-config', {
@@ -203,7 +215,7 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [draftConfig, tenantId, tenantIdError, onSave]);
+  }, [draftConfig, tenantId, tenantIdError, onSave, suggestedActions]);
 
   const handleSaveRef = useRef<() => Promise<void>>(async () => {});
 
@@ -372,6 +384,14 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
           </select>
           <p className="text-xs text-zinc-500 mt-1">Choose where the widget appears on your pages</p>
         </div>
+
+        <SuggestedActionsEditor
+          value={suggestedActions}
+          onChange={(next) => {
+            setSuggestedActions(next);
+            clearFeedback();
+          }}
+        />
       </div>
 
       {feedback && (

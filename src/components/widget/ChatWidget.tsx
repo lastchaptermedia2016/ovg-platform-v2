@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { useVoiceCommand } from "@/hooks/use-voice-command";
 import { generateBrandingCSS } from "@/lib/branding/css-generator";
 import { cornerStyle } from "@/lib/branding/widget-position";
-import type { CanonicalBranding } from "@/lib/schemas/tenant-config.canonical";
+import type { CanonicalBranding, SuggestedAction } from "@/lib/schemas/tenant-config.canonical";
 import { getSpeechRecognition, type SpeechRecognitionInstance, type SpeechRecognitionResultEvent } from "@/types/voice-parser";
 import "./widget.css";
 
@@ -58,6 +58,11 @@ interface ChatWidgetProps {
   branding?: CanonicalBranding | null;
   widgetPosition?: CanonicalBranding['widgetPosition'];
   /**
+   * Dynamic quick-action pills rendered above the chat input while the
+   * conversation is empty. Sourced from tenants.widget_config.suggestedActions.
+   */
+  suggestedActions?: SuggestedAction[];
+  /**
    * Studio preview mode. Renders the chat window as a contained, always-open
    * surface (no consent gate, no floating bubble), suppresses realtime
    * presence/voice channels, and seeds a static sample conversation so the
@@ -88,6 +93,7 @@ const ChatWidget = ({
   preview = false,
   liveDraft,
   voiceFeaturesEnabled = true,
+  suggestedActions = [],
 }: ChatWidgetProps) => {
   const [config] = useState<WidgetConfig>(defaultConfig);
   const [isOpen, setIsOpen] = useState(false);
@@ -363,6 +369,7 @@ const ChatWidget = ({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text: userInputText,
+          tenantId,
           context: {
             surface: "chat-widget-embed",
           },
@@ -412,7 +419,7 @@ const ChatWidget = ({
     } finally {
       setIsTyping(false);
     }
-  }, [messages, refreshConfiguration, preview, voiceEnabled, liveDraft, speakPreview]);
+  }, [messages, refreshConfiguration, preview, voiceEnabled, liveDraft, speakPreview, tenantId]);
 
   // ── Preview test-drive STT (Web Speech API) ─────────────────────────
   const startPreviewListening = useCallback(() => {
@@ -637,22 +644,32 @@ const ChatWidget = ({
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
               transition={{ type: "spring", stiffness: 350, damping: 28 }}
-              className="mx-4 w-full max-w-sm rounded-2xl bg-gradient-to-b from-gray-800 to-gray-900 border border-gray-700 p-6 shadow-2xl"
+              className="mx-4 w-full max-w-sm rounded-2xl border p-6 shadow-2xl"
+              style={{
+                background:
+                  "var(--w-body-bg, linear-gradient(to bottom, rgba(17,24,39,0.92), rgba(3,7,18,0.96)))",
+                backdropFilter: "var(--w-body-backdrop-blur, 0px)",
+                WebkitBackdropFilter: "var(--w-body-backdrop-blur, 0px)",
+                borderColor: "rgba(255, 255, 255, 0.15)",
+              }}
             >
               <div className="flex items-center gap-3 mb-4">
                 <div
                   className="h-10 w-10 rounded-full flex items-center justify-center"
-                  style={{ backgroundColor: "var(--w-primary, #0097b2)" }}
+                  style={{
+                    backgroundColor: "color-mix(in srgb, var(--w-accent, #D4AF37) 22%, transparent)",
+                    border: "1px solid color-mix(in srgb, var(--w-accent, #D4AF37) 45%, transparent)",
+                  }}
                 >
-                  <ShieldCheck className="h-5 w-5 text-white" />
+                  <ShieldCheck className="h-5 w-5" style={{ color: "var(--w-accent, #D4AF37)" }} />
                 </div>
                 <h3 className="text-lg font-bold text-white">Before we chat…</h3>
               </div>
 
-              <p className="text-sm text-gray-300 leading-relaxed mb-2">
+              <p className="text-sm text-gray-100 leading-relaxed mb-2" style={{ color: "rgba(255,255,255,0.88)" }}>
                 This AI concierge is powered by artificial intelligence. By continuing you agree to our:
               </p>
-              <ul className="text-xs text-gray-400 space-y-1 mb-5 ml-4 list-disc">
+              <ul className="text-xs space-y-1 mb-5 ml-4 list-disc" style={{ color: "rgba(255,255,255,0.7)" }}>
                 <li>Terms & Conditions</li>
                 <li>Privacy Policy</li>
                 <li>AI-generated responses disclaimer</li>
@@ -660,13 +677,18 @@ const ChatWidget = ({
 
               <div className="flex gap-3">
                 <Button
-                  className="flex-1 border border-gray-600 text-gray-300 hover:bg-gray-700 hover:text-white"
+                  className="flex-1 font-semibold rounded-full"
+                  style={{
+                    backgroundColor: "rgba(255, 255, 255, 0.05)",
+                    color: "rgba(255, 255, 255, 0.9)",
+                    border: "1px solid rgba(255, 255, 255, 0.15)",
+                  }}
                   onClick={() => setShowConsent(false)}
                 >
                   Decline
                 </Button>
                 <Button
-                  className="flex-1 text-white font-semibold"
+                  className="flex-1 text-white font-semibold rounded-full"
                   style={{ backgroundColor: "var(--w-primary, #0097b2)" }}
                   onClick={() => {
                     greetedRef.current = true;
@@ -835,13 +857,22 @@ const ChatWidget = ({
 
             {messages.length <= 1 && !isTyping && (
               <div className="flex flex-wrap gap-2 px-1 pt-2">
-                {["Book a treatment", "I need prices"].map((label) => (
+                {suggestedActions.map((action) => (
                   <button
-                    key={label}
-                    onClick={() => sendMessageDirect(label)}
-                    className="px-3 py-1.5 text-xs font-medium rounded-full border border-pink-400/60 bg-pink-50/70 backdrop-blur-sm text-pink-700 hover:bg-pink-100/80 transition-colors shadow-sm"
+                    key={action.label}
+                    onClick={() =>
+                      action.actionType === 'link'
+                        ? window.open(action.payload, '_blank', 'noopener,noreferrer')
+                        : sendMessageDirect(action.payload)
+                    }
+                    className="px-3 py-1.5 text-xs font-medium rounded-full transition-colors"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid rgba(255, 255, 255, 0.15)',
+                      color: 'rgba(255, 255, 255, 0.88)',
+                    }}
                   >
-                    {label}
+                    {action.label}
                   </button>
                 ))}
 

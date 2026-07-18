@@ -277,6 +277,13 @@ export async function dispatchUpdateStudioConfig(
     nextConfig.features = deepMerge(currentFeatures, params.features as Record<string, unknown>);
   }
 
+  // Persist the dynamic quick-action pills. When the client sends an explicit
+  // array it replaces the prior set; omitting the key leaves existing pills
+  // untouched (mirrors the features/integrations contract above).
+  if (params.suggestedActions !== undefined) {
+    nextConfig.suggestedActions = params.suggestedActions as unknown[];
+  }
+
   // Merged by the integrations service, which has already deep-merged the new
   // integration config into the full integrations map. Persist it as-is under
   // the canonical `integrations` key so it shares the widget_config source of

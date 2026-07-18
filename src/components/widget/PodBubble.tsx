@@ -21,11 +21,8 @@ function useHydrated() {
 }
 
 export default function PodBubble({
-  tenantId,
   widgetPosition,
   brandingColor = "#0097b2",
-  voiceId,
-  name,
 }: PodBubbleProps) {
   const [isOpen, setIsOpen] = useState(false);
   const isMounted = useHydrated();

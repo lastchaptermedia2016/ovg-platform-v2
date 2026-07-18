@@ -19,12 +19,16 @@ import Groq from 'groq-sdk';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthenticatedUser, createAuthClient } from '@/lib/auth/server';
+import { supabaseAdmin } from '@/lib/supabase/admin';
+import { getTenantId } from '@/core/tenant/tenant';
+import { isAnonRateLimited } from '@/lib/rate-limit/tenant-rate-limit';
+import { buildBookingCapture } from '@/lib/booking/booking-capture';
 import { z } from 'zod';
 import { zeederActionRegistry, isZeederActionId, type ZeederActionId } from '@/lib/zeeder/action-registry';
 import { CLIENT_SYSTEM_REGISTRY, type ClientSystemItem } from '@/lib/client-system-registry';
 import { extractPersonaMode, hasPersonaModeIntent } from '@/lib/ai/extract-persona-mode';
 import { buildSystemPrompt } from '@/lib/ai/system-prompt-builder';
-import { getClientMemories, extractAndStoreMemories } from '@/lib/ai/memory-service';
+import { getClientMemories, extractAndStoreMemories, type ClientMemoryMap } from '@/lib/ai/memory-service';
 import { resolveTenantId } from '@/lib/resolveTenantId';
 import { logPlatformAction, persistChatMessage } from '@/lib/audit/platform-logger';
 import {
@@ -34,6 +38,29 @@ import {
   type ToolDefinition,
 } from '@/lib/ai/tools/integration-tools';
 import { executeIntegrationTool } from '@/lib/ai/tools/integration-executors';
+
+// ──────────────────────────── CORS ─────────────────────────────────────────
+// Public, unauthenticated widget endpoint called from arbitrary third-party
+// embed domains. Access-Control-Allow-Origin: '*' is a DELIBERATE, documented
+// choice: the product must work on any client domain and a tenantId is already
+// public by design. CORS is therefore NOT a security boundary here — rate
+// limiting (see isAnonRateLimited) is the real abuse boundary. Do not assume
+// '*' is safe by default elsewhere; it is scoped to this anon route on purpose.
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+function corsJson(body: ClientCommandResponse, status = 200): NextResponse<ClientCommandResponse> {
+  return NextResponse.json(body, { status, headers: CORS_HEADERS });
+}
+
+function clientIp(req: NextRequest): string {
+  const fwd = req.headers.get('x-forwarded-for');
+  if (fwd) return fwd.split(',')[0]?.trim() || 'unknown';
+  return req.headers.get('x-real-ip') ?? 'unknown';
+}
 
 // ──────────────────────────── Types & Schemas ───────────────────────────
 
@@ -64,6 +91,13 @@ const CommandRequestSchema = z.object({
   payload: z.record(z.unknown()).optional().default({}),
   currentPath: z.string().optional(),
   /**
+   * Public widget embed supply their tenant identifier here. Anonymous callers
+   * have no session, so the tenant is resolved server-side (via supabaseAdmin)
+   * from this client-supplied value — never trusted as an identity, only as a
+   * lookup key. Authenticated callers ignore this and resolve via their session.
+   */
+  tenantId: z.string().min(1).max(200).optional(),
+  /**
    * Sandbox flag raised by the Branding Studio preview widget. When true, the
    * request is a non-persistent "test drive": the route never writes to the
    * conversations / messages log tables (see `persistEnabled` in the handler).
@@ -73,7 +107,6 @@ const CommandRequestSchema = z.object({
   /**
    * Transient, unsaved brand overrides surfaced by the live Studio preview so
    * the AI can answer using the on-screen vibe/brand before the user saves.
-   * These are merged over any saved profile when building the system prompt.
    */
   draftBrandName: z.string().optional(),
   draftVibe: z.string().optional(),
@@ -308,11 +341,32 @@ function parseFunctionCall(
  */
 
 /**
- * Allowed action types the semantic fallback may surface. Anything outside this
- * whitelist is collapsed to `CLIENT_NOP` so the LLM cannot trigger an
- * unregistered or out-of-surface action.
+ * Booking intent. Matches "book / appointment / schedule / reserve / reschedule"
+ * so the utterance is routed to the semantic fallback where the LLM extracts
+ * structured fields (firstName, phone, treatment, …) into a SYSTEM_BOOKING_CAPTURE
+ * payload. Kept broad + intent-level; the actual field capture is the LLM's job.
  */
-const SEMANTIC_FALLBACK_ALLOWED = new Set(['CLIENT_NOP', 'SYSTEM_UPDATE_BRANDING', 'SYSTEM_TELEMETRY']);
+const CLIENT_BOOKING_INTENT_REGEX =
+  /(book|booking|appointment|schedule|reschedule|reserve|slot)/i;
+
+/**
+ * Allowed actionTypes the semantic fallback may surface. Anonymous callers are
+ * restricted to plain conversation + the visitor-facing help line + booking
+ * capture. Authenticated clients additionally get branding / telemetry (their
+ * own config, mutated only by themselves) — but NEVER integration functionCalls
+ * (those are gated separately for anon below).
+ */
+function allowedActions(isAnon: boolean): Set<string> {
+  return isAnon
+    ? new Set(['CLIENT_NOP', 'SYSTEM_HELP', 'SYSTEM_BOOKING_CAPTURE'])
+    : new Set([
+        'CLIENT_NOP',
+        'SYSTEM_UPDATE_BRANDING',
+        'SYSTEM_TELEMETRY',
+        'SYSTEM_HELP',
+        'SYSTEM_BOOKING_CAPTURE',
+      ]);
+}
 
 // ──────────────────────────── Intent Parsing ────────────────────────────
 
@@ -360,29 +414,19 @@ function parseIntent(text: string): ZeederActionId | null {
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest): Promise<NextResponse<ClientCommandResponse>> {
-  // ── Server-authoritative auth gate ──────────────────────────────────
-  // Derived from the session (unspoofable) — never a client-supplied flag.
-  const { userId, error: authError } = await getAuthenticatedUser();
-  if (authError || !userId) {
-    return NextResponse.json(
-      {
-        success: false,
-        actionType: 'CLIENT_NOP',
-        targetIds: [],
-        payload: {},
-        summary: 'Unauthorized',
-        error: 'Unauthorized',
-      },
-      { status: 401 },
-    );
-  }
+  // ── Session resolution (server-authoritative) ───────────────────────
+  // Authenticated callers resolve the tenant from their session. Anonymous
+  // embed visitors (no session) resolve the tenant from the client-supplied
+  // tenantId via supabaseAdmin — a lookup key only, never an identity.
+  const { userId } = await getAuthenticatedUser();
+  const isAnon = !userId;
 
   // ── Parse & Validate (Zod gates malformed bodies) ───────────────────
   let raw: unknown;
   try {
     raw = await request.json();
   } catch {
-    return NextResponse.json(
+    return corsJson(
       {
         success: false,
         actionType: 'CLIENT_NOP',
@@ -391,7 +435,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
         summary: 'Invalid request body.',
         error: 'Malformed JSON.',
       },
-      { status: 400 },
+      400,
     );
   }
 
@@ -400,7 +444,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
     parsed = CommandRequestSchema.parse(raw);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Invalid request parameters.';
-    return NextResponse.json(
+    return corsJson(
       {
         success: false,
         actionType: 'CLIENT_NOP',
@@ -409,7 +453,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
         summary: 'Invalid request parameters.',
         error: message,
       },
-      { status: 400 },
+      400,
     );
   }
 
@@ -418,13 +462,76 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
     actionId: rawActionId,
     payload: payloadOverrides,
     currentPath,
+    tenantId: suppliedTenantId,
     draftBrandName,
     draftVibe,
     draftPersona,
   } = parsed;
 
+  // ── Tenant resolution ───────────────────────────────────────────────
+  let resolvedTenantId: string | null = null;
   const supabase = await createAuthClient();
-  const { data: tenantId, error: _tenantError } = await resolveTenantId(userId, supabase);
+
+  if (!isAnon) {
+    const { data } = await resolveTenantId(userId!, supabase);
+    resolvedTenantId = data;
+  } else {
+    const key = getTenantId(suppliedTenantId);
+    if (!key || key === 'demo') {
+      return corsJson(
+        {
+          success: false,
+          actionType: 'CLIENT_NOP',
+          targetIds: [],
+          payload: {},
+          summary: 'Missing tenant',
+          error: 'Missing tenant',
+        },
+        400,
+      );
+    }
+    // text tenant_id -> internal id (bypasses RLS via admin client)
+    const byTenantId = await supabaseAdmin
+      .from('tenants')
+      .select('id')
+      .eq('tenant_id', key)
+      .maybeSingle();
+    const found = byTenantId.data ?? (await supabaseAdmin.from('tenants').select('id').eq('id', key).maybeSingle()).data;
+    resolvedTenantId = (found?.id as string | undefined) ?? null;
+    if (!resolvedTenantId) {
+      return corsJson(
+        {
+          success: false,
+          actionType: 'CLIENT_NOP',
+          targetIds: [],
+          payload: {},
+          summary: 'Unknown tenant',
+          error: 'Unknown tenant',
+        },
+        404,
+      );
+    }
+
+    // ── Anonymous abuse protection (the real security boundary; see CORS note) ──
+    // Dual-key Supabase limiter: per-IP burst + global tenant volume. Runs AFTER
+    // tenant resolution but BEFORE any LLM/TTS spend.
+    const limit = await isAnonRateLimited(resolvedTenantId, clientIp(request));
+    if (limit.limited) {
+      return corsJson(
+        {
+          success: false,
+          actionType: 'CLIENT_NOP',
+          targetIds: [],
+          payload: {},
+          summary: 'Too many requests, please slow down.',
+          error: 'Rate limited',
+        },
+        429,
+      );
+    }
+  }
+
+  const tenantId = resolvedTenantId;
   const testMode = parsed.testMode === true || parsed.isTestDrive === true;
 
   const previewDraft: PreviewDraft = {};
@@ -432,12 +539,15 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
   if (draftVibe) previewDraft.vibe = draftVibe;
   if (draftPersona) previewDraft.persona = draftPersona;
 
+  // Anonymous callers persist nothing to chat_messages / platform_actions
+  // (no session => no userId, and we must not mutate tenant config). Only an
+  // explicit booking capture writes a lead row (see SYSTEM_BOOKING_CAPTURE).
   async function tryPersistCommand(
     response: ClientCommandResponse,
     actionType: string,
     payload: Record<string, unknown>,
   ): Promise<void> {
-    if (testMode) return;
+    if (testMode || isAnon) return;
     try {
       await persistChatMessage(supabase, tenantId, userId!, text, {
         actionType: response.actionType,
@@ -461,6 +571,20 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
 
   // ── Pre-LLM help short-circuit (isolated client capabilities) ───────
   if (CLIENT_HELP_INTENT_REGEX.test(text.trim())) {
+    // Anonymous visitors get a minimal, hardcoded visitor-facing line. We do NOT
+    // surface the Studio capability list / brandingCapabilities — those are
+    // internal platform detail not meant for a public embed. Authenticated
+    // clients keep the full capability listing.
+    if (isAnon) {
+      return corsJson({
+        success: true,
+        actionType: 'SYSTEM_HELP',
+        targetIds: [],
+        payload: {},
+        summary:
+          'I can help you book, reschedule, or answer questions about our services.',
+      });
+    }
     const availableCommands = buildClientCapabilities();
     const data: ClientCommandResponse = {
       success: true,
@@ -503,14 +627,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
   }
 
   // ── Persona-page navigation → deterministic Studio navigation ─────────
-  // Pure navigation ("open the persona page", "take me to persona settings")
-  // has no change verb and no concrete mode, so it must NOT fall through to the
-  // LLM (which would collapse it to CLIENT_NOP). Resolve it deterministically —
-  // the Persona viewport lives on the unified Studio dashboard alongside
-  // Branding, so routing to SYSTEM_UPDATE_BRANDING is the correct, consistent
-  // destination (mirrors how "branding" navigation resolves). Screen-aware:
-  // if already on the Studio dashboard, just guide the user to the tab.
-  if (CLIENT_PERSONA_NAV_INTENT_REGEX.test(text.trim())) {
+  // BLOCKED for anonymous visitors: this resolves to SYSTEM_UPDATE_BRANDING,
+  // a tenant-config mutation no public embed caller may trigger.
+  if (!isAnon && CLIENT_PERSONA_NAV_INTENT_REGEX.test(text.trim())) {
     // The Persona viewport is a distinct route on the unified Studio dashboard
     // (/client/dashboard/studio/persona). Rather than asking the user to click
     // the tab manually, always navigate them there by returning the navigation
@@ -530,11 +649,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
   }
 
   // ── Persona intent without a target mode → screen-aware clarification ──
-  // The utterance asks to adjust the persona/AI mode but omits the concrete
-  // target ("sales" | "concierge"). Resolve this deterministically (no LLM
-  // round-trip) and route the user appropriately within the unified Studio
-  // dashboard, where Branding and Persona are co-located sibling viewports.
-  if (hasPersonaModeIntent(text)) {
+  // BLOCKED for anonymous visitors (resolves to branding/persona mutation).
+  if (!isAnon && hasPersonaModeIntent(text)) {
     const onStudio = currentPath === '/client/dashboard/studio/branding';
     if (onStudio) {
       const data: ClientCommandResponse = {
@@ -578,6 +694,23 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
     return response;
   }
 
+  // ── Booking intent → semantic fallback (structured field capture) ──
+  // Routes to runSemanticFallback with bookingIntent=true. Booking is allowed
+  // for both anon and authenticated callers (it's the core public use-case).
+  // bookingIntent FORCES the SYSTEM_BOOKING_CAPTURE path regardless of the
+  // model's self-labeled actionType, so capture is deterministic (the model
+  // does not reliably emit the exact actionType string on its own).
+  if (CLIENT_BOOKING_INTENT_REGEX.test(text.trim())) {
+    return runSemanticFallback(text, currentPath, previewDraft, {
+      supabase,
+      tenantId,
+      userId,
+      testMode,
+      isAnon,
+      bookingIntent: true,
+    });
+  }
+
   // ── Informational / how-to queries → LLM (never the canned HELP block) ──
   // Questions like "how do I upload my logo" are educational, not capability
   // listings. Route them to the semantic fallback (runSemanticFallback) so
@@ -590,6 +723,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
       tenantId,
       userId,
       testMode,
+      isAnon,
+      bookingIntent: false,
     });
   }
 
@@ -604,6 +739,8 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
       tenantId,
       userId,
       testMode,
+      isAnon,
+      bookingIntent: false,
     });
   }
 
@@ -619,6 +756,18 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
     const response = NextResponse.json(data);
     await tryPersistCommand(data, 'CLIENT_NOP', {});
     return response;
+  }
+
+  // BLOCK for anonymous visitors: the only Tier-1 system actions are branding
+  // mutations and telemetry reads — neither may be triggered by a public embed.
+  if (isAnon && (systemType === 'SYSTEM_UPDATE_BRANDING' || systemType === 'SYSTEM_TELEMETRY')) {
+    return corsJson({
+      success: true,
+      actionType: 'CLIENT_NOP',
+      targetIds: [],
+      payload: {},
+      summary: "I can help you book, reschedule, or answer questions about our services.",
+    });
   }
 
   // Confirm the action still exists in the registry.
@@ -709,8 +858,10 @@ async function fetchTenantDetails(
 interface PersistContext {
   supabase: SupabaseClient;
   tenantId: string | null;
-  userId: string;
+  userId: string | null;
   testMode: boolean;
+  isAnon: boolean;
+  bookingIntent?: boolean;
 }
 
 async function runSemanticFallback(
@@ -719,12 +870,16 @@ async function runSemanticFallback(
   previewDraft: PreviewDraft = {},
   persistCtx?: PersistContext,
 ): Promise<NextResponse<ClientCommandResponse>> {
+  const isAnon = persistCtx?.isAnon ?? false;
+  const bookingIntent = persistCtx?.bookingIntent ?? false;
   const availableCommands = buildClientCapabilities();
   const capabilityPayload: Record<string, unknown> = { availableCommands, brandingCapabilities: {} };
 
-  // Relational memory: recall who we are talking to from prior turns so the
-  // hydrated system prompt can reference the client's name / business.
-  const memories = await getClientMemories(persistCtx?.tenantId ?? null, persistCtx?.userId ?? null);
+  // Relational memory: skip for anon (no userId to key on; we never persist
+  // anonymous visitor memory).
+  const memories: ClientMemoryMap = isAnon
+    ? {}
+    : await getClientMemories(persistCtx?.tenantId ?? null, persistCtx?.userId ?? null);
 
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
@@ -733,22 +888,24 @@ async function runSemanticFallback(
       actionType: 'CLIENT_NOP',
       targetIds: [],
       payload: capabilityPayload,
-      summary: 'I didn\'t catch a command I can run in your client portal.',
+      summary: "I didn't catch a command I can run in your client portal.",
     };
     if (persistCtx) {
       await tryPersistCommandInCtx(persistCtx, text, data, 'CLIENT_NOP', {});
     }
-    void extractAndStoreMemories(persistCtx?.tenantId ?? null, persistCtx?.userId ?? null, text);
+    if (!isAnon) {
+      void extractAndStoreMemories(persistCtx?.tenantId ?? null, persistCtx?.userId ?? null, text);
+    }
     return NextResponse.json(data);
   }
 
   try {
     const groq = new Groq({ apiKey });
 
-    // Server-authoritative tenant hydration: fetch the live tenant row by the
-    // resolved tenantId and build an injection-safe system prompt that carries
-    // the host business identity, brand styling, and active settings.
-    const tenantDetails = await fetchTenantDetails(persistCtx?.supabase ?? null, persistCtx?.tenantId ?? null);
+    // Anonymous callers cannot read `tenants` via RLS, so hydrate with the
+    // admin client; authenticated callers use their own session client.
+    const tenantClient = isAnon ? supabaseAdmin : (persistCtx?.supabase ?? null);
+    const tenantDetails = await fetchTenantDetails(tenantClient, persistCtx?.tenantId ?? null);
     const hydratedSystemPrompt = buildSystemPrompt(
       tenantDetails,
       {
@@ -764,23 +921,23 @@ async function runSemanticFallback(
     // tools whose integration is active & configured. This makes the model
     // aware of the tenant's real capability set without any client-supplied
     // flag. The resolved tools are rendered into the system prompt below.
+    // SKIPPED for anon: a public embed must never be able to trigger a tenant
+    // integration connector.
     const widgets =
       (tenantDetails?.widget_config as Record<string, unknown> | null | undefined) ?? null;
     const integrations =
       widgets && typeof widgets === 'object'
         ? (widgets.integrations as Record<string, Record<string, unknown>> | undefined)
         : undefined;
-    const activeTools = resolveActiveTools(integrations);
-    const toolsPrompt = buildIntegrationToolsPrompt(activeTools);
+    const activeTools = isAnon ? [] : resolveActiveTools(integrations);
+    const toolsPrompt = isAnon ? '' : buildIntegrationToolsPrompt(activeTools);
     const JSON_RESPONSE_DIRECTIVE = [
       '',
       '=== RESPONSE FORMAT (STRICT) ===',
       'You MUST respond with a SINGLE valid JSON object and nothing else — no markdown, no code fences, no prose outside the JSON.',
-      'Required keys:',
-      '  - "actionType": one of "CLIENT_NOP" | "SYSTEM_UPDATE_BRANDING" | "SYSTEM_TELEMETRY" (use "CLIENT_NOP" for normal conversational replies).',
+      `Allowed "actionType" values: ${[...allowedActions(isAnon)].join(' | ')} (use "CLIENT_NOP" for normal conversational replies).`,
       '  - "summary": the plain-text reply shown to the user.',
-      'Optional keys:',
-      '  - "functionCall": { "name": "<function>", "arguments": { ... } } when calling an integration function listed above.',
+      '  - "payload": for bookings, include { "firstName": string|null, "phone": string|null, "treatment": string|null, "preferredDate": string|null, "preferredTime": string|null, "notes": string|null }.',
       'Example: { "actionType": "CLIENT_NOP", "summary": "Hi! How can I help you today?" }',
     ].join('\n');
 
@@ -800,7 +957,7 @@ async function runSemanticFallback(
     });
 
     const content = completion.choices[0]?.message?.content;
-    let parsed: { actionType?: string; summary?: string } = {};
+    let parsed: { actionType?: string; summary?: string; payload?: unknown } = {};
     if (content) {
       try {
         parsed = JSON.parse(content);
@@ -810,7 +967,14 @@ async function runSemanticFallback(
     }
 
     const rawAction = (parsed.actionType ?? 'CLIENT_NOP').toString().toUpperCase();
-    const actionType = SEMANTIC_FALLBACK_ALLOWED.has(rawAction) ? rawAction : 'CLIENT_NOP';
+    // When the request was routed as a booking intent, FORCE the booking action
+    // type so capture is deterministic — the model may not emit the exact
+    // SYSTEM_BOOKING_CAPTURE label, but we still extract its structured payload.
+    const actionType = bookingIntent
+      ? 'SYSTEM_BOOKING_CAPTURE'
+      : allowedActions(isAnon).has(rawAction)
+        ? rawAction
+        : 'CLIENT_NOP';
 
     const detectedPersonaMode = extractPersonaMode(text);
     let responsePayload = capabilityPayload;
@@ -824,13 +988,57 @@ async function runSemanticFallback(
       };
     }
 
+    // ── Booking capture (allowed for anon + authed) ─────────────────
+    // Sanitize the LLM-extracted payload (untrusted model output) and persist a
+    // lead row to tenant_appointments when a contact detail is present.
+    // NOTE: tenant_appointments.start_time is NOT NULL and status is constrained to
+    // {AVAILABLE, RESERVED, CONFIRMED, LEAD}. A captured lead (no slot chosen yet)
+    // is stored with status='LEAD' plus a now() placeholder for start_time/end_time
+    // (NOT NULL). The booking-bridge / booking_slots phase will create real
+    // reservations (status='RESERVED') on actual slots. 'LEAD' marks a lead row
+    // distinctly from a held slot so downstream reporting never conflates them.
+    if (actionType === 'SYSTEM_BOOKING_CAPTURE') {
+      const booking = buildBookingCapture(parsed.payload ?? {}, text, parsed.summary ?? null);
+      if (booking && booking.hasContact && persistCtx?.tenantId) {
+        try {
+          await supabaseAdmin.from('tenant_appointments').insert({
+            tenant_id: persistCtx.tenantId,
+            client_name: booking.firstName,
+            client_phone: booking.phone,
+            status: 'LEAD',
+            start_time: new Date().toISOString(),
+            end_time: new Date().toISOString(),
+          });
+        } catch (err) {
+          console.error('[process-command] Booking capture insert error:', err);
+        }
+        responsePayload = {
+          firstName: booking.firstName,
+          phone: booking.phone,
+          treatment: booking.treatment,
+          preferredDate: booking.preferredDate,
+          preferredTime: booking.preferredTime,
+          notes: booking.notes,
+        };
+      } else {
+        // No usable contact -> treat as a normal conversational reply.
+        return corsJson({
+          success: true,
+          actionType: 'CLIENT_NOP',
+          targetIds: [],
+          payload: {},
+          summary:
+            'Happy to help you book! Could you share your name and a phone number so we can confirm?',
+        });
+      }
+    }
+
     // ── Integration tool execution ──────────────────────────────────
-    // If the LLM emitted a `functionCall` for a tool this tenant is allowed to
-    // use, execute the (mock) handler and fold the confirmation into the
-    // summary. Unknown/disabled tools are ignored so the pipeline stays safe.
+    // BLOCKED for anon (see activeTools=[] above). For authed callers, execute
+    // only allowed tenant tools and fold the confirmation into the summary.
     const functionCall = parseFunctionCall(parsed as Record<string, unknown>);
     let toolResultMessage: string | null = null;
-    if (functionCall && INTEGRATION_TOOL_BY_NAME[functionCall.name]) {
+    if (functionCall && !isAnon && INTEGRATION_TOOL_BY_NAME[functionCall.name]) {
       const isAllowed = activeTools.some((t) => t.name === functionCall.name);
       if (isAllowed) {
         const result = executeIntegrationTool(functionCall);
@@ -858,8 +1066,10 @@ async function runSemanticFallback(
       await tryPersistCommandInCtx(persistCtx, text, data, actionType, responsePayload);
     }
     // Fire-and-forget: learn new facts from this turn without blocking the
-    // response. Memory extraction failures are non-fatal.
-    void extractAndStoreMemories(persistCtx?.tenantId ?? null, persistCtx?.userId ?? null, text);
+    // response. Memory extraction failures are non-fatal. Skip for anon.
+    if (!isAnon) {
+      void extractAndStoreMemories(persistCtx?.tenantId ?? null, persistCtx?.userId ?? null, text);
+    }
     return NextResponse.json(data);
   } catch (err) {
     console.error('[process-command] Semantic fallback catch triggered:', {
@@ -872,9 +1082,10 @@ async function runSemanticFallback(
     // informational add-on questions from the static catalog so the user
     // never hears a generic snag for "What is smart booking?".
     const localAnswer = buildLocalAddonAnswer(text);
-    const summary =
-      localAnswer ??
-      "I'm here to help, though I hit a slight snag processing that. Would you like to update your branding or check your telemetry signals?";
+    const fallbackSummary = isAnon
+      ? "I'm here to help — you can book, reschedule, or ask me about our services."
+      : "I'm here to help, though I hit a slight snag processing that. Would you like to update your branding or check your telemetry signals?";
+    const summary = localAnswer ?? fallbackSummary;
     const data: ClientCommandResponse = {
       success: true,
       actionType: 'CLIENT_NOP',
@@ -896,9 +1107,10 @@ async function tryPersistCommandInCtx(
   actionType: string,
   payload: Record<string, unknown>,
 ): Promise<void> {
-  if (ctx.testMode) return;
+  // Anonymous callers persist nothing (no session/userId, no tenant mutation).
+  if (ctx.testMode || ctx.isAnon) return;
   try {
-    await persistChatMessage(ctx.supabase, ctx.tenantId, ctx.userId, text, {
+    await persistChatMessage(ctx.supabase, ctx.tenantId, ctx.userId!, text, {
       actionType: response.actionType,
       summary: response.summary,
     });
@@ -906,7 +1118,7 @@ async function tryPersistCommandInCtx(
       await logPlatformAction({
         supabase: ctx.supabase,
         tenantId: ctx.tenantId,
-        userId: ctx.userId,
+        userId: ctx.userId!,
         actionId: actionType,
         params: payload,
         result: response.payload,
@@ -919,6 +1131,11 @@ async function tryPersistCommandInCtx(
 }
 
 // ──────────────────────────── Unsupported Methods ───────────────────────
+
+// CORS preflight for the public, cross-origin widget embed.
+export async function OPTIONS(): Promise<NextResponse> {
+  return new NextResponse(null, { status: 204, headers: CORS_HEADERS });
+}
 
 export async function GET(): Promise<NextResponse> {
   return NextResponse.json({ error: 'Method not allowed' }, { status: 405 });
