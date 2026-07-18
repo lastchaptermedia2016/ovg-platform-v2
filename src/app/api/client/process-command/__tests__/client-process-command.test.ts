@@ -6,7 +6,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { POST } from '../route';
+import { POST, OPTIONS } from '../route';
+import { supabaseAdmin } from '@/lib/supabase/admin';
 import { getAuthenticatedUser, createAuthClient } from '@/lib/auth/server';
 import { resolveTenantId } from '@/lib/resolveTenantId';
 import { persistChatMessage, logPlatformAction } from '@/lib/audit/platform-logger';
@@ -904,5 +905,66 @@ describe('POST /api/client/process-command - System Prompt Hydration', () => {
     expect(vibeLine).not.toContain('\n');
     expect(vibeLine).not.toContain('```');
     expect(prompt).toMatch(/BEHAVIORAL BOUNDARIES/);
+  });
+});
+
+// ───────────── Anonymous Security Boundary (always-on regression gate) ─────────────
+//
+// These lock the behaviors that tonight's LIVE curl verification caught and that the
+// mocked route-import suite must never let regress silently:
+//   1. Anonymous callers CANNOT mutate tenant config (branding/telemetry) — must
+//      degrade to CLIENT_NOP.
+//   2. The OPTIONS preflight returns 204 with Access-Control-Allow-Origin: * (the
+//      public, cross-origin widget embed depends on this).
+//   3. The dual-key rate limiter blocks an anonymous caller over the per-IP cap (429).
+
+describe('POST /api/client/process-command - Anonymous Security Boundary', () => {
+  beforeEach(() => {
+    mockAuth.mockResolvedValue({
+      user: null,
+      userId: null,
+      email: null,
+      error: new Error('Unauthorized'),
+    });
+  });
+
+  it('should block anonymous branding mutation (degrade to CLIENT_NOP, no mutation)', async () => {
+    const response = await post('update my branding', { tenantId: 'public-tenant-key' });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.actionType).toBe('CLIENT_NOP');
+    // No branding capability payload is surfaced to an anonymous visitor.
+    expect(body.payload).toEqual({});
+  });
+
+  it('should block anonymous telemetry intent (degrade to CLIENT_NOP)', async () => {
+    const response = await post('show my telemetry', { tenantId: 'public-tenant-key' });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.actionType).toBe('CLIENT_NOP');
+  });
+
+  it('should return a CORS-friendly 204 on OPTIONS preflight with allow-origin *', async () => {
+    const response = await OPTIONS();
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+    expect(response.headers.get('Access-Control-Allow-Methods')).toMatch(/POST/);
+  });
+
+  it('should rate-limit an anonymous caller over the per-IP cap (429)', async () => {
+    // Force the dual-key limiter to report the composite (per-IP) key as exceeded.
+    vi.mocked(supabaseAdmin).rpc.mockResolvedValue({
+      data: [{ exceeded: true, hits: 16 }],
+      error: null,
+    } as unknown as Awaited<ReturnType<typeof supabaseAdmin.rpc>>);
+
+    const response = await post('hello there', { tenantId: 'public-tenant-key' });
+    const body = await response.json();
+
+    expect(response.status).toBe(429);
+    expect(body.error).toBe('Rate limited');
   });
 });
