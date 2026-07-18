@@ -960,7 +960,14 @@ async function runSemanticFallback(
     let parsed: { actionType?: string; summary?: string; payload?: unknown } = {};
     if (content) {
       try {
-        parsed = JSON.parse(content);
+        const maybe = JSON.parse(content);
+        // JSON.parse accepts non-objects (null, [], "", numbers). Only a plain
+        // object carries actionType/summary/payload; anything else is treated as
+        // an unparseable turn so capture/routing degrades gracefully instead of
+        // throwing on parsed.actionType.
+        if (maybe && typeof maybe === 'object' && !Array.isArray(maybe)) {
+          parsed = maybe as { actionType?: string; summary?: string; payload?: unknown };
+        }
       } catch {
         parsed = {};
       }

@@ -48,17 +48,26 @@ vi.mock('@/lib/audit/platform-logger', () => ({
   persistChatMessage: vi.fn(),
 }));
 
-vi.mock('@/lib/supabase/admin', () => ({
-  supabaseAdmin: {
-    from: vi.fn().mockReturnValue({
-      select: vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnThis(),
-        then: undefined,
+vi.mock('@/lib/supabase/admin', () => {
+  // Generic fluent chain that resolves to a single-row tenant lookup or an
+  // insert result. Supports the anon tenant resolution (.select().eq().maybeSingle())
+  // and the booking-capture insert (.insert()).
+  const rowChain = {
+    eq: vi.fn().mockReturnThis(),
+    maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'tenant-internal-id' }, error: null }),
+  };
+  return {
+    supabaseAdmin: {
+      // Rate limiter RPC: fail open in tests (not exceeded).
+      rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
+      from: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue(rowChain),
+        insert: vi.fn().mockResolvedValue({ error: null }),
+        upsert: vi.fn().mockResolvedValue({ error: null }),
       }),
-      upsert: vi.fn().mockResolvedValue({ error: null }),
-    }),
-  },
-}));
+    },
+  };
+});
 
 vi.mock('@/lib/ai/memory-service', async () => {
   const actual = await vi.importActual<typeof import('@/lib/ai/memory-service')>('@/lib/ai/memory-service');
@@ -232,7 +241,24 @@ describe('POST /api/client/process-command', () => {
     expect(body.summary).not.toContain('Error');
   });
 
-  it('should return a 401 when getAuthenticatedUser returns null', async () => {
+  it('should allow anonymous callers (no session) when a valid tenantId is supplied', async () => {
+    mockAuth.mockResolvedValue({
+      user: null,
+      userId: null,
+      email: null,
+      error: new Error('Unauthorized'),
+    });
+
+    // Anonymous widget embed: no session, but a public tenantId.
+    const response = await post('what can you do?', { tenantId: 'public-tenant-key' });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.actionType).toBe('SYSTEM_HELP');
+    // Anonymous HELP is restricted: no capability list is surfaced.
+    expect(body.payload).toEqual({});
+  });
+
+  it('should reject anonymous callers with no tenantId (400 Missing tenant)', async () => {
     mockAuth.mockResolvedValue({
       user: null,
       userId: null,
@@ -241,7 +267,50 @@ describe('POST /api/client/process-command', () => {
     });
 
     const response = await post('what can you do?');
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toBe('Missing tenant');
+  });
+
+  it('should capture a booking lead for anonymous callers (status LEAD)', async () => {
+    mockAuth.mockResolvedValue({
+      user: null,
+      userId: null,
+      email: null,
+      error: new Error('Unauthorized'),
+    });
+
+    const response = await post('book a massage, I am Jill, 0821234567', {
+      tenantId: 'public-tenant-key',
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.actionType).toBe('SYSTEM_BOOKING_CAPTURE');
+    expect(body.payload.firstName).toBe('Jill');
+    expect(body.payload.phone).toBe('0821234567');
+  });
+
+  it('should capture a booking lead even when the LLM returns a non-object (null) response', async () => {
+    mockAuth.mockResolvedValue({
+      user: null,
+      userId: null,
+      email: null,
+      error: new Error('Unauthorized'),
+    });
+
+    // Groq returns a bare `null` (valid JSON, but not a plain object). Before the
+    // parse guard this threw at parsed.actionType and silently degraded to
+    // CLIENT_NOP, dropping the lead. It must still capture via text fallback.
+    cannedGroqResponse = null;
+
+    const response = await post('book a facial, I am Sarah, 0825551212', {
+      tenantId: 'public-tenant-key',
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.actionType).toBe('SYSTEM_BOOKING_CAPTURE');
+    expect(body.payload.firstName).toBe('Sarah');
+    expect(body.payload.phone).toBe('0825551212');
   });
 
   it('should correctly explain system concepts like the widget body using the glossary', async () => {

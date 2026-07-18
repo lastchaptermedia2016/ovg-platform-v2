@@ -166,7 +166,7 @@ The following client-facing AI routes were hardened/extended after the original 
 |-------|-----------|-------|
 | `POST /api/ai/create-client` | ✅ `user_resellers` membership enforced via `getAuthenticatedUser()` before service-role insert | Returns 401/403/500 on failure; feeds reseller tenant registry |
 | `POST /api/ai/process-command` | ✅ AI `SYSTEM_UPDATE_BRANDING` writes audited to `action_logs` (`source='hannah'`) via authenticated client | Mirrors human save path; RLS-enforced |
-| `POST /api/client/process-command` | ✅ Informational/how-to queries routed to Groq LLM (`runSemanticFallback`) instead of static `SYSTEM_HELP` | Capability questions ("what can you do", "list capabilities") still return `SYSTEM_HELP`; on-screen guide page-context rule names exact Studio controls |
+| `POST /api/client/process-command` | ✅ Anonymous-tolerant (public widget embed, no session) + informational/how-to queries routed to Groq LLM (`runSemanticFallback`) instead of static `SYSTEM_HELP` | Anon allowlist = `CLIENT_NOP` / `SYSTEM_HELP` (restricted, no capability list) / `SYSTEM_BOOKING_CAPTURE`; branding/persona/telemetry/integration execution blocked for anon. Dual-key Supabase rate limiter (`rate_limits` + `check_rate_limit` RPC): 15/60s per-IP + 200/60s per-tenant. Booking capture → `tenant_appointments` `status:'LEAD'`. CORS `*` is deliberate; rate limiting is the real boundary. Capability questions still return `SYSTEM_HELP`. |
 
 **Branding addition:** `widget_config.branding.brandName` is now a supported white-label header token (resolved `branding.brandName → config.brandName → "Omniverge Global"`). No migration required — additive optional JSONB key persisted via `POST /api/tenants/update-config` (`widgetConfig.branding`).
 

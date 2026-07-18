@@ -128,7 +128,7 @@ POST /api/chat/voice                     # Voice chat session
 POST /api/ai/speech                      # Text-to-Speech (Groq Orpheus) — single TTS source of truth for all surfaces
 
 ## Client (Zeeder) Surface
-POST /api/client/process-command         # Zeeder client voice/text command processing (LLM + SYSTEM_HELP)
+POST /api/client/process-command         # Zeeder client voice/text command processing — anon-tolerant (widget embed)
 POST /api/client/update-studio-config    # Persist white-label branding (brandName) from Studio
 
 ## Tenant Management
@@ -296,6 +296,33 @@ system_tasks {
 }
 -- Index: idx_system_tasks_status_created (status, created_at ASC)
 -- RLS: enabled; service_role only (dispatcher insert + worker update)
+
+-- Anonymous chat booking-capture leads (written by /api/client/process-command)
+tenant_appointments {
+  id: uuid (PK, default gen_random_uuid())
+  tenant_id: uuid (FK → tenants.id)        # internal tenant id (resolved from public tenant_id)
+  start_time: timestamptz (NOT NULL)        # placeholder now() for LEAD captures (no slot yet)
+  end_time: timestamptz (NOT NULL)
+  client_name: text
+  client_phone: text
+  status: text (NOT NULL, default 'AVAILABLE')
+                                           # CHECK: AVAILABLE | RESERVED | CONFIRMED | LEAD
+  created_at: timestamptz (NOT NULL, default now())
+}
+-- status meanings:
+--   LEAD      = anonymous chat capture (name+phone, no slot held)  [this phase]
+--   AVAILABLE = open bookable slot        (deferred booking-bridge model)
+--   RESERVED  = slot held                 (set by booking_slots / reserve_booking_slot phase)
+--   CONFIRMED = booked
+
+-- Anonymous rate-limit counters (Supabase-backed, shared across serverless instances)
+rate_limits {
+  key: text (PK)                            # "t:<tenantId>|ip:<ip>" or "t:<tenantId>"
+  hits: int (NOT NULL, default 0)
+  window_start: timestamptz (NOT NULL, default now())
+}
+-- Mutated only via SECURITY DEFINER RPC check_rate_limit(p_key, p_max, p_window_seconds)
+--   returns TABLE(exceeded boolean, hits int); resets when the fixed window elapses.
 ```
 
 ### 🔐 Security Features
@@ -311,7 +338,14 @@ system_tasks {
 - **Two-Step Verification Standard**:
   1. Canonical server-side authentication using `supabase.auth.getUser()`.
   2. Strict multi-tenant isolation validation matching `user_id` and `reseller_slug` against the `user_resellers` table.
-  
+
+### Anonymous Public Widget Endpoint (`/api/client/process-command`)
+The chat widget embed calls this route from arbitrary third-party domains with **no session**.
+- **Anonymous allowlist** — anon callers are restricted to `CLIENT_NOP`, `SYSTEM_HELP` (restricted, hardcoded line, no capability list), and `SYSTEM_BOOKING_CAPTURE`. Branding/persona/telemetry mutations and integration `functionCall` execution are blocked for anon.
+- **CORS `*` is deliberate, not assumed-safe** — a `tenantId` is public by design, so any origin can call the endpoint. The real abuse boundary is the rate limiter, not CORS.
+- **Dual-key Supabase rate limiter** (`src/lib/rate-limit/tenant-rate-limit.ts`): composite `t:<tenantId>|ip:<ip>` cap (15/60s) stops single-IP bursts; tenant-only `t:<tenantId>` cap (200/60s) stops an IP-rotating botnet. Backed by the `rate_limits` table + `check_rate_limit` RPC so it holds under serverless. Fails **open** on DB error (a blip never locks out visitors).
+- **Booking capture** — booking-intent utterances force `SYSTEM_BOOKING_CAPTURE`; `buildBookingCapture` (`src/lib/booking/booking-capture.ts`) extracts contact details from the LLM's structured payload and falls back to free-text regex, then inserts a `tenant_appointments` row with `status: 'LEAD'`. The anon path performs no other persistence (no conversation/message logging). Malformed/non-object LLM JSON (e.g. a bare `null`) is coerced to an empty object so capture/routing degrades gracefully via the text fallback instead of throwing.
+
 ### 🚀 Performance Features
 - **Sub-500ms Response**: Voice command to UI update
 - **Audio Management**: Cleanup prevents memory leaks
