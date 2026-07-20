@@ -88,6 +88,7 @@ export default function PersonaPage() {
 
       const studioConfig: Record<string, unknown> = {
         aiPersona,
+        greeting: draftConfig.greeting,
       };
 
       const response = await fetch('/api/client/update-studio-config', {
@@ -138,6 +139,26 @@ export default function PersonaPage() {
       </div>
 
       <div className="space-y-5">
+        {/* Greeting */}
+        <div>
+          <label className="block text-sm font-medium text-zinc-300 mb-2 font-agrandir">
+            Widget Greeting
+          </label>
+          <textarea
+            value={draftConfig.greeting}
+            onChange={(e) => {
+              setDraftConfig((prev) => ({ ...prev, greeting: e.target.value }));
+              clearFeedback();
+            }}
+            rows={3}
+            placeholder="Enter the initial greeting shown in the public widget..."
+            className="w-full px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm resize-y"
+          />
+          <p className="text-xs text-zinc-500 mt-1">
+            The first message visitors see when opening the chat widget.
+          </p>
+        </div>
+
         {/* Persona Mode Selector */}
         <div>
           <label className="block text-sm font-medium text-zinc-300 mb-2 font-agrandir">

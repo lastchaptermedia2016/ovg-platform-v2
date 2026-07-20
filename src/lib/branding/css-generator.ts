@@ -1,5 +1,6 @@
-import type { CanonicalBranding, LayerConfig } from "@/lib/schemas/tenant-config.canonical";
+import type { CanonicalBranding, LayerConfig, CanonicalBackgroundSection } from "@/lib/schemas/tenant-config.canonical";
 import type { BrandingData } from "@/types";
+import { normalizeHexColor } from "@/lib/colors";
 
 function hexToRgb(hex: string): string {
   const normalized = hex.replace(/^#/, "");
@@ -37,6 +38,43 @@ function layerVars(prefix: string, layer: LayerConfig | undefined): string[] {
   );
 
   return vars;
+}
+
+function sectionToLayer(section: CanonicalBackgroundSection): LayerConfig {
+  const type = section.type ?? "none";
+  let value: string | null = null;
+
+  if (type === "solid" && section.colorStart) {
+    value = normalizeHexColor(section.colorStart);
+  } else if (type === "gradient") {
+    const start = section.colorStart ? normalizeHexColor(section.colorStart) : "#1A73E8";
+    const end = section.colorEnd ? normalizeHexColor(section.colorEnd) : "#0A2540";
+    value = `linear-gradient(135deg, ${start}, ${end})`;
+  } else if (type === "image") {
+    value = section.image ?? null;
+  }
+
+  return {
+    type,
+    value,
+    opacity: section.opacity ?? 1,
+    backdropBlur: false,
+  };
+}
+
+function flatWidgetBodyToLayer(
+  opacity: number | null | undefined,
+  background: string | null | undefined
+): LayerConfig | undefined {
+  const hasOpacity = opacity !== undefined && opacity !== null;
+  if (!hasOpacity && !background) return undefined;
+
+  return {
+    type: "solid",
+    value: background ?? null,
+    opacity: opacity ?? 1,
+    backdropBlur: false,
+  };
 }
 
 /**
@@ -88,10 +126,35 @@ export function generateBrandingCSS(
   }
 
   // Only CanonicalBranding carries layered section config.
-  if (canonical.header || canonical.footer || canonical.widgetBody || canonical.widgetPosition || canonical.customCssCode) {
-    vars.push(...layerVars("header", canonical.header));
-    vars.push(...layerVars("footer", canonical.footer));
-    vars.push(...layerVars("body", canonical.widgetBody));
+  const headerLayer = canonical.header
+    ? canonical.header
+    : canonical.headerConfig
+      ? sectionToLayer(canonical.headerConfig)
+      : undefined;
+
+  const footerLayer = canonical.footer
+    ? canonical.footer
+    : canonical.footerConfig
+      ? sectionToLayer(canonical.footerConfig)
+      : undefined;
+
+  const widgetBodyLayer = canonical.widgetBody
+    ? canonical.widgetBody
+    : flatWidgetBodyToLayer(
+        canonical.widgetBodyOpacity,
+        canonical.widgetBodyBackground
+      );
+
+  if (
+    headerLayer ||
+    footerLayer ||
+    widgetBodyLayer ||
+    canonical.widgetPosition ||
+    canonical.customCssCode
+  ) {
+    vars.push(...layerVars("header", headerLayer));
+    vars.push(...layerVars("footer", footerLayer));
+    vars.push(...layerVars("body", widgetBodyLayer));
 
     if (canonical.widgetPosition) {
       vars.push(`--w-position: ${canonical.widgetPosition};`);

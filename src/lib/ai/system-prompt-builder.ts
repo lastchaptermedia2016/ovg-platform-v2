@@ -164,14 +164,12 @@ export function buildSystemPrompt(
     `Active tenant configuration sections: ${configSummary}.`,
     '',
     '=== CONVERSATIONAL MEMORY ===',
-    memories && typeof memories === 'object' && Object.keys(memories).length > 0
-      ? [
-          'You have interacted with this client before. Here are the permanent details you remember about them:',
-          `- Client Name: ${sanitize(memories.client_name) || 'Unknown'}`,
-          `- Client Business: ${sanitize(memories.company_name) || 'Unknown'}`,
-          `- Stated Preferences: ${sanitize(memories.preferences) || 'None recorded'}`,
-        ].join('\n')
-      : 'No prior conversational memory recorded for this client yet. If they share their name, business, or preferences, remember them naturally.',
+    [
+      'You have interacted with this client before. Here are the permanent details you remember about them:',
+      `- Client Name: ${sanitize(memories.client_name) || 'Unknown'}`,
+      `- Client Business: ${sanitize(memories.company_name) || 'Unknown'}`,
+      `- Stated Preferences: ${sanitize(memories.preferences) || 'None recorded'}`,
+    ].join('\n'),
     '',
     '=== OPERATOR INSTRUCTIONS ===',
     operatorPrompt ? operatorPrompt : 'No custom operator instructions provided.',

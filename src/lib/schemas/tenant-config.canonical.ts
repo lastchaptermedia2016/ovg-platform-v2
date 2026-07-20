@@ -163,6 +163,8 @@ export const CanonicalFeaturesSchema = z.object({
   aiDesignMirror: z.boolean().optional(),
   customCss: z.boolean().optional(),
   customCssCode: z.string().optional(),
+  voiceFeaturesEnabled: z.boolean().optional(),
+  localFallbackAlert: z.boolean().optional(),
 });
 
 export type CanonicalFeatures = z.infer<typeof CanonicalFeaturesSchema>;
@@ -198,6 +200,11 @@ export const CanonicalIntegrationsSchema = z.object({
   domains: z.array(z.string()).optional(),
   webhooks: CanonicalWebhooksSchema.optional(),
   endpoints: z.record(z.string()).optional(),
+  booking: z.object({
+    enabled: z.boolean().optional(),
+    providerType: z.enum(['INTERNAL', 'EXTERNAL']).optional(),
+    updatedAt: z.string().optional(),
+  }).optional(),
 });
 
 export type CanonicalIntegrations = z.infer<typeof CanonicalIntegrationsSchema>;
@@ -261,6 +268,8 @@ export const CanonicalWidgetConfigSchema = z.object({
   // Dynamic quick-action pills rendered above the chat input while the
   // conversation is empty. Parsed by the widget surface; see SuggestedActionSchema.
   suggestedActions: z.array(SuggestedActionSchema).optional(),
+  // Widget opening greeting message, configurable from the Persona Settings page.
+  greeting: z.string().optional(),
   // Legacy compatibility: aiPersona path (maps to ai_settings fields)
   aiPersona: CanonicalAIPersonaSchema.optional(),
   // Legacy compatibility: flat header/footer fields (deprecated, use nested)

@@ -15,6 +15,7 @@ const UpdateConfigSchema = z.object({
 // POST — Update tenant config with optional greeting
 // ──────────────────────────────────────────────
 export async function POST(request: NextRequest) {
+  console.warn('[Deprecated] /api/tenants/update-config-with-greeting is deprecated. Use /api/client/update-studio-config instead.');
   try {
     // ── STEP 1: Authenticate user ───────────────────
     const { userId, error: authError } = await getAuthenticatedUser();
@@ -113,22 +114,38 @@ export async function POST(request: NextRequest) {
 
       console.log(`✨ Voice-Visual Harmony: Updated ${tenantData.name} with new branding and greeting (fallback)`);
 
-      return NextResponse.json({
-        success: true,
-        message: 'Configuration and greeting updated successfully',
-        tenant: tenantData,
-        fallback: true
-      });
+      return NextResponse.json(
+        {
+          success: true,
+          message: 'Configuration and greeting updated successfully',
+          tenant: tenantData,
+          fallback: true,
+          deprecated: true,
+        },
+        {
+          headers: {
+            Deprecation: 'true',
+          },
+        }
+      );
     }
 
     console.log(`✨ Voice-Visual Harmony: Transaction completed successfully for tenant ${tenantId}`);
 
-    return NextResponse.json({
-      success: true,
-      message: 'Configuration and greeting updated successfully',
-      tenant: result,
-      transaction: true
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        message: 'Configuration and greeting updated successfully',
+        tenant: result,
+        transaction: true,
+        deprecated: true,
+      },
+      {
+        headers: {
+          Deprecation: 'true',
+        },
+      }
+    );
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

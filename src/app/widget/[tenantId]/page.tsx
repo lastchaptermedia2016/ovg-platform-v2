@@ -45,6 +45,8 @@ export default async function WidgetPage({
 
   const suggestedActions = canonicalConfig?.suggestedActions ?? [];
 
+  const greeting = canonicalConfig?.greeting ?? "";
+
   // Live verification logging
   console.log("🎨 WIDGET_CONFIG BRANDING:", rawWidgetConfig);
   console.log("🔧 CANONICAL BRANDING:", canonicalBranding);
@@ -53,7 +55,7 @@ export default async function WidgetPage({
     <TenantProvider>
       <WidgetProviders tenantId={tenantId}>
         <WidgetPresence tenantId={tenantId} widgetPosition={canonicalBranding?.widgetPosition} />
-        <ChatWidget tenantId={tenantId} branding={canonicalBranding} widgetPosition={canonicalBranding?.widgetPosition} suggestedActions={suggestedActions} />
+        <ChatWidget tenantId={tenantId} branding={canonicalBranding} widgetPosition={canonicalBranding?.widgetPosition} suggestedActions={suggestedActions} greeting={greeting} />
       </WidgetProviders>
     </TenantProvider>
   );

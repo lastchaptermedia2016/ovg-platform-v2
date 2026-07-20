@@ -5,7 +5,7 @@ import type { BookingProviderType } from '@/interfaces/booking-provider.interfac
 
 interface IntegrationSuiteProps {
   tenantId: string;
-  tenant?: { metadata?: unknown } | null;
+  tenant?: { metadata?: unknown; widget_config?: unknown } | null;
   initialEnabled?: boolean;
   initialProviderType?: BookingProviderType;
   onSaved?: () => void;
@@ -86,6 +86,23 @@ function readBookingMetadata(value: unknown): BookingMetadata {
   };
 }
 
+function readBookingMetadataFromWidgetConfig(widgetConfig: unknown): BookingMetadata {
+  const root = asRecord(widgetConfig);
+  if (!root) return {};
+
+  const integrations = asRecord(root.integrations);
+  if (!integrations) return {};
+
+  const booking = asRecord(integrations.booking);
+  if (!booking) return {};
+
+  return {
+    enabled: typeof booking.enabled === 'boolean' ? booking.enabled : undefined,
+    providerType: isBookingProviderType(booking.providerType) ? booking.providerType : undefined,
+    updatedAt: readString(booking.updatedAt),
+  };
+}
+
 export function IntegrationSuite({
   tenantId,
   tenant,
@@ -93,10 +110,16 @@ export function IntegrationSuite({
   initialProviderType = 'INTERNAL',
   onSaved,
 }: IntegrationSuiteProps) {
+  const widgetConfigBooking = tenant?.widget_config
+    ? readBookingMetadataFromWidgetConfig(tenant.widget_config)
+    : {};
   const metadata = readBookingMetadata(tenant);
-  const [enabled, setEnabled] = useState(metadata.enabled ?? initialEnabled);
+  const bookingMetadata = widgetConfigBooking.enabled !== undefined || widgetConfigBooking.providerType !== undefined
+    ? widgetConfigBooking
+    : metadata;
+  const [enabled, setEnabled] = useState(bookingMetadata.enabled ?? initialEnabled);
   const [providerType, setProviderType] = useState<BookingProviderType>(
-    metadata.providerType ?? initialProviderType,
+    bookingMetadata.providerType ?? initialProviderType,
   );
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
@@ -118,15 +141,20 @@ export function IntegrationSuite({
     setSaveMessage(null);
 
     try {
-      const response = await fetch('/api/tenants/update-integration-suite', {
+      const response = await fetch('/api/client/update-studio-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tenantId,
-          enabledAddons: enabled,
-          bookingProviderType: providerType,
-          enabled,
-          providerType,
+          studioConfig: {
+            integrations: {
+              booking: {
+                enabled,
+                providerType,
+                updatedAt: new Date().toISOString(),
+              },
+            },
+          },
         }),
       });
       const payload = await response.json();
@@ -135,8 +163,7 @@ export function IntegrationSuite({
         throw new Error(payload.error ?? 'Failed to save integration settings');
       }
 
-      const bookingMetadata = readBookingMetadata({ metadata: payload.metadata });
-      setUpdatedAt(bookingMetadata.updatedAt ?? new Date().toISOString());
+      setUpdatedAt(new Date().toISOString());
       setSaveMessage('Integration settings saved');
       onSaved?.();
     } catch (error) {

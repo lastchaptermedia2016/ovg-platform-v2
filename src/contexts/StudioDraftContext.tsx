@@ -3,7 +3,7 @@
 import { createContext, useContext, ReactNode, useState, useCallback, useEffect } from 'react';
 import { createClient as createSupabaseClient } from '@/lib/supabase/client';
 import { resolveTenantId } from '@/lib/resolveTenantId';
-import type { CanonicalBranding, CanonicalAIPersona, LayerConfig, CanonicalBackgroundSection, CanonicalWidgetConfig } from '@/lib/schemas/tenant-config.canonical';
+import type { CanonicalBranding, CanonicalAIPersona, LayerConfig, CanonicalBackgroundSection, CanonicalWidgetConfig, SuggestedAction } from '@/lib/schemas/tenant-config.canonical';
 import { normalizeHexColor } from '@/lib/colors';
 
 export type LayerType = 'none' | 'solid' | 'gradient' | 'image';
@@ -28,6 +28,15 @@ export type StudioDraft = {
   systemPrompt: string;
   temperature: number;
   voiceId: string;
+  greeting: string;
+  features?: {
+    aiInsightBadge?: boolean;
+    aiDesignMirror?: boolean;
+    customCss?: boolean;
+    voiceFeaturesEnabled?: boolean;
+    localFallbackAlert?: boolean;
+  };
+  suggestedActions?: SuggestedAction[];
 };
 
 const defaultLayer: LayerDraft = {
@@ -53,6 +62,9 @@ const defaultDraft: StudioDraft = {
   systemPrompt: '',
   temperature: 0.3,
   voiceId: '',
+  greeting: '',
+  features: {},
+  suggestedActions: [],
 };
 
 /** Build a CSS gradient string from two colors for the 'gradient' layer type. */
@@ -280,6 +292,9 @@ function canonicalConfigToDraft(
     systemPrompt: persona?.systemPrompt ?? DEFAULT_SYSTEM_PROMPTS[personaMode],
     temperature: persona?.temperature ?? 0.3,
     voiceId: persona?.voiceId ?? '',
+    greeting: (config.greeting as string | undefined) ?? '',
+    features: config.features as StudioDraft['features'],
+    suggestedActions: (config.suggestedActions as SuggestedAction[] | undefined) ?? [],
   };
 }
 

@@ -40,7 +40,65 @@ export type MemoryKey = (typeof MEMORY_KEYS)[keyof typeof MEMORY_KEYS];
 /** A flat map of memory_key → memory_value for a single client. */
 export type ClientMemoryMap = Record<string, string>;
 
-// ──────────────────────────── Reads ────────────────────────────
+// ──────────────────────────── Extraction core ────────────────────────────
+
+import Groq from 'groq-sdk';
+
+interface ExtractedFacts {
+  client_name?: string | null;
+  company_name?: string | null;
+  preferences?: string | null;
+}
+
+/**
+ * Shared LLM extraction pass. Returns parsed facts or null on any failure.
+ * This is the single Groq call used by both authenticated and anonymous paths.
+ */
+async function extractFacts(userMessage: string): Promise<ExtractedFacts | null> {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey || !userMessage?.trim()) return null;
+
+  try {
+    const groq = new Groq({ apiKey });
+
+    const completion = await groq.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      temperature: 0,
+      max_tokens: 200,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You extract durable personal facts a user shares in a chat with a business assistant. ' +
+            'Return STRICT JSON: {"client_name": string|null, "company_name": string|null, "preferences": string|null}. ' +
+            'Set a field to null if the message does not disclose it. ' +
+            'Only capture explicit, stable facts (the user\'s own name, their company name, or a clear standing preference). ' +
+            'Never invent values. Output only the JSON object.',
+        },
+        {
+          role: 'user',
+          content: userMessage,
+        },
+      ],
+    });
+
+    const content = completion.choices[0]?.message?.content;
+    if (!content) return null;
+
+    try {
+      return JSON.parse(content) as ExtractedFacts;
+    } catch {
+      return null;
+    }
+  } catch (err) {
+    console.error('[memory-service] extractFacts failed:', err);
+    return null;
+  }
+}
+
+// ──────────────────────────── Authenticated client memory ────────────────────────────
+// (client_memories: keyed by tenant + authenticated userId)
 
 /**
  * Fetch all active key/value memory pairs for a specific client.
@@ -78,8 +136,6 @@ export async function getClientMemories(
     return {};
   }
 }
-
-// ──────────────────────────── Writes ────────────────────────────
 
 /**
  * Upsert a single memory fact for a client.
@@ -119,12 +175,8 @@ export async function saveClientMemory(
   }
 }
 
-// ──────────────────────────── Extraction ────────────────────────────
-
-import Groq from 'groq-sdk';
-
 /**
- * Lightweight, best-effort memory extraction.
+ * Lightweight, best-effort memory extraction for authenticated users.
  *
  * Runs a quick, isolated structured-LLM pass over the user's message to detect
  * self-disclosed facts (name, business name, standing preferences) and upserts
@@ -145,60 +197,207 @@ export async function extractAndStoreMemories(
 ): Promise<void> {
   if (!tenantId || !clientId || !userMessage?.trim()) return;
 
-  const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) return;
+  const extracted = await extractFacts(userMessage);
+  if (!extracted) return;
+
+  const writes: Array<[MemoryKey, unknown]> = [
+    [MEMORY_KEYS.CLIENT_NAME, extracted.client_name],
+    [MEMORY_KEYS.COMPANY_NAME, extracted.company_name],
+    [MEMORY_KEYS.PREFERENCES, extracted.preferences],
+  ];
+
+  await Promise.all(
+    writes
+      .filter(([, v]) => typeof v === 'string' && v.trim().length > 0)
+      .map(([key, v]) => saveClientMemory(tenantId, clientId, key, String(v).trim().slice(0, 1000))),
+  );
+}
+
+// ──────────────────────────── Anonymous visitor memory ────────────────────────────
+// (visitor_memories: keyed by tenant + self-reported contact detail)
+
+export type VisitorIdentityType = 'phone' | 'email';
+export type VisitorMemoryMap = Record<string, string>;
+
+/**
+ * Normalize a phone number for lookup/storage. Matches the format used by
+ * booking-capture.ts so identity matches work across the booking and memory
+ * systems.
+ */
+export function normalizeVisitorPhone(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const plus = value.trim().startsWith('+') ? '+' : '';
+  const digits = value.replace(/\D/g, '');
+  if (digits.length < 7 || digits.length > 15) return null;
+  return `${plus}${digits}`.slice(0, 20);
+}
+
+/**
+ * Normalize an email for lookup/storage. Lowercase, trim, length-cap.
+ */
+export function normalizeVisitorEmail(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const norm = value.trim().toLowerCase();
+  if (norm.length === 0 || norm.length > 255) return null;
+  return norm;
+}
+
+/**
+ * Fetch all active key/value memory pairs for an anonymous visitor identified
+ * by contact detail.
+ *
+ * Returns an empty object (never throws) on failure.
+ */
+export async function getVisitorMemories(
+  tenantId: string | null,
+  identityType: VisitorIdentityType,
+  identityValue: string | null,
+): Promise<VisitorMemoryMap> {
+  if (!tenantId || !identityType || !identityValue) return {};
 
   try {
-    const groq = new Groq({ apiKey });
+    const { data, error } = await supabaseAdmin
+      .from('visitor_memories')
+      .select('memory_key, memory_value')
+      .eq('tenant_id', tenantId)
+      .eq('identity_type', identityType)
+      .eq('identity_value', identityValue);
 
-    const completion = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      temperature: 0,
-      max_tokens: 200,
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'system',
-          content:
-            'You extract durable personal facts a user shares in a chat with a business assistant. ' +
-            'Return STRICT JSON: {"client_name": string|null, "company_name": string|null, "preferences": string|null}. ' +
-            'Set a field to null if the message does not disclose it. ' +
-            'Only capture explicit, stable facts (the user\'s own name, their company name, or a clear standing preference). ' +
-            'Never invent values. Output only the JSON object.',
-        },
-        {
-          role: 'user',
-          content: userMessage,
-        },
-      ],
-    });
+    if (error || !data) return {};
 
-    const content = completion.choices[0]?.message?.content;
-    if (!content) return;
-
-    let extracted: {
-      client_name?: unknown;
-      company_name?: unknown;
-      preferences?: unknown;
-    };
-    try {
-      extracted = JSON.parse(content);
-    } catch {
-      return;
+    const memories: VisitorMemoryMap = {};
+    for (const row of data) {
+      if (row?.memory_key && typeof row.memory_value === 'string') {
+        memories[row.memory_key] = row.memory_value;
+      }
     }
-
-    const writes: Array<[MemoryKey, unknown]> = [
-      [MEMORY_KEYS.CLIENT_NAME, extracted.client_name],
-      [MEMORY_KEYS.COMPANY_NAME, extracted.company_name],
-      [MEMORY_KEYS.PREFERENCES, extracted.preferences],
-    ];
-
-    await Promise.all(
-      writes
-        .filter(([, v]) => typeof v === 'string' && v.trim().length > 0)
-        .map(([key, v]) => saveClientMemory(tenantId, clientId, key, String(v).trim().slice(0, 1000))),
-    );
+    return memories;
   } catch (err) {
-    console.error('[memory-service] extractAndStoreMemories failed:', err);
+    console.error('[memory-service] getVisitorMemories failed:', err);
+    return {};
+  }
+}
+
+/**
+ * Upsert a single memory fact for an anonymous visitor.
+ *
+ * Uses `onConflict: 'tenant_id,identity_type,identity_value,memory_key'` so
+ * repeated writes update `memory_value` + `updated_at` + `last_seen_at`.
+ */
+export async function saveVisitorMemory(
+  tenantId: string | null,
+  identityType: VisitorIdentityType,
+  identityValue: string | null,
+  key: string,
+  value: string,
+): Promise<void> {
+  if (!tenantId || !identityType || !identityValue || !key || value == null) return;
+
+  try {
+    const { error } = await supabaseAdmin.from('visitor_memories').upsert(
+      {
+        tenant_id: tenantId,
+        identity_type: identityType,
+        identity_value: identityValue,
+        memory_key: key,
+        memory_value: value,
+        last_seen_at: new Date().toISOString(),
+      },
+      { onConflict: 'tenant_id,identity_type,identity_value,memory_key' },
+    );
+
+    if (error) {
+      console.error('[memory-service] saveVisitorMemory upsert failed:', error);
+    }
+  } catch (err) {
+    console.error('[memory-service] saveVisitorMemory failed:', err);
+  }
+}
+
+/**
+ * Update last_seen_at for an anonymous visitor without changing any memory
+ * values. Called after a successful chat turn to keep the retention window
+ * current.
+ */
+export async function touchVisitorMemory(
+  tenantId: string | null,
+  identityType: VisitorIdentityType,
+  identityValue: string | null,
+): Promise<void> {
+  if (!tenantId || !identityType || !identityValue) return;
+
+  try {
+    const { error } = await supabaseAdmin
+      .from('visitor_memories')
+      .update({ last_seen_at: new Date().toISOString() })
+      .eq('tenant_id', tenantId)
+      .eq('identity_type', identityType)
+      .eq('identity_value', identityValue);
+
+    if (error) {
+      console.error('[memory-service] touchVisitorMemory update failed:', error);
+    }
+  } catch (err) {
+    console.error('[memory-service] touchVisitorMemory failed:', err);
+  }
+}
+
+/**
+ * Lightweight, best-effort memory extraction for anonymous visitors.
+ *
+ * Identical extraction logic to `extractAndStoreMemories`, but persists facts
+ * to `visitor_memories` keyed by contact detail instead of `client_memories`
+ * keyed by userId.
+ *
+ * Also updates `last_seen_at` on the visitor identity row to maintain the
+ * retention window.
+ */
+export async function extractAndStoreVisitorMemories(
+  tenantId: string | null,
+  identityType: VisitorIdentityType,
+  identityValue: string | null,
+  userMessage: string,
+): Promise<void> {
+  if (!tenantId || !identityType || !identityValue || !userMessage?.trim()) return;
+
+  const extracted = await extractFacts(userMessage);
+  if (!extracted) return;
+
+  const writes: Array<[MemoryKey, unknown]> = [
+    [MEMORY_KEYS.CLIENT_NAME, extracted.client_name],
+    [MEMORY_KEYS.COMPANY_NAME, extracted.company_name],
+    [MEMORY_KEYS.PREFERENCES, extracted.preferences],
+  ];
+
+  await Promise.all(
+    writes
+      .filter(([, v]) => typeof v === 'string' && v.trim().length > 0)
+      .map(([key, v]) => saveVisitorMemory(tenantId, identityType, identityValue, key, String(v).trim().slice(0, 1000))),
+  );
+
+  void touchVisitorMemory(tenantId, identityType, identityValue);
+}
+
+/**
+ * Delete visitor memories that have not been seen within the retention window.
+ * Intended to be called periodically (daily via scheduled job, or
+ * opportunistically from the process-command route).
+ *
+ * @param retentionDays - Inactivity threshold in days (default: 365).
+ * @returns Number of rows deleted.
+ */
+export async function cleanupExpiredVisitorMemories(retentionDays: number = 365): Promise<number> {
+  try {
+    const { data, error } = await supabaseAdmin.rpc('cleanup_expired_visitor_memories', {
+      p_retention_days: retentionDays,
+    });
+    if (error) {
+      console.error('[memory-service] cleanupExpiredVisitorMemories failed:', error);
+      return 0;
+    }
+    return (data as number[] | null)?.[0] ?? 0;
+  } catch (err) {
+    console.error('[memory-service] cleanupExpiredVisitorMemories failed:', err);
+    return 0;
   }
 }

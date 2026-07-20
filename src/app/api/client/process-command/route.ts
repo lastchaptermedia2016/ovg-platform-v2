@@ -29,6 +29,7 @@ import { CLIENT_SYSTEM_REGISTRY, type ClientSystemItem } from '@/lib/client-syst
 import { extractPersonaMode, hasPersonaModeIntent } from '@/lib/ai/extract-persona-mode';
 import { buildSystemPrompt } from '@/lib/ai/system-prompt-builder';
 import { getClientMemories, extractAndStoreMemories, type ClientMemoryMap } from '@/lib/ai/memory-service';
+import { getVisitorMemories, extractAndStoreVisitorMemories, touchVisitorMemory, normalizeVisitorPhone, normalizeVisitorEmail, type VisitorIdentityType } from '@/lib/ai/memory-service';
 import { resolveTenantId } from '@/lib/resolveTenantId';
 import { logPlatformAction, persistChatMessage } from '@/lib/audit/platform-logger';
 import {
@@ -115,6 +116,7 @@ const CommandRequestSchema = z.object({
     .object({
       clientProfileId: z.string().optional(),
       activeView: z.string().optional(),
+      clientMemories: z.record(z.string()).optional(),
     })
     .optional(),
 });
@@ -708,6 +710,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
       testMode,
       isAnon,
       bookingIntent: true,
+      clientMemories: parsed.context?.clientMemories,
     });
   }
 
@@ -725,6 +728,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
       testMode,
       isAnon,
       bookingIntent: false,
+      clientMemories: parsed.context?.clientMemories,
     });
   }
 
@@ -741,6 +745,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
       testMode,
       isAnon,
       bookingIntent: false,
+      clientMemories: parsed.context?.clientMemories,
     });
   }
 
@@ -856,6 +861,7 @@ async function fetchTenantDetails(
  * same deterministic CLIENT_NOP response the Tier 1 pass would have produced.
  */
 interface PersistContext {
+  clientMemories?: Record<string, string>;
   supabase: SupabaseClient;
   tenantId: string | null;
   userId: string | null;
@@ -875,11 +881,59 @@ async function runSemanticFallback(
   const availableCommands = buildClientCapabilities();
   const capabilityPayload: Record<string, unknown> = { availableCommands, brandingCapabilities: {} };
 
-  // Relational memory: skip for anon (no userId to key on; we never persist
-  // anonymous visitor memory).
-  const memories: ClientMemoryMap = isAnon
-    ? {}
-    : await getClientMemories(persistCtx?.tenantId ?? null, persistCtx?.userId ?? null);
+  // ── Relational memory ──────────────────────────────────────────────────
+  // Authenticated users: keyed by userId from client_memories.
+  // Anonymous visitors: keyed by self-reported contact detail from
+  // tenant_appointments + visitor_memories. Lookup is silent — the AI gets
+  // context without announcing "I remember you."
+  const memories: ClientMemoryMap = {};
+  let anonIdentityType: VisitorIdentityType | null = null;
+  let anonIdentityValue: string | null = null;
+
+  if (!isAnon) {
+    const mem = await getClientMemories(persistCtx?.tenantId ?? null, persistCtx?.userId ?? null);
+    Object.assign(memories, mem);
+  } else if (persistCtx?.tenantId) {
+    const booking = buildBookingCapture({}, text, null);
+    if (booking.hasContact) {
+      const phone = normalizeVisitorPhone(booking.phone);
+      const email = normalizeVisitorEmail(null);
+
+      if (phone) {
+        anonIdentityType = 'phone';
+        anonIdentityValue = phone;
+
+        const { data: appointment } = await supabaseAdmin
+          .from('tenant_appointments')
+          .select('client_name')
+          .eq('tenant_id', persistCtx.tenantId)
+          .eq('client_phone', phone)
+          .eq('status', 'LEAD')
+          .maybeSingle();
+
+        if (appointment?.client_name) {
+          memories.client_name = appointment.client_name;
+        }
+
+        const visitorMems = await getVisitorMemories(persistCtx.tenantId, 'phone', phone);
+        Object.assign(memories, visitorMems);
+      } else if (email) {
+        anonIdentityType = 'email';
+        anonIdentityValue = email;
+
+        const visitorMems = await getVisitorMemories(persistCtx.tenantId, 'email', email);
+        Object.assign(memories, visitorMems);
+      }
+
+      if (booking.firstName && !memories.client_name) {
+        memories.client_name = booking.firstName;
+      }
+    }
+  }
+
+  if (persistCtx?.clientMemories && typeof persistCtx.clientMemories === "object") {
+    Object.assign(memories, persistCtx?.clientMemories);
+  }
 
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) {
@@ -895,6 +949,8 @@ async function runSemanticFallback(
     }
     if (!isAnon) {
       void extractAndStoreMemories(persistCtx?.tenantId ?? null, persistCtx?.userId ?? null, text);
+    } else if (anonIdentityType && anonIdentityValue) {
+      void extractAndStoreVisitorMemories(persistCtx?.tenantId ?? null, anonIdentityType, anonIdentityValue, text);
     }
     return NextResponse.json(data);
   }
@@ -1073,9 +1129,12 @@ async function runSemanticFallback(
       await tryPersistCommandInCtx(persistCtx, text, data, actionType, responsePayload);
     }
     // Fire-and-forget: learn new facts from this turn without blocking the
-    // response. Memory extraction failures are non-fatal. Skip for anon.
+    // response. Memory extraction failures are non-fatal.
     if (!isAnon) {
       void extractAndStoreMemories(persistCtx?.tenantId ?? null, persistCtx?.userId ?? null, text);
+    } else if (anonIdentityType && anonIdentityValue) {
+      void extractAndStoreVisitorMemories(persistCtx?.tenantId ?? null, anonIdentityType, anonIdentityValue, text);
+      void touchVisitorMemory(persistCtx?.tenantId ?? null, anonIdentityType, anonIdentityValue);
     }
     return NextResponse.json(data);
   } catch (err) {

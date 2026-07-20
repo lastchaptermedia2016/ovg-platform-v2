@@ -1,0 +1,45 @@
+name: Zeeder CI Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  verify-and-test:
+    name: Lint, Migrate, and Test Execution
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Project Dependencies
+        run: npm ci
+
+      - name: Initialize Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 'latest'
+
+      - name: Start Local Supabase Stack
+        run: supabase start
+
+      - name: Run Schema Migrations Verification
+        run: supabase db reset
+
+      - name: Execute Vitest Engine
+        run: npm test
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_LOCAL_SERVICE_ROLE_KEY }}
+
+      - name: Validate Next.js Compilation Build
+        run: npm run build

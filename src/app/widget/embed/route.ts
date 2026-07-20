@@ -10,34 +10,45 @@ export async function GET(request: Request) {
     });
   }
 
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+
   // The "Loader" script that clients paste into their HTML
   const script = `
     (function() {
-      const container = document.createElement('div');
-      container.id = 'ovg-widget-root';
-      document.body.appendChild(container);
+      function init() {
+        const container = document.createElement('div');
+        container.id = 'ovg-widget-root';
 
-      const iframe = document.createElement('iframe');
-      iframe.src = '${process.env.NEXT_PUBLIC_APP_URL}/widget/${tenantId}';
-      iframe.style.position = 'fixed';
-      iframe.style.bottom = '20px';
-      iframe.style.right = '20px';
-      iframe.style.width = '450px';
-      iframe.style.height = '700px';
-      iframe.style.border = 'none';
-      iframe.style.zIndex = '999999';
-      iframe.style.colorScheme = 'none';
-      iframe.allow = 'microphone'; // Critical for the Orpheus Engine
-      
-      container.appendChild(iframe);
+        const target = document.body || document.documentElement;
+        target.appendChild(container);
 
-      // Listen for resize messages from the widget to shrink/expand the iframe
-      window.addEventListener('message', (event) => {
-        if (event.data.type === 'ovg-widget-resize') {
-          iframe.style.width = event.data.width;
-          iframe.style.height = event.data.height;
-        }
-      });
+        const iframe = document.createElement('iframe');
+        iframe.src = '${appUrl}/widget/${tenantId}';
+        iframe.style.position = 'fixed';
+        iframe.style.bottom = '20px';
+        iframe.style.right = '20px';
+        iframe.style.width = '450px';
+        iframe.style.height = '700px';
+        iframe.style.border = 'none';
+        iframe.style.zIndex = '999999';
+        iframe.style.colorScheme = 'none';
+        iframe.allow = 'microphone';
+
+        container.appendChild(iframe);
+
+        window.addEventListener('message', (event) => {
+          if (event.data && event.data.type === 'ovg-widget-resize') {
+            iframe.style.width = event.data.width;
+            iframe.style.height = event.data.height;
+          }
+        });
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+      } else {
+        init();
+      }
     })();
   `;
 
@@ -45,6 +56,7 @@ export async function GET(request: Request) {
     headers: {
       "Content-Type": "application/javascript",
       "Cache-Control": "public, max-age=3600",
+      "Access-Control-Allow-Origin": "*",
     },
   });
 }

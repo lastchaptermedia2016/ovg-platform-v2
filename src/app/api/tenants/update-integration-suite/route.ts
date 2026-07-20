@@ -150,6 +150,7 @@ function jsonError(error: Error, status: number) {
 }
 
 export async function POST(request: NextRequest) {
+  console.warn('[Deprecated] /api/tenants/update-integration-suite is deprecated. Use /api/client/update-studio-config instead.');
   try {
     const body = await request.json();
     const parsed = UpdateIntegrationSuiteSchema.safeParse(body);
@@ -228,11 +229,20 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({
-      success: true,
-      tenantId: tenant.id,
-      metadata: nextMetadata,
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        tenantId: tenant.id,
+        metadata: nextMetadata,
+        deprecated: true,
+        message: 'Use /api/client/update-studio-config',
+      },
+      {
+        headers: {
+          Deprecation: 'true',
+        },
+      }
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 

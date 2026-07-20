@@ -33,6 +33,7 @@ AS $$
   SELECT
     jsonb_build_object(
       'branding',         COALESCE(widget_config->'branding', '{}'::jsonb),
+      'greeting',         COALESCE(widget_config->'greeting', '""'::jsonb),
       'suggestedActions', COALESCE(widget_config->'suggestedActions', '[]'::jsonb)
     ) AS widget_config
   FROM tenants

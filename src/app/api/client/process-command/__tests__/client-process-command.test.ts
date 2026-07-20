@@ -12,7 +12,7 @@ import { getAuthenticatedUser, createAuthClient } from '@/lib/auth/server';
 import { resolveTenantId } from '@/lib/resolveTenantId';
 import { persistChatMessage, logPlatformAction } from '@/lib/audit/platform-logger';
 import { buildSystemPrompt } from '@/lib/ai/system-prompt-builder';
-import { getClientMemories, extractAndStoreMemories } from '@/lib/ai/memory-service';
+import { getClientMemories, extractAndStoreMemories, getVisitorMemories, extractAndStoreVisitorMemories, touchVisitorMemory, normalizeVisitorPhone } from '@/lib/ai/memory-service';
 
 process.env.GROQ_API_KEY = process.env.GROQ_API_KEY || 'test-groq-key';
 
@@ -50,21 +50,30 @@ vi.mock('@/lib/audit/platform-logger', () => ({
 }));
 
 vi.mock('@/lib/supabase/admin', () => {
-  // Generic fluent chain that resolves to a single-row tenant lookup or an
-  // insert result. Supports the anon tenant resolution (.select().eq().maybeSingle())
-  // and the booking-capture insert (.insert()).
-  const rowChain = {
+  const tenantAppointmentsChain = {
+    select: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+  };
+  const visitorMemoriesChain = {
+    select: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+  };
+  const genericChain = {
+    select: vi.fn().mockReturnThis(),
     eq: vi.fn().mockReturnThis(),
     maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'tenant-internal-id' }, error: null }),
+    insert: vi.fn().mockResolvedValue({ error: null }),
+    upsert: vi.fn().mockResolvedValue({ error: null }),
   };
+
   return {
     supabaseAdmin: {
-      // Rate limiter RPC: fail open in tests (not exceeded).
       rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
-      from: vi.fn().mockReturnValue({
-        select: vi.fn().mockReturnValue(rowChain),
-        insert: vi.fn().mockResolvedValue({ error: null }),
-        upsert: vi.fn().mockResolvedValue({ error: null }),
+      from: vi.fn().mockImplementation((table: string) => {
+        if (table === 'tenant_appointments') return tenantAppointmentsChain;
+        if (table === 'visitor_memories') return visitorMemoriesChain;
+        return genericChain;
       }),
     },
   };
@@ -76,6 +85,10 @@ vi.mock('@/lib/ai/memory-service', async () => {
     ...actual,
     getClientMemories: vi.fn().mockResolvedValue({}),
     extractAndStoreMemories: vi.fn().mockResolvedValue(undefined),
+    getVisitorMemories: vi.fn().mockResolvedValue({}),
+    extractAndStoreVisitorMemories: vi.fn().mockResolvedValue(undefined),
+    touchVisitorMemory: vi.fn().mockResolvedValue(undefined),
+    normalizeVisitorPhone: vi.fn().mockImplementation((v) => v ? v.replace(/\D/g, '') : null),
   };
 });
 
@@ -84,8 +97,12 @@ const mockCreateAuthClient = vi.mocked(createAuthClient);
 const mockResolveTenantId = vi.mocked(resolveTenantId);
 const mockGetClientMemories = vi.mocked(getClientMemories);
 const mockExtractAndStoreMemories = vi.mocked(extractAndStoreMemories);
-  const _mockPersistChatMessage = vi.mocked(persistChatMessage);
-  const _mockLogPlatformAction = vi.mocked(logPlatformAction);
+const mockGetVisitorMemories = vi.mocked(getVisitorMemories);
+const mockExtractAndStoreVisitorMemories = vi.mocked(extractAndStoreVisitorMemories);
+const mockTouchVisitorMemory = vi.mocked(touchVisitorMemory);
+const mockNormalizeVisitorPhone = vi.mocked(normalizeVisitorPhone);
+const _mockPersistChatMessage = vi.mocked(persistChatMessage);
+const _mockLogPlatformAction = vi.mocked(logPlatformAction);
 
 beforeEach(() => {
   cannedGroqResponse = null;
@@ -107,6 +124,10 @@ beforeEach(() => {
   });
   mockGetClientMemories.mockResolvedValue({});
   mockExtractAndStoreMemories.mockResolvedValue(undefined);
+  mockGetVisitorMemories.mockResolvedValue({});
+  mockExtractAndStoreVisitorMemories.mockResolvedValue(undefined);
+  mockTouchVisitorMemory.mockResolvedValue(undefined);
+  mockNormalizeVisitorPhone.mockImplementation((v) => v ? v.replace(/\D/g, '') : null);
 });
 
 function post(text: string, extra: Record<string, unknown> = {}): Promise<Response> {
@@ -289,6 +310,77 @@ describe('POST /api/client/process-command', () => {
     expect(body.actionType).toBe('SYSTEM_BOOKING_CAPTURE');
     expect(body.payload.firstName).toBe('Jill');
     expect(body.payload.phone).toBe('0821234567');
+  });
+
+  it('should silently lookup anonymous visitor memory when contact info is present', async () => {
+    mockAuth.mockResolvedValue({
+      user: null,
+      userId: null,
+      email: null,
+      error: new Error('Unauthorized'),
+    });
+    cannedGroqResponse = { actionType: 'CLIENT_NOP', summary: 'Hi Pierre!' };
+
+    const response = await post('Hi, I am Pierre, my phone is 0821234567, what services do you offer?', {
+      tenantId: 'public-tenant-key',
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.actionType).toBe('CLIENT_NOP');
+
+    expect(mockNormalizeVisitorPhone).toHaveBeenCalledWith('0821234567');
+    expect(mockGetVisitorMemories).toHaveBeenCalledWith(
+      'tenant-internal-id',
+      'phone',
+      '0821234567',
+    );
+  });
+
+  it('should extract and store anonymous visitor memories after a turn', async () => {
+    mockAuth.mockResolvedValue({
+      user: null,
+      userId: null,
+      email: null,
+      error: new Error('Unauthorized'),
+    });
+    cannedGroqResponse = { actionType: 'CLIENT_NOP', summary: 'Got it.' };
+
+    const response = await post('my name is Pierre, 0821234567, I prefer morning appointments', {
+      tenantId: 'public-tenant-key',
+    });
+    expect(response.status).toBe(200);
+
+    expect(mockExtractAndStoreMemories).not.toHaveBeenCalled();
+    expect(mockExtractAndStoreVisitorMemories).toHaveBeenCalledWith(
+      'tenant-internal-id',
+      'phone',
+      '0821234567',
+      'my name is Pierre, 0821234567, I prefer morning appointments',
+    );
+    expect(mockTouchVisitorMemory).toHaveBeenCalledWith(
+      'tenant-internal-id',
+      'phone',
+      '0821234567',
+    );
+  });
+
+  it('should not extract visitor memories for anon callers without contact info', async () => {
+    mockAuth.mockResolvedValue({
+      user: null,
+      userId: null,
+      email: null,
+      error: new Error('Unauthorized'),
+    });
+    cannedGroqResponse = { actionType: 'CLIENT_NOP', summary: 'Got it.' };
+
+    const response = await post('hello, what can you do?', {
+      tenantId: 'public-tenant-key',
+    });
+    expect(response.status).toBe(200);
+
+    expect(mockGetVisitorMemories).not.toHaveBeenCalled();
+    expect(mockExtractAndStoreVisitorMemories).not.toHaveBeenCalled();
+    expect(mockTouchVisitorMemory).not.toHaveBeenCalled();
   });
 
   it('should capture a booking lead even when the LLM returns a non-object (null) response', async () => {
@@ -872,7 +964,7 @@ describe('POST /api/client/process-command - System Prompt Hydration', () => {
     );
   });
 
-  it('should show the no-memory fallback line when no memories exist', async () => {
+  it('should show the memory block with fallbacks when no memories exist', async () => {
     cannedGroqResponse = { actionType: 'CLIENT_NOP', summary: 'Hi there!' };
     mockTenantRow({ id: 'tenant-uuid-123', name: 'Zeeder Motors' });
     mockGetClientMemories.mockResolvedValue({});
@@ -880,7 +972,9 @@ describe('POST /api/client/process-command - System Prompt Hydration', () => {
     await post('what is a widget body?');
 
     expect(lastGroqSystemPrompt).toMatch(/CONVERSATIONAL MEMORY/);
-    expect(lastGroqSystemPrompt).toMatch(/No prior conversational memory/);
+    expect(lastGroqSystemPrompt).toMatch(/Client Name: Unknown/);
+    expect(lastGroqSystemPrompt).toMatch(/Client Business: Unknown/);
+    expect(lastGroqSystemPrompt).toMatch(/Stated Preferences: None recorded/);
   });
 
   it('buildSystemPrompt should produce a stable, injection-safe structure', () => {

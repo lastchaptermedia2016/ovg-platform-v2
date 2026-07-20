@@ -14,7 +14,7 @@ export default async function TenantRegistryTable() {
 
   const { data: resellers, error } = await supabase
     .from('resellers')
-    .select('id, tenant_id, name, owner_email, email, branding_color, accent_color, logo_url, is_active, created_at, updated_at, version_stamp, branding_colors, branding_assets')
+    .select('id, tenant_id, name, owner_email, is_active, created_at, updated_at, branding_colors, branding_assets')
     .order('created_at', { ascending: false })
 
   if (error) {
@@ -23,15 +23,10 @@ export default async function TenantRegistryTable() {
 
   const records: ResellerRecord[] = (resellers ?? []).map((r) => ({
     ...r,
-    branding_colors: (r as ResellerRecord).branding_colors ?? {
-      primary: r.branding_color || '#0097b2',
-      secondary: r.accent_color || '#D4AF37',
-    },
     branding_assets: (r as ResellerRecord).branding_assets ?? {
-      header_url: r.logo_url ?? null,
+      header_url: null,
       footer_url: null,
     },
-    version_stamp: (r as ResellerRecord).version_stamp ?? 1,
   }))
 
   return (

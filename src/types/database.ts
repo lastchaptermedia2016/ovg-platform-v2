@@ -43,7 +43,6 @@ export interface ResellerRecord {
   name: string;
   owner_email: string;
   is_active: boolean;
-  version_stamp: number;
   logo_url?: string | null;
   branding_colors: {
     primary: string;
@@ -53,10 +52,6 @@ export interface ResellerRecord {
     header_url: string | null;
     footer_url: string | null;
   };
-  // Legacy compatibility
-  branding_color: string;
-  accent_color: string;
-  email: string;
   created_at?: string;
   updated_at?: string;
   stripe_account_id?: string | null;

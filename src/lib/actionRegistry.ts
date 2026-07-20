@@ -284,6 +284,10 @@ export async function dispatchUpdateStudioConfig(
     nextConfig.suggestedActions = params.suggestedActions as unknown[];
   }
 
+  if (params.greeting !== undefined) {
+    nextConfig.greeting = params.greeting;
+  }
+
   // Merged by the integrations service, which has already deep-merged the new
   // integration config into the full integrations map. Persist it as-is under
   // the canonical `integrations` key so it shares the widget_config source of
@@ -322,6 +326,22 @@ export async function dispatchUpdateStudioConfig(
     .single();
 
   if (tenantRecord?.reseller_id) {
+    let resellerTenantId: string | undefined;
+    try {
+      const { data: resellerRecord } = await supabaseAdmin
+        .from('resellers')
+        .select('tenant_id')
+        .eq('id', tenantRecord.reseller_id)
+        .single();
+      resellerTenantId = resellerRecord?.tenant_id;
+    } catch (err) {
+      console.warn('[dispatchUpdateStudioConfig] Reseller lookup failed:', err);
+    }
+
+    if (!resellerTenantId) {
+      return { success: true };
+    }
+
     const propagatedPayload = { ...(nextConfig.branding as Record<string, unknown>) };
     const brandingColor = (propagatedPayload.primaryColor as string | undefined) ?? '#0097b2';
     const accentColor = (propagatedPayload.accentColor as string | undefined) ?? '#D4AF37';
@@ -330,7 +350,7 @@ export async function dispatchUpdateStudioConfig(
     const { data: _rpcResult, error: rpcError } = await supabaseAdmin.rpc(
       'sync_reseller_branding',
       {
-        p_tenant_id: tenantRecord.reseller_id,
+        p_tenant_id: resellerTenantId,
         p_branding_bag: {
           primaryColor: brandingColor,
           accentColor: accentColor,

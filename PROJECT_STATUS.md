@@ -16,44 +16,65 @@
 | `reseller_id` | UUID FK → `resellers(id)` | ✅ Aligned |
 
 ### Resellers Table (Evolving per Migration History)
+> ⚠️ **Live-verified 2026-07-20.** Columns were read directly from the live dev database.
+> Several columns documented in the original audit (`branding_color`, `accent_color`,
+> `branding_bag`, `version_stamp`, `paystack_account_id`) are **ABSENT** in the live DB —
+> the migrations that would add them were never applied to this project. Corrected below.
+
 | Column | Type | Status |
 |--------|------|--------|
-| `tenant_id` | TEXT UNIQUE | ✅ Aligned |
-| `name` | TEXT | ✅ Aligned |
-| `email` | TEXT | ⚠️ Legacy: superseded by standardized `owner_email` per migration `20240618_standardize_reseller_owner_email.sql` |
-| `owner_email` | TEXT | ✅ Standardized: added via migration, backfilled from `email` |
-| `branding_color` | TEXT DEFAULT `#0097b2` | ⚠️ Legacy: backfilled from `branding_bag` but retained for compatibility |
-| `accent_color` | TEXT DEFAULT `#D4AF37` | ⚠️ Legacy: backfilled from `branding_bag` but retained for compatibility |
-| `branding_bag` | JSONB (atomic tokens) | ✅ Active: primary source for branding state |
-| `version_stamp` | INTEGER DEFAULT 1 | ✅ Active: optimistic concurrency counter |
-| `is_active` | BOOLEAN DEFAULT TRUE | ✅ Aligned |
-| `logo_url` | TEXT | ✅ Aligned |
+| `id` | UUID PK | ✅ Aligned |
+| `tenant_id` | UUID (NULL, default gen_random_uuid()) | ✅ Aligned (note: UUID, not TEXT, in live DB) |
+| `name` | TEXT NOT NULL | ✅ Aligned |
+| `slug` | TEXT NOT NULL UNIQUE (lower-case alnum CHECK) | ✅ Aligned |
+| `owner_email` | TEXT UNIQUE | ✅ Standardized (legacy `email` superseded per `20240618_standardize_reseller_owner_email.sql`) |
+| `is_active` | BOOLEAN NULL default true | ✅ Aligned |
+| `status` | TEXT NULL default 'active' | ✅ Aligned |
+| `branding_colors` | JSONB NULL (`{primary, secondary}`) | ✅ Aligned |
+| `branding` | JSONB NULL (`{primary, logo_url, secondary}`) | ✅ Aligned (atomic branding container) |
+| `branding_assets` | JSONB NULL | ✅ Aligned |
+| `settings` | JSONB NULL | ✅ Aligned |
+| `metadata` | JSONB NULL | ✅ Aligned |
+| `pricing_tiers` | JSONB NULL | ✅ Aligned |
+| `logo_url` | TEXT NULL | ✅ Aligned |
+| `stripe_account_id` | TEXT NULL | ✅ Aligned (was mis-documented as `paystack_account_id`) |
+| `stripe_connect_id` | TEXT NULL | ✅ Aligned |
+| `stripe_onboarding_complete` | BOOLEAN NULL default false | ✅ Aligned |
+| `created_at` | TIMESTAMPTZ NULL | ✅ Aligned |
+| `branding_color` / `accent_color` / `branding_bag` / `version_stamp` | — | ❌ **ABSENT in live DB** — documented previously but the migrations were never applied here. Do NOT assume these columns exist. |
+| `email` (legacy) | — | ❌ Absent (superseded by `owner_email`) |
 
 ### Drift Summary
-- **Dual branding state on resellers**: `branding_color`/`accent_color` are backfilled from `branding_bag` but remain in schema. Safe for now but should be deprecated in future cleanup.
-- **Reseller email naming**: Migrated from `email` to `owner_email`; codebase now aligned to `owner_email` (verified via search: zero remaining `owner_email` or legacy `adminEmail` references in active Master Gate code).
+- **Branding state on resellers**: the live DB uses JSONB (`branding`, `branding_colors`, `branding_assets`) — NOT the legacy `branding_color`/`accent_color` text columns or a `branding_bag`/`version_stamp` optimistic-lock pair. The earlier "dual branding state" finding is **wrong against live**; there is no flattened `branding_color` to deprecate.
+- **Reseller email naming**: `owner_email` is the column in live DB; `email` is absent.
+- **Reseller `tenant_id` is a UUID**, not TEXT — code resolving resellers by slug must use `slug`, not a text `tenant_id`.
 
 ---
 
 ## 2. System Tasks Queue (Headless Infrastructure Commands)
 
-### `system_tasks` Table (New, per `supabase/migrations/016_create_system_tasks_table.sql`)
+### `system_tasks` Table (per `supabase/migrations/016_create_system_tasks_table.sql`)
+> ⚠️ **NOT PRESENT in the live dev database as of 2026-07-20.** The migration file exists
+> but was **never applied** to this project (`to_regclass('public.system_tasks')` → NULL).
+> The `src/lib/orchestrator/worker.ts` + `src/lib/audit/command-dispatcher.ts` code paths
+> that read/write this table will fail at runtime until the migration is applied.
+
 | Column | Type | Status |
 |--------|------|--------|
-| `id` | UUID PK (default `gen_random_uuid()`) | ✅ New: async task identity |
-| `command` | TEXT NOT NULL | ✅ New: the `SYSTEM_COMMAND` requested (e.g. `SYSTEM_EXECUTE_BUILD`) |
-| `payload` | JSONB | ✅ New: opaque payload forwarded to the orchestrator handler |
-| `status` | TEXT NOT NULL DEFAULT `PENDING` | ✅ New: CHECK `PENDING \| PROCESSING \| COMPLETED \| FAILED` |
-| `error_log` | TEXT | ✅ New: error detail when `status = FAILED` |
-| `created_at` | TIMESTAMPTZ NOT NULL | ✅ New |
-| `updated_at` | TIMESTAMPTZ NOT NULL | ✅ New |
+| `id` | UUID PK (default `gen_random_uuid()`) | ❌ Migration unapplied — table absent in live DB |
+| `command` | TEXT NOT NULL | ❌ (as above) |
+| `payload` | JSONB | ❌ (as above) |
+| `status` | TEXT NOT NULL DEFAULT `PENDING` | ❌ (as above) |
+| `error_log` | TEXT | ❌ (as above) |
+| `created_at` | TIMESTAMPTZ NOT NULL | ❌ (as above) |
+| `updated_at` | TIMESTAMPTZ NOT NULL | ❌ (as above) |
 
-- **Index**: `idx_system_tasks_status_created (status, created_at ASC)` — worker pulls `PENDING` rows oldest-first.
-- **RLS**: Enabled; service-role only policy (`dispatcher` insert + `worker` update). Never exposed to anon/authenticated clients.
+- **Index (intended)**: `idx_system_tasks_status_created (status, created_at ASC)` — worker pulls `PENDING` rows oldest-first.
+- **RLS (intended)**: Enabled; service-role only policy (`dispatcher` insert + `worker` update).
 - **Producer**: `src/lib/audit/command-dispatcher.ts` queues `SYSTEM_EXECUTE_BUILD`, `SYSTEM_SYNC_CRM`, `SYSTEM_RELOAD_ASSETS` via the admin Supabase client.
-- **Consumer**: `src/lib/orchestrator/worker.ts` executes the matching handler in `src/lib/orchestrator/` and transitions `PENDING → PROCESSING → COMPLETED \| FAILED`.
+- **Consumer**: `src/lib/orchestrator/worker.ts` executes the matching handler in `src/lib/orchestrator/`.
 
-**Verdict**: Isolated system-level queue; correct RLS posture, no client-exposed write path.
+**Verdict**: Code + migration exist, but the table is **missing from live DB** — this is a pending provisioning gap, not a working queue. Apply `016_create_system_tasks_table.sql` to close it.
 
 ---
 
@@ -67,17 +88,21 @@
   - `src/components/reseller/client-inventory-table.tsx`
 
 ### Reseller Branding
-- Uses new atomic `branding_bag` JSONB with optimistic locking via `sync_reseller_branding` RPC
-- Legacy `branding_color`/`accent_color` still selected in `TenantRegistryTable` and reseller provider for backward compatibility
-- `UPDATE ... SET branding_color = branding_bag->>'primaryColor'` keeps flattened columns in sync
+> ⚠️ **Live-verified 2026-07-20.** The live `resellers` table stores branding as JSONB:
+> `branding` (`{primary, logo_url, secondary}`), `branding_colors` (`{primary, secondary}`),
+> and `branding_assets`. There is **NO `branding_bag` column and NO `version_stamp`** in the
+> live DB, so the "atomic `branding_bag` + optimistic locking via `version_stamp`" model
+> described below was never provisioned on this project.
+- Branding state lives in the `branding` / `branding_colors` JSONB columns (read `reseller.branding?.primary` / `reseller.branding_colors?.primary`).
+- No flattened `branding_color`/`accent_color` text columns exist; code that selects them from `resellers` would error.
 
 ### Remaining Branding-Colors Remnants
 | File | Context | Recommendation |
 |------|---------|----------------|
-| `src/components/TenantRegistryTable.tsx` | Selects `branding_color`, `accent_color` from `resellers` | Safe; matches legacy columns retained in schema |
-| `src/providers/reseller-provider.tsx` | Reads `reseller.accent_color` and `reseller.branding_colors?.primary` | Safe; resolves to fallback values if `branding_bag` is missing |
+| `src/components/TenantRegistryTable.tsx` | Previously documented as selecting `branding_color`, `accent_color` from `resellers` | ❌ These columns do NOT exist in live DB — if the code still selects them it will fail. Audit/remove. |
+| `src/providers/reseller-provider.tsx` | Reads `reseller.accent_color` and `reseller.branding_colors?.primary` | Read `branding_colors?.primary`; drop any `accent_color` reference (absent in live DB). |
 
-**Verdict**: No broken references; dual-state is intentional transitional design.
+**Verdict**: The earlier "dual-state is intentional" conclusion is **wrong against live**. The live schema is JSONB-only; any code path expecting `branding_bag`/`version_stamp`/`branding_color`/`accent_color` on `resellers` is broken until those migrations are applied. Treat as a pending provisioning gap, not a working transitional design.
 
 ---
 
@@ -144,8 +169,8 @@
 ## 6. Recommendations
 
 1. **Schema Cleanup (Future)**
-   - Deprecate `branding_color` and `accent_color` on `resellers` after full `branding_bag` adoption
-   - Drop legacy `email` column from `resellers` once all clients are migrated to `owner_email`
+   - ⚠️ **Live DB mismatch**: `resellers` in the live dev DB has NEITHER `branding_color`/`accent_color` (text) NOR `branding_bag`/`version_stamp`. Branding lives in JSONB (`branding`, `branding_colors`, `branding_assets`). Active code (`TenantRegistryTable.tsx`, `reseller-provider.tsx`, `src/types/database.ts`) still selects `branding_color`/`accent_color`/`version_stamp` — these queries will error against live. Either (a) apply the missing migrations (`010`, `017` strip, etc.) so the columns exist, or (b) rewrite the code to read the JSONB columns. Do NOT assume the legacy scalar columns exist.
+   - Drop legacy `email` column from `resellers` once all clients are migrated to `owner_email` (note: `email` is also absent in live DB).
 
 2. **Type Consistency**
    - Create centralized `ResellerRecord` type in `src/types/database.ts` to avoid interface drift between `actions.ts`, `TenantRegistryTable.tsx`, and reseller providers

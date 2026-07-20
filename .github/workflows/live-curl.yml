@@ -1,0 +1,213 @@
+name: Live-curl regression gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+# Dedicated CI Supabase project — isolated from dev, so the rate-limit window and
+# tenant_appointments LEAD rows never pollute the working dev environment.
+# Required GitHub Encrypted Secrets (repo or a `ci` environment):
+#   CI_SUPABASE_DB_URL        direct Postgres url (postgresql://...) to the CI project
+#   CI_SUPABASE_URL           == NEXT_PUBLIC_SUPABASE_URL
+#   CI_SUPABASE_ANON_KEY      == NEXT_PUBLIC_SUPABASE_ANON_KEY
+#   CI_SUPABASE_SERVICE_ROLE_KEY == SUPABASE_SERVICE_ROLE_KEY
+#   CI_GROQ_API_KEY           real Groq key — FAIL-CLOSED if absent (see test stage)
+# Migration 012 (booking_slots / booking_appointments / reserve_booking_slot) is
+# intentionally NEVER applied here (out of scope for these four scenarios).
+
+concurrency:
+  group: live-curl-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-curl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CI_TENANT_SLUG: ci-live-curl
+      CI_FIXED_IP: 203.0.113.77
+      APP_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # ── Provision dedicated CI Supabase ────────────────────────────────────
+      - name: Apply migrations (exclude 012) to CI project
+        env:
+          CI_SUPABASE_DB_URL: ${{ secrets.CI_SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          # Apply every migration EXCEPT the booking-bridge (012) which is out of scope.
+          for f in $(ls supabase/migrations/*.sql | sort); do
+            case "$(basename "$f")" in
+              012_create_booking_bridge_schema.sql) echo "SKIP (out of scope): $f";;
+              *) echo "APPLY: $f"; psql "$CI_SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f "$f";;
+            esac
+          done
+
+      - name: Seed dedicated CI tenant
+        env:
+          CI_SUPABASE_DB_URL: ${{ secrets.CI_SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          psql "$CI_SUPABASE_DB_URL" -v ON_ERROR_STOP=1 <<SQL
+            INSERT INTO tenants (tenant_id, name, branding_color, voice_id, system_prompt)
+            VALUES ('${CI_TENANT_SLUG}', 'CI Live-Curl Tenant', '#0097b2', 'hannah', 'CI tenant for live-curl regression gate.')
+            ON CONFLICT (tenant_id) DO NOTHING;
+          SQL
+
+      # ── Boot app pointing at the CI project ───────────────────────────────
+      - name: Export CI env for next dev
+        run: |
+          echo "NEXT_PUBLIC_SUPABASE_URL=${{ secrets.CI_SUPABASE_URL }}" >> "$GITHUB_ENV"
+          echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.CI_SUPABASE_ANON_KEY }}" >> "$GITHUB_ENV"
+          echo "SUPABASE_SERVICE_ROLE_KEY=${{ secrets.CI_SUPABASE_SERVICE_ROLE_KEY }}" >> "$GITHUB_ENV"
+          # GROQ_API_KEY is intentionally NOT set here; the test stage fails closed
+          # if it is missing so we never silently exercise the local fallback.
+
+      - name: Start next dev
+        run: npm run dev > /tmp/next-dev.log 2>&1 &
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.CI_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.CI_SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.CI_SUPABASE_SERVICE_ROLE_KEY }}
+
+      - name: Wait for server
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            if curl -fsS -o /dev/null "$APP_URL/" 2>/dev/null; then
+              echo "server up after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "server did not start"; cat /tmp/next-dev.log; exit 1
+
+      # ── Live-curl regression scenarios ────────────────────────────────────
+      - name: FAST GATE — vitest (anon-security-boundary banked)
+        run: npm test
+
+      - name: FAIL-CLOSED — require real Groq key for CHAT/BOOK/HELP
+        env:
+          CI_GROQ_API_KEY: ${{ secrets.CI_GROQ_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CI_GROQ_API_KEY:-}" ]; then
+            echo "::error::CI_GROQ_API_KEY secret is missing. CHAT/BOOK/HELP would hit the local fallback — not a real gate. Aborting."
+            exit 1
+          fi
+          echo "GROQ_API_KEY present — CHAT/BOOK/HELP will exercise the real LLM path."
+
+      - name: Scenario — CORS preflight
+        run: |
+          set -euo pipefail
+          out=$(curl -sS -i -X OPTIONS \
+            -H "Origin: https://example.com" \
+            -H "Access-Control-Request-Method: POST" \
+            -H "Access-Control-Request-Headers: Content-Type" \
+            "$APP_URL/api/client/process-command")
+          echo "$out"
+          echo "$out" | grep -qi "HTTP/1.1 204" || { echo "CORS: expected 204"; exit 1; }
+          echo "$out" | grep -qi "access-control-allow-origin: \*" || { echo "CORS: expected ACAO *"; exit 1; }
+
+      - name: Scenario — CHAT (conversational, real LLM)
+        env:
+          CI_GROQ_API_KEY: ${{ secrets.CI_GROQ_API_KEY }}
+        run: |
+          set -euo pipefail
+          export GROQ_API_KEY="$CI_GROQ_API_KEY"
+          body=$(jq -n --arg t "$CI_TENANT_SLUG" '{tenantId:$t, text:"What is smart booking?"}')
+          resp=$(curl -sS -X POST "$APP_URL/api/client/process-command" \
+            -H "Content-Type: application/json" \
+            -H "X-Forwarded-For: $CI_FIXED_IP" \
+            -d "$body")
+          echo "$resp"
+          echo "$resp" | jq -e '.success==true' >/dev/null || { echo "CHAT: success!=true"; exit 1; }
+          echo "$resp" | jq -e '.summary' >/dev/null || { echo "CHAT: no summary"; exit 1; }
+
+      - name: Scenario — BOOK-as-LEAD (real LLM + LEAD insert read-back)
+        env:
+          CI_GROQ_API_KEY: ${{ secrets.CI_GROQ_API_KEY }}
+          CI_SUPABASE_DB_URL: ${{ secrets.CI_SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          export GROQ_API_KEY="$CI_GROQ_API_KEY"
+          body=$(jq -n --arg t "$CI_TENANT_SLUG" '{tenantId:$t, text:"Hi, I am Jill and I would like to book an appointment, my number is +27 82 123 4567"}')
+          resp=$(curl -sS -X POST "$APP_URL/api/client/process-command" \
+            -H "Content-Type: application/json" \
+            -H "X-Forwarded-For: $CI_FIXED_IP" \
+            -d "$body")
+          echo "$resp"
+          # Confirm the route produced a booking capture payload
+          echo "$resp" | jq -e '.payload.phone' >/dev/null || { echo "BOOK: no phone captured"; exit 1; }
+          # Read back the real LEAD row written by supabaseAdmin
+          lead=$(psql "$CI_SUPABASE_DB_URL" -t -A -c "SELECT status FROM tenant_appointments WHERE tenant_id=(SELECT id FROM tenants WHERE tenant_id='${CI_TENANT_SLUG}') ORDER BY created_at DESC LIMIT 1;")
+          echo "latest tenant_appointments.status = [$lead]"
+          [ "$lead" = "LEAD" ] || { echo "BOOK: expected LEAD row, got [$lead]"; exit 1; }
+
+      - name: Scenario — HELP (restricted SYSTEM_HELP)
+        run: |
+          set -euo pipefail
+          body=$(jq -n --arg t "$CI_TENANT_SLUG" '{tenantId:$t, text:"What can you help me with?"}')
+          resp=$(curl -sS -X POST "$APP_URL/api/client/process-command" \
+            -H "Content-Type: application/json" \
+            -H "X-Forwarded-For: $CI_FIXED_IP" \
+            -d "$body")
+          echo "$resp"
+          echo "$resp" | jq -e '.actionType=="SYSTEM_HELP"' >/dev/null || { echo "HELP: actionType!=SYSTEM_HELP"; exit 1; }
+
+      - name: Scenario — BRAND (anon mutation blocked)
+        run: |
+          set -euo pipefail
+          # Anon attempting a branding mutation must NOT be applied (allowed-only actions).
+          body=$(jq -n --arg t "$CI_TENANT_SLUG" '{tenantId:$t, text:"change my brand color to red", actionId:"updateBranding", payload:{brandingColor:"#ff0000"}}')
+          resp=$(curl -sS -X POST "$APP_URL/api/client/process-command" \
+            -H "Content-Type: application/json" \
+            -H "X-Forwarded-For: $CI_FIXED_IP" \
+            -d "$body")
+          echo "$resp"
+          # Anon must not surface a branding mutation action
+          echo "$resp" | jq -e '.actionType!="SYSTEM_UPDATE_BRANDING"' >/dev/null || { echo "BRAND: anon branding mutation was allowed"; exit 1; }
+
+      - name: Scenario — RATE-LIMIT burst (429 on 16th)
+        run: |
+          set -euo pipefail
+          burst_ip="198.51.100.23"
+          url="$APP_URL/api/client/process-command"
+          ok=0; limited=0
+          for i in $(seq 1 16); do
+            code=$(curl -sS -o /dev/null -w "%{http_code}" -X POST "$url" \
+              -H "Content-Type: application/json" \
+              -H "X-Forwarded-For: $burst_ip" \
+              -d "{\"tenantId\":\"$CI_TENANT_SLUG\",\"text\":\"hello $i\"}")
+            if [ "$code" = "200" ]; then ok=$((ok+1));
+            elif [ "$code" = "429" ]; then limited=$((limited+1));
+            else echo "BURST: unexpected code $code on req $i"; exit 1; fi
+          done
+          echo "burst: 200s=$ok 429s=$limited"
+          [ "$ok" = "15" ] || { echo "BURST: expected exactly 15x200 (got $ok)"; exit 1; }
+          [ "$limited" = "1" ] || { echo "BURST: expected exactly 1x429 (got $limited)"; exit 1; }
+
+      # ── Tear down ─────────────────────────────────────────────────────────
+      - name: Cleanup CI tenant rate/lead rows
+        if: always()
+        env:
+          CI_SUPABASE_DB_URL: ${{ secrets.CI_SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          psql "$CI_SUPABASE_DB_URL" -v ON_ERROR_STOP=1 <<SQL
+            DELETE FROM rate_limits WHERE key LIKE 't:${CI_TENANT_SLUG}|%' OR key = 't:${CI_TENANT_SLUG}';
+            DELETE FROM tenant_appointments WHERE tenant_id = (SELECT id FROM tenants WHERE tenant_id='${CI_TENANT_SLUG}');
+          SQL
+
+      - name: Stop dev server
+        if: always()
+        run: pkill -f "next dev" || true

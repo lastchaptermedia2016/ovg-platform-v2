@@ -47,6 +47,7 @@ async function getUserEmail(supabase: Awaited<ReturnType<typeof createAuthClient
 // POST — Refactored tenant config update with deep merge & audit
 // ──────────────────────────────────────────────────────────────
 export async function POST(request: NextRequest) {
+  console.warn('[Deprecated] /api/tenants/update-config is deprecated. Use /api/client/update-studio-config instead.');
   try {
     // ────────────────────────────────────────────────────────────
     // STEP 1: Authentication & Authorization
@@ -208,11 +209,20 @@ export async function POST(request: NextRequest) {
     // ────────────────────────────────────────────────────────────
     // STEP 9: Return Success Response
     // ────────────────────────────────────────────────────────────
-    return NextResponse.json({
-      success: true,
-      widgetConfig: newConfig,
-      appliedAt: new Date().toISOString(),
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        widgetConfig: newConfig,
+        appliedAt: new Date().toISOString(),
+        deprecated: true,
+        message: 'Use /api/client/update-studio-config',
+      },
+      {
+        headers: {
+          Deprecation: 'true',
+        },
+      }
+    );
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

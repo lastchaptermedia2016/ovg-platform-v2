@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { useVoiceCommand } from "@/hooks/use-voice-command";
 import { generateBrandingCSS } from "@/lib/branding/css-generator";
 import { cornerStyle } from "@/lib/branding/widget-position";
-import type { CanonicalBranding, SuggestedAction } from "@/lib/schemas/tenant-config.canonical";
+import type { CanonicalBranding, CanonicalFeatures, SuggestedAction } from "@/lib/schemas/tenant-config.canonical";
 import { getSpeechRecognition, type SpeechRecognitionInstance, type SpeechRecognitionResultEvent } from "@/types/voice-parser";
 import "./widget.css";
 
@@ -35,7 +35,7 @@ const defaultConfig: WidgetConfig = {
   brandName: "Omniverge Global",
   primaryColor: "#0097b2",
   aiName: "Assistant",
-  greeting: "Welcome to Omniverge Global ✨ My name is your virtual assistant. How can I help you today?",
+  greeting: "Hi there! I'm OVG, the AI concierge for Omniverge Global. We help businesses like yours grow smarter using strategic marketing and AI. What brings you to our site today?",
   peekText: "Ready to see the future of AI-powered business?",
   syncBadgeText: "VIP BOOKING SECURED • SYNCED TO SANCTUARY",
   phone: "27760330046",
@@ -63,6 +63,11 @@ interface ChatWidgetProps {
    */
   suggestedActions?: SuggestedAction[];
   /**
+   * Tenant-configured greeting shown when the widget first opens or when the
+   * conversation is reset. Falls back to the built-in default when empty.
+   */
+  greeting?: string;
+  /**
    * Studio preview mode. Renders the chat window as a contained, always-open
    * surface (no consent gate, no floating bubble), suppresses realtime
    * presence/voice channels, and seeds a static sample conversation so the
@@ -71,7 +76,7 @@ interface ChatWidgetProps {
   preview?: boolean;
   /**
    * Live, unsaved Studio overrides surfaced to the test-drive preview so the
-   * AI answers with the current on-screen brand/vibe. Consumed only in preview.
+   * AI answers with the current, on-screen brand/vibe. Consumed only in preview.
    */
   liveDraft?: {
     brandName?: string;
@@ -84,6 +89,11 @@ interface ChatWidgetProps {
    * client's chat widget can ship without voice input.
    */
   voiceFeaturesEnabled?: boolean;
+  /**
+   * Feature flags controlling widget capabilities. Sourced from
+   * tenants.widget_config.features.
+   */
+  features?: Partial<CanonicalFeatures>;
 }
 
 const ChatWidget = ({
@@ -94,7 +104,10 @@ const ChatWidget = ({
   liveDraft,
   voiceFeaturesEnabled = true,
   suggestedActions = [],
+  greeting,
+  features,
 }: ChatWidgetProps) => {
+  const effectiveVoiceFeaturesEnabled = features?.voiceFeaturesEnabled ?? voiceFeaturesEnabled;
   const [config] = useState<WidgetConfig>(defaultConfig);
   const [isOpen, setIsOpen] = useState(false);
   const [showConsent, setShowConsent] = useState(false);
@@ -135,12 +148,15 @@ const ChatWidget = ({
   const [previewInterim, setPreviewInterim] = useState("");
 
   const greetedRef = useRef(false);
+  const chatHistoryKey = `ovgweb_chat_messages_${tenantId}`;
+  const previewRef = useRef(preview);
 
   const [messages, setMessages] = useState<WidgetMessage[]>(() => {
+    const effectiveGreeting = greeting ?? defaultConfig.greeting ?? "";
     if (preview) {
       const now = Date.now();
       return [
-        { id: "preview-1", role: "assistant", text: "Hi! I'm your AI concierge. How can I help you today?", timestamp: now },
+        { id: "preview-1", role: "assistant", text: effectiveGreeting, timestamp: now },
         { id: "preview-2", role: "user", text: "Can you tell me about your services?", timestamp: now + 1 },
         { id: "preview-3", role: "assistant", text: "Absolutely — we tailor AI-powered solutions to help your business grow smarter. What are you working on?", timestamp: now + 2 },
       ];
@@ -149,21 +165,21 @@ const ChatWidget = ({
       const initialGreeting: WidgetMessage = {
         id: Date.now().toString(),
         role: "assistant",
-        text: "Hi there! I'm OVG, the AI concierge for Omniverge Global. We help businesses like yours grow smarter using strategic marketing and AI. What brings you to our site today?",
+        text: effectiveGreeting,
         timestamp: Date.now(),
       };
       return [initialGreeting];
     }
     try {
-      const saved = JSON.parse(localStorage.getItem("ovgweb_chat_messages") || "[]");
+      const saved = JSON.parse(localStorage.getItem(chatHistoryKey) || "[]");
       if (saved.length === 0) {
         const initialGreeting: WidgetMessage = {
           id: Date.now().toString(),
           role: "assistant",
-          text: "Hi there! I'm OVG, the AI concierge for Omniverge Global. We help businesses like yours grow smarter using strategic marketing and AI. What brings you to our site today?",
+          text: effectiveGreeting,
           timestamp: Date.now(),
         };
-        localStorage.setItem("ovgweb_chat_messages", JSON.stringify([initialGreeting]));
+        localStorage.setItem(chatHistoryKey, JSON.stringify([initialGreeting]));
         return [initialGreeting];
       }
       return saved as WidgetMessage[];
@@ -171,10 +187,10 @@ const ChatWidget = ({
       const initialGreeting: WidgetMessage = {
         id: Date.now().toString(),
         role: "assistant",
-        text: "Hi there! I'm OVG, the AI concierge for Omniverge Global. We help businesses like yours grow smarter using strategic marketing and AI. What brings you to our site today?",
+        text: effectiveGreeting,
         timestamp: Date.now(),
       };
-      localStorage.setItem("ovgweb_chat_messages", JSON.stringify([initialGreeting]));
+      localStorage.setItem(chatHistoryKey, JSON.stringify([initialGreeting]));
       return [initialGreeting];
     }
   });
@@ -189,26 +205,26 @@ const ChatWidget = ({
     };
     setMessages((prev) => {
       const next = [...prev, userMsg];
-      localStorage.setItem('ovgweb_chat_messages', JSON.stringify(next));
+      localStorage.setItem(chatHistoryKey, JSON.stringify(next));
       return next;
     });
-  }, []);
+  }, [chatHistoryKey]);
 
   const handleVoiceAIResponse = useCallback((text: string) => {
     if (!text.trim()) return;
     const aiMsg: WidgetMessage = {
       id: crypto.randomUUID(),
-      role: 'assistant',
+      role: "assistant",
       text: text.trim(),
       timestamp: Date.now(),
     };
     setMessages((prev) => {
       const next = [...prev, aiMsg];
-      localStorage.setItem('ovgweb_chat_messages', JSON.stringify(next));
+      localStorage.setItem(chatHistoryKey, JSON.stringify(next));
       return next;
     });
     setIsTyping(false);
-  }, []);
+  }, [chatHistoryKey]);
 
   const handleVoiceError = useCallback((errorMsg: string) => {
     console.error('[ChatWidget] Voice error:', errorMsg);
@@ -238,29 +254,48 @@ const ChatWidget = ({
   }, []);
 
   const resetChat = useCallback(() => {
+    const effectiveGreeting = greeting ?? defaultConfig.greeting ?? "";
     const initialGreeting: WidgetMessage = {
       id: Date.now().toString(),
       role: "assistant",
-      text: "Hi there! I'm OVG, the AI concierge for Omniverge Global. We help businesses like yours grow smarter using strategic marketing and AI. What brings you to our site today?",
+      text: effectiveGreeting,
       timestamp: Date.now(),
     };
     setMessages([initialGreeting]);
-    localStorage.setItem("ovgweb_chat_messages", JSON.stringify([initialGreeting]));
+    localStorage.setItem(chatHistoryKey, JSON.stringify([initialGreeting]));
     setShowResetConfirm(false);
-  }, []);
+  }, [greeting, chatHistoryKey]);
 
   const handleAcceptConsent = useCallback(() => {
     setHasConsent(true);
     setShowConsent(false);
     localStorage.setItem("ovgweb_ai_consent", "true");
+    const effectiveGreeting = greeting ?? defaultConfig.greeting ?? "";
     const welcome: WidgetMessage = {
       id: Date.now().toString(),
       role: "assistant",
-      text: config.greeting ?? "",
+      text: effectiveGreeting,
       timestamp: Date.now(),
     };
     setMessages([welcome]);
-  }, [config.greeting]);
+  }, [greeting]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const effectiveGreeting = greeting ?? defaultConfig.greeting ?? "";
+    const id = setTimeout(() => {
+      setMessages(prev => {
+        const next = [...prev];
+        const firstAssistant = next.find(m => m.role === "assistant");
+        if (firstAssistant && firstAssistant.text !== effectiveGreeting) {
+          firstAssistant.text = effectiveGreeting;
+          localStorage.setItem(chatHistoryKey, JSON.stringify(next));
+        }
+        return next;
+      });
+    }, 0);
+    return () => clearTimeout(id);
+  }, [greeting, chatHistoryKey]);
 
   const handleOpenChat = useCallback(() => {
     setShowPeek(false);
@@ -334,6 +369,10 @@ const ChatWidget = ({
             draftVibe: liveDraft?.systemPrompt,
             draftPersona: liveDraft?.personaMode,
             currentPath: "/client/dashboard/studio/branding",
+            context: {
+              surface: "chat-widget-embed",
+              clientMemories,
+            },
           }),
         });
 
@@ -353,7 +392,7 @@ const ChatWidget = ({
         return;
       }
 
-      localStorage.setItem("ovgweb_chat_messages", JSON.stringify(newMsgs));
+      localStorage.setItem(chatHistoryKey, JSON.stringify(newMsgs));
 
       void fetch('/api/chat/send', {
         method: 'POST',
@@ -394,7 +433,7 @@ const ChatWidget = ({
 
       const finalMsgs = [...newMsgs, aiMsg];
       setMessages(finalMsgs);
-      localStorage.setItem("ovgweb_chat_messages", JSON.stringify(finalMsgs));
+      localStorage.setItem(chatHistoryKey, JSON.stringify(finalMsgs));
 
       if (data.payload && typeof data.payload === "object" && !isBrandingTheme) {
         console.log("📦 [Jill Capture] Booking payload:", data.payload);
@@ -419,7 +458,7 @@ const ChatWidget = ({
     } finally {
       setIsTyping(false);
     }
-  }, [messages, refreshConfiguration, preview, voiceEnabled, liveDraft, speakPreview, tenantId]);
+  }, [messages, refreshConfiguration, preview, voiceEnabled, liveDraft, speakPreview, tenantId, clientMemories, chatHistoryKey]);
 
   // ── Preview test-drive STT (Web Speech API) ─────────────────────────
   const startPreviewListening = useCallback(() => {
@@ -496,6 +535,12 @@ const ChatWidget = ({
     };
   }, []);
 
+  // Keep previewRef in sync with the prop without expanding dependency arrays
+  // of unrelated effects (avoids "dependency array changed size" warnings).
+  useEffect(() => {
+    previewRef.current = preview;
+  }, [preview]);
+
   // Auto-greet once when opened with consent and no messages
   useEffect(() => {
     if (isOpen && messages.length === 0 && !greetedRef.current && hasConsent) {
@@ -504,8 +549,9 @@ const ChatWidget = ({
     }
   }, [isOpen, messages.length, hasConsent, handleAcceptConsent]);
 
-  // Auto-scroll
+  // Auto-scroll (skip in preview — contained canvas, no viewport scroll)
   useEffect(() => {
+    if (previewRef.current) return;
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
 
@@ -546,15 +592,16 @@ const ChatWidget = ({
     (async () => {
       try {
         const res = await fetch("/api/client/memories", { cache: "no-store" });
-        if (!res.ok) return;
-        const data = (await res.json()) as {
-          memories?: Record<string, string>;
-          hasMemory?: boolean;
-        };
-        if (cancelled) return;
-        const memories = data.memories ?? {};
-        setClientMemories(memories);
-        setHasClientMemory(Boolean(data.hasMemory) || Object.keys(memories).length > 0);
+        if (res.ok) {
+          const data = (await res.json()) as {
+            memories?: Record<string, string>;
+            hasMemory?: boolean;
+          };
+          if (cancelled) return;
+          const memories = data.memories ?? {};
+          setClientMemories(memories);
+          setHasClientMemory(Boolean(data.hasMemory) || Object.keys(memories).length > 0);
+        }
       } catch {
         /* non-fatal: no recognition pill */
       }
@@ -563,6 +610,53 @@ const ChatWidget = ({
       cancelled = true;
     };
   }, [preview]);
+
+  // Silent anonymous visitor recognition fallback: if the authenticated
+  // /api/client/memories endpoint is unavailable (anon visitor), inspect the
+  // latest user message for phone/email and query visitor_memories. Skipped in
+  // Studio preview and silent on any failure.
+  useEffect(() => {
+    if (preview) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const latestUserMsg = [...messages].reverse().find(m => m.role === 'user');
+        if (!latestUserMsg) return;
+
+        const phoneMatch = latestUserMsg.text.match(/\+?\d[\d ()-]{6,19}\d/);
+        const emailMatch = latestUserMsg.text.match(/[^\s]+@[^\s]+\.[^\s]+/);
+        if (!phoneMatch && !emailMatch) return;
+
+        const visitorRes = await fetch("/api/client/visitor-memories", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            phone: phoneMatch ? phoneMatch[0] : undefined,
+            email: emailMatch ? emailMatch[0] : undefined,
+            tenantId,
+          }),
+        });
+
+        if (!visitorRes.ok) return;
+        const visitorData = (await visitorRes.json()) as Record<string, string>;
+        if (cancelled) return;
+        const memories = Object.fromEntries(
+          Object.entries(visitorData).filter(
+            ([, v]) => v && v !== 'Unknown' && v !== 'None recorded',
+          ),
+        );
+        if (Object.keys(memories).length > 0) {
+          setClientMemories(memories);
+          setHasClientMemory(true);
+        }
+      } catch {
+        /* non-fatal: no recognition pill */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [preview, messages, tenantId]);
 
   return (
     <>
@@ -911,7 +1005,7 @@ const ChatWidget = ({
               {/* Microphone Button - Bound to useVoiceCommand.
                   Hidden entirely when the reseller disables voice features,
                   so the client-side widget can ship without voice input. */}
-              {voiceFeaturesEnabled && (
+              {effectiveVoiceFeaturesEnabled && (
                 <Button
                   onClick={handleMicClick}
                   aria-label={isRecording ? "Stop listening" : "Hold to talk"}

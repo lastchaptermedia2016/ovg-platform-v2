@@ -5,6 +5,7 @@ import { Loader2, Save, Settings2 } from "lucide-react";
 import type { CanonicalAIPersona } from "@/lib/schemas/tenant-config.canonical";
 import { createClient } from "@/lib/supabase/client";
 import { resolveTenantId } from "@/lib/resolveTenantId";
+import { useStudioDraft } from "@/contexts/StudioDraftContext";
 
 // ────────────────────────────────────────────────────────────────────
 // Persona Form State Interface
@@ -51,6 +52,7 @@ const PERSONALITY_OPTIONS = [
 // Component
 // ────────────────────────────────────────────────────────────────────
 export default function AIPersonaSettings() {
+  const { setDraft } = useStudioDraft();
   const [formState, setFormState] = useState<PersonaFormState>(DEFAULT_PERSONA);
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -230,13 +232,26 @@ export default function AIPersonaSettings() {
         }
 
         setSuccessMessage("AI Persona updated successfully");
+
+        const personaMode: 'sales' | 'concierge' =
+          formState.personality === 'professional' ? 'sales' : 'concierge';
+        const systemPrompt = formState.conversationStyle || (personaMode === 'sales'
+          ? "You are a sales-focused AI assistant. Your primary goal is to qualify leads, understand customer needs, and guide them toward a purchase decision. Be persuasive yet professional. Ask discovery questions to identify pain points, present relevant solutions, and create urgency when appropriate. Always maintain a helpful tone while driving toward conversion."
+          : "You are a concierge-style AI assistant. Your primary goal is to provide exceptional hospitality and personalized service. Anticipate needs, offer thoughtful recommendations, and ensure every interaction feels premium and caring. Prioritize customer comfort and satisfaction. Be attentive to details and proactive in offering assistance.");
+
+        setDraft((prev) => ({
+          ...prev,
+          personaMode,
+          systemPrompt,
+          voiceId: formState.voiceId,
+        }));
       } catch (err) {
         setError(err instanceof Error ? err.message : "An unexpected error occurred.");
       } finally {
         setIsSaving(false);
       }
     },
-    [formState, buildStudioConfigPayload, tenantId]
+    [formState, buildStudioConfigPayload, tenantId, setDraft]
   );
 
   // ────────────────────────────────────────────────────────────────────

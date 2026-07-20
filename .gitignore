@@ -58,3 +58,6 @@ out/
 .kiro/
 .vscode/
 *.log
+
+# Dev test pages
+public/public-test-index.html

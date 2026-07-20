@@ -116,6 +116,9 @@ export function WidgetPreview() {
               personaMode: draft.personaMode,
               systemPrompt: draft.systemPrompt,
             }}
+            greeting={draft.greeting}
+            suggestedActions={draft.suggestedActions}
+            features={draft.features}
           />
         </div>
       </div>

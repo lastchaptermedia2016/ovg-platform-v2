@@ -18,7 +18,7 @@ import { createHarmoniousGreeting, VisualStyle } from '@/lib/voice-visual-harmon
 import { isInvalidSlug } from '@/lib/utils/guard';
 import { type IncomingAIAction } from '@/hooks/use-voice-command';
 import { useHannah } from '@/contexts/HannahContext';
-import type { CanonicalBranding, CanonicalFeatures, SuggestedAction } from '@/lib/schemas/tenant-config.canonical';
+import type { SuggestedAction } from '@/lib/schemas/tenant-config.canonical';
 import { SuggestedActionsEditor } from '@/components/admin/SuggestedActionsEditor';
 
 interface ClientWithBranding extends ClientType {
@@ -608,36 +608,37 @@ export function ClientBrandingStudio({
    *  (reseller table) independently from the features API (tenants table),
    *  which created split-brain save risks. */
   const handleCommit = useCallback(async (): Promise<boolean> => {
-    // Build the consolidated atomic payload matching the Zod schema
-    // on the server side (UpdateConfigSchema).
+    const studioConfig = {
+      branding: {
+        primaryColor: config.headerBackground,
+        accentColor: config.footerBackground,
+        logoUrl: config.logoUrl,
+        brandName: config.brandName,
+        widgetBodyOpacity: config.widgetBodyOpacity,
+        widgetBodyBackground: config.widgetBodyBackground,
+        customCssCode: config.customCssCode,
+      },
+      features: {
+        aiInsightBadge: config.aiInsightBadge,
+        aiDesignMirror: config.aiDesignMirror,
+        customCss: config.customCss,
+        voiceFeaturesEnabled: config.voiceFeaturesEnabled,
+        localFallbackAlert: config.localFallbackAlert,
+      },
+      aiPersona: {
+        voiceId: config.defaultTtsVoice,
+      },
+      suggestedActions,
+      greeting: generatedGreeting || '',
+    };
+
     const consolidatedPayload = {
       tenantId: clientId,
-      widgetConfig: {
-        branding: {
-          primaryColor: config.headerBackground,
-          accentColor: config.footerBackground,
-          logoUrl: config.logoUrl,
-          brandName: config.brandName,
-          widgetBodyOpacity: config.widgetBodyOpacity,
-          widgetBodyBackground: config.widgetBodyBackground,
-          customCssCode: config.customCssCode,
-        } as Partial<CanonicalBranding>,
-        features: {
-          aiInsightBadge: config.aiInsightBadge,
-          aiDesignMirror: config.aiDesignMirror,
-          customCss: config.customCss,
-          voiceFeaturesEnabled: config.voiceFeaturesEnabled,
-          localFallbackAlert: config.localFallbackAlert,
-        } as Partial<CanonicalFeatures>,
-        ai_settings: {
-          voiceId: config.defaultTtsVoice,
-        },
-        suggestedActions,
-      },
+      studioConfig,
     };
 
     try {
-      const response = await fetch('/api/tenants/update-config', {
+      const response = await fetch('/api/client/update-studio-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(consolidatedPayload),
@@ -655,7 +656,7 @@ export function ClientBrandingStudio({
       setSaveMessage(`Error: ${errorMessage}`);
       return false;
     }
-  }, [config, clientId, suggestedActions]);
+  }, [config, clientId, suggestedActions, generatedGreeting]);
 
   // Handle save — uses atomic commit pipeline with version_stamp optimistic locking
   const handleSave = useCallback(async () => {
@@ -665,26 +666,6 @@ export function ClientBrandingStudio({
     try {
       const success = await handleCommit();
       if (!success) return;
-
-      // Branding committed successfully — also save greeting via existing endpoint
-      if (generatedGreeting) {
-        const greetingResponse = await fetch('/api/tenants/update-config-with-greeting', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            tenantId: clientId,
-            configPatch: {},
-            aiSettings: {
-              initial_greeting: generatedGreeting,
-              voice_persona: 'auto-generated',
-            },
-          }),
-        });
-
-        if (!greetingResponse.ok) {
-          console.warn('[BrandingStudio] Greeting save failed, but branding committed');
-        }
-      }
 
       setSaveMessage('✨ Perfect! Both the visual design and greeting have been saved.');
       tts('Excellent! Your complete branding setup is now live.');
@@ -697,7 +678,7 @@ export function ClientBrandingStudio({
     } finally {
       setIsSaving(false);
     }
-  }, [handleCommit, clientId, generatedGreeting, tts]);
+  }, [handleCommit, tts]);
 
   const dispatchStudioAction = useCallback(async (action: StudioAction): Promise<void> => {
     switch (action.type) {

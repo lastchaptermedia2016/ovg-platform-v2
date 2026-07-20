@@ -44,9 +44,7 @@ The **OVG Platform** is now a fully-functional enterprise solution with advanced
 - Glassmorphism effects and gradient backgrounds
 - Color harmony and opacity tuning
 - Image background support with error handling
-- **Atomic Branding Commit** — Optimistic concurrency control via `sync_reseller_branding` RPC with `SELECT...FOR UPDATE` locking
-- `branding_bag` JSONB column for atomic read/write of all branding tokens
-- Version-stamped optimistic locking prevents race conditions
+- **Atomic Branding Commit** — `sync_reseller_branding` RPC with `SELECT...FOR UPDATE` locking. ⚠️ On the live dev DB this RPC writes the `resellers.branding` JSONB column (confirmed); the legacy `branding_bag` column and `version_stamp` optimistic-lock counter described in older docs are **absent** in live — the RPC was redefined by migration `20260717_strip_version_stamp_from_sync_reseller_branding.sql` to drop them.
 
 #### 3. **AI-Powered Voice System**
 - **Hannah AI Assistant** — Professional design companion
@@ -74,8 +72,8 @@ The **OVG Platform** is now a fully-functional enterprise solution with advanced
 - **Zeeder Client Voice Bridge** — `useZeederVoice` connects the client-side `ZeederContext` state machine to the Groq-powered `/api/ai/process-command` endpoint (intentionally zero-dependency vs. the reseller domain).
 - **SYSTEM_HELP Elevated to UI** — `SYSTEM_HELP` is no longer speech-only. The `ClientHelpModal` (`src/components/client/ClientHelpModal.tsx`) renders the authoritative capability list from `FEATURE_REGISTRY`, triggered via `helpModalOpen` on the voice hook and mounted in `SystemMicButton`. Voice output is retained for accessibility; the modal is the primary surface.
 - **Client-Safe Command Taxonomy** — `SYSTEM_COMMANDS` / `SYSTEM_COMMAND` live in `src/lib/audit/command-types.ts` (no server-only imports) so the registry can be imported by `'use client'` components. `FEATURE_REGISTRY` (`src/lib/audit/feature-registry.ts`) is the single source of truth for AI capabilities, handlers, and auth requirements.
-- **System-Command Orchestrator** — Headless infrastructure commands (`SYSTEM_EXECUTE_BUILD`, `SYSTEM_SYNC_CRM`, `SYSTEM_RELOAD_ASSETS`) are queued into a `system_tasks` table and processed asynchronously by the orchestrator worker (`src/lib/orchestrator/worker.ts`) via handlers in `src/lib/orchestrator/`. The DB-backed `command-dispatcher.ts` branches critical commands to the queue and runs lightweight commands inline.
-- **White-Label Widget Header (`brandName`)** — The client widget header renders a `brandName` token resolved as `widget_config.branding.brandName` → `branding_bag.brandName` → `"Omniverge Global"`. Editable in the Branding Studio ("Widget Title Text / Company Name") and the Reseller `ClientBrandingStudio`; persisted via `POST /api/tenants/update-config` (`widgetConfig.branding`) and `POST /api/client/update-studio-config`.
+- **System-Command Orchestrator** — Headless infrastructure commands (`SYSTEM_EXECUTE_BUILD`, `SYSTEM_SYNC_CRM`, `SYSTEM_RELOAD_ASSETS`) are queued into a `system_tasks` table and processed asynchronously by the orchestrator worker (`src/lib/orchestrator/worker.ts`) via handlers in `src/lib/orchestrator/`. The DB-backed `command-dispatcher.ts` branches critical commands to the queue and runs lightweight commands inline. ⚠️ **Live gap**: `system_tasks` does NOT exist in the live dev DB (migration `016` unapplied) — the queue is non-functional until provisioned (see Database Schema block).
+- **White-Label Widget Header (`brandName`)** — The client widget header renders a `brandName` token resolved as `widget_config.branding.brandName` → `"Omniverge Global"`. (Older docs referenced `branding_bag.brandName`, but `branding_bag` is absent in live; the live source is the `branding` JSONB column.) Editable in the Branding Studio ("Widget Title Text / Company Name") and the Reseller `ClientBrandingStudio`; persisted via `POST /api/tenants/update-config` (`widgetConfig.branding`) and `POST /api/client/update-studio-config`.
 - **On-Screen Guide Page-Context Rule** — When a Zeeder client asks about branding/logo/header while on the Branding Studio page, the AI agent prompt names the exact left-panel controls (Logo URL, Upload, Widget Title Text) rather than a generic help dump.
 - **Informational Voice Query Routing** — How-to phrasing ("how do I…", "how to…", "where is…", "what is…", "explain…") no longer triggers the static `SYSTEM_HELP` block; it routes to the Groq LLM via `runSemanticFallback` so the agent can answer with screen-aware, page-contextual guidance. Capability questions ("what can you do", "list capabilities", "show help") still return `SYSTEM_HELP`.
 - **Multi-Tenant `create-client` Isolation** — `POST /api/ai/create-client` validates `user_resellers` membership before any service-role insert and returns 401/403/500 on failure.
@@ -236,79 +234,103 @@ providers/
 ```
 
 #### Database Schema
+
+> ⚠️ **Live-verified block.** The column lists below were captured directly from the
+> **live dev Supabase database** (information_schema + pg_constraint) on 2026-07-20, NOT
+> transcribed from older docs. Where a column documented elsewhere (e.g. `branding_bag`,
+> `version_stamp`, `booking_slots`) is absent here, it is genuinely absent in this database —
+> the migration file may exist in `supabase/migrations/` but was not applied to this project.
+
 ```sql
 -- Resellers
 resellers {
-  id: uuid (PK)
-  tenant_id: text (unique)
-  name: text
-  slug: text (unique)
-  branding_color: text
-  accent_color: text
-  logo_url: text
-  branding_bag: jsonb            # Atomic branding tokens container
-  version_stamp: integer         # Optimistic concurrency counter
-  is_active: boolean
-  paystack_account_id: text
-  created_at: timestamp
-  updated_at: timestamp
+  id: uuid (PK, NOT NULL, default gen_random_uuid())
+  tenant_id: uuid (NULL, default gen_random_uuid())   # NOTE: uuid, NOT text, in live DB
+  name: text (NOT NULL)
+  slug: text (NOT NULL, unique, lower-case alnum CHECK)
+  owner_email: text (unique)                          # standardized from legacy email
+  is_active: boolean (NULL, default true)
+  status: text (NULL, default 'active')
+  branding_colors: jsonb (NULL)                       # {primary, secondary}
+  branding: jsonb (NULL)                              # {primary, logo_url, secondary}
+  branding_assets: jsonb (NULL)
+  settings: jsonb (NULL)
+  metadata: jsonb (NULL)
+  pricing_tiers: jsonb (NULL)
+  stripe_account_id: text (NULL)                      # was documented as paystack_account_id (wrong)
+  stripe_connect_id: text (NULL)
+  stripe_onboarding_complete: boolean (NULL, default false)
+  logo_url: text (NULL)
+  created_at: timestamptz (NULL, default now())
 }
+-- ABSENT in live DB (despite older docs): branding_color, accent_color,
+--   branding_bag, version_stamp, paystack_account_id, updated_at.
 
--- Tenants (Clients)
+-- Tenants (Clients)  — curated subset of 37 live columns
 tenants {
-  id: uuid (PK)
-  tenant_id: text
-  name: text
-  industry: text
-  reseller_id: uuid (FK → resellers)
-  pricing_tier_key: text
-  widget_config: jsonb           # Branding (incl. brandName) + AI settings + greeting
-  branding_colors: jsonb
-  custom_assets: jsonb
-  show_ovg_branding: boolean
-  voice_id: text
-  system_prompt: text
-  is_active: boolean
-  created_at: timestamp
-  updated_at: timestamp
+  id: uuid (PK, NOT NULL, default gen_random_uuid())
+  tenant_id: text (NOT NULL, unique)
+  name: text (NOT NULL)
+  branding_color: text (NULL)
+  branding_colors: text (NULL)
+  voice_id: text (NULL)
+  system_prompt: text (NULL)
+  is_active: boolean (NULL, default true)
+  reseller_id: uuid (NULL, FK → resellers(id))
+  widget_config: jsonb (NULL)
+  industry: text (NULL, CHECK ALL|AUTOMOTIVE|GENERAL BUSINESS|RETAIL|HEALTHCARE|INSURANCE|AI AUTOMATION|OFFLINE)
+  category: text (NULL, default 'GENERAL')
+  pricing_tier_key: text (NULL, default 'basic')
+  custom_assets: jsonb (NULL)
+  show_ovg_branding: boolean (NULL, default true)
+  created_at: timestamptz (NULL, default now())
+  updated_at: timestamptz (NULL, default now())
 }
 
 -- User-Reseller Association
 user_resellers {
-  id: uuid (PK)
-  user_id: uuid
-  reseller_id: uuid (FK → resellers)
-  reseller_slug: text
-  role: text
-  created_at: timestamp
+  id: uuid (PK, NOT NULL, default gen_random_uuid())
+  user_id: uuid (NOT NULL, FK → auth.users(id))
+  reseller_id: uuid (NOT NULL, FK → resellers(id))
+  role: text (NOT NULL, default 'admin', CHECK admin|manager|viewer)
+  is_primary: boolean (NULL, default true)
+  created_at: timestamptz (NULL, default now())
+  updated_at: timestamptz (NULL, default now())
 }
+-- NOTE: there is NO reseller_slug column (older docs were wrong); reseller is
+--   reached via reseller_id, and the slug lives on resellers.slug.
 
 -- System Tasks (headless infrastructure command queue)
-system_tasks {
-  id: uuid (PK, default gen_random_uuid())
-  command: text (NOT NULL)            # SYSTEM_COMMAND, e.g. SYSTEM_EXECUTE_BUILD
-  payload: jsonb                      # Opaque payload for the orchestrator handler
-  status: text (NOT NULL, default 'PENDING')
-                                       # CHECK: PENDING | PROCESSING | COMPLETED | FAILED
-  error_log: text                     # Error detail when status = FAILED
-  created_at: timestamptz (NOT NULL)
-  updated_at: timestamptz (NOT NULL)
-}
--- Index: idx_system_tasks_status_created (status, created_at ASC)
--- RLS: enabled; service_role only (dispatcher insert + worker update)
+-- ⚠️ NOT PRESENT in the live dev database as of 2026-07-20. Migration
+--   supabase/migrations/016_create_system_tasks_table.sql EXISTS but was not applied
+--   to this project. The intended schema (for reference) is:
+--   system_tasks {
+--     id: uuid (PK, default gen_random_uuid())
+--     command: text (NOT NULL)            # SYSTEM_COMMAND, e.g. SYSTEM_EXECUTE_BUILD
+--     payload: jsonb                      # Opaque payload for the orchestrator handler
+--     status: text (NOT NULL, default 'PENDING')
+--                                        # CHECK: PENDING | PROCESSING | COMPLETED | FAILED
+--     error_log: text                     # Error detail when status = FAILED
+--     created_at: timestamptz (NOT NULL)
+--     updated_at: timestamptz (NOT NULL)
+--   }
+--   Index: idx_system_tasks_status_created (status, created_at ASC)
+--   RLS: enabled; service_role only (dispatcher insert + worker update)
 
 -- Anonymous chat booking-capture leads (written by /api/client/process-command)
 tenant_appointments {
-  id: uuid (PK, default gen_random_uuid())
-  tenant_id: uuid (FK → tenants.id)        # internal tenant id (resolved from public tenant_id)
+  id: uuid (PK, NOT NULL, default gen_random_uuid())
+  tenant_id: uuid (FK → tenants.id, NULL)  # internal tenant id (resolved from public tenant_id)
   start_time: timestamptz (NOT NULL)        # placeholder now() for LEAD captures (no slot yet)
   end_time: timestamptz (NOT NULL)
-  client_name: text
-  client_phone: text
-  status: text (NOT NULL, default 'AVAILABLE')
-                                           # CHECK: AVAILABLE | RESERVED | CONFIRMED | LEAD
-  created_at: timestamptz (NOT NULL, default now())
+  client_name: text (NULL)
+  client_phone: text (NULL)
+  status: text (NULL, default 'AVAILABLE')  # CHECK: AVAILABLE | RESERVED | CONFIRMED | LEAD
+  created_at: timestamptz (NULL, default now())
 }
+-- NOTE: schema above is captured from the live database (information_schema + pg_constraint),
+-- not reconstructed from memory. In the live DB only id/start_time/end_time are NOT NULL;
+-- tenant_id/client_name/client_phone/status/created_at are NULLABLE.
 -- status meanings:
 --   LEAD      = anonymous chat capture (name+phone, no slot held)  [this phase]
 --   AVAILABLE = open bookable slot        (deferred booking-bridge model)
@@ -332,7 +354,7 @@ rate_limits {
 - **Input Validation**: Zod schema protection on all API routes
 - **`getUser()` Checks**: Server-side token verification in middleware and API routes
 - **Reseller Ownership Checks**: `user_resellers` table ensures proper authorization
-- **Optimistic Locking**: Version-stamped `branding_bag` prevents write conflicts
+- **Optimistic Locking**: `sync_reseller_branding` RPC commits branding atomically via `SELECT...FOR UPDATE` (⚠️ live DB uses the `branding` JSONB column; the legacy `version_stamp`/`branding_bag` optimistic-lock pair is absent in live — see Atomic Branding Commit)
 
 ### Security Perimeter
 - **Two-Step Verification Standard**:
@@ -455,11 +477,15 @@ An active refactor is underway across three phases. See `.kiro/specs/ovg-platfor
 5. **Confirm**: Groq Orpheus → Hannah's voice feedback
 
 #### Atomic Branding Commit
-1. **Read**: Fetch `branding_bag` + `version_stamp` from resellers row
+> ⚠️ **Live mismatch**: the steps below describe the *original* `sync_reseller_branding` design
+> (read `branding_bag` + `version_stamp`, optimistic-lock on `version_stamp`). On the live dev
+> DB those columns are **absent** — migration `20260717_strip_version_stamp_from_sync_reseller_branding.sql`
+> redefined the RPC to drop `version_stamp`/`branding_bag` and write the `resellers.branding`
+> JSONB column instead. The actual live flow: lock row → write `branding` JSONB (primary/secondary/logo) → no version-stamp check.
+1. **Read**: Fetch `resellers.branding` JSONB from the resellers row (legacy `branding_bag`/`version_stamp` absent in live)
 2. **Lock**: `SELECT...FOR UPDATE` locks the row exclusively
-3. **Verify**: Compare `version_stamp` against expected value
-4. **Write**: Atomic update increments `version_stamp` and writes new `branding_bag`
-5. **Resolve**: On conflict, return diff for UI to reconcile
+3. **Write**: Atomic update writes the new `branding` JSONB (no `version_stamp` increment in live)
+4. **Resolve**: On conflict, return diff for UI to reconcile
 
 #### Unified Data Access Layer (DAL)
 - Client deletion logic is centralized in `src/lib/db/reseller-clients.ts` via `deleteResellerClients` and `deleteResellerTenant` helpers, embedding cryptographic `reseller_id` isolation directly into database mutations.
