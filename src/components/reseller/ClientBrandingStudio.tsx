@@ -8,8 +8,6 @@ function triggerHapticFeedback(): void {
     navigator.vibrate(30);
   }
 }
-import Image from 'next/image';
-import { Mic, MicOff } from 'lucide-react';
 import { ColorPicker } from '@/components/reseller/ColorPicker';
 import { useBrandingStudio } from '@/hooks/use-branding-studio';
 import { useVoiceCommand } from '@/hooks/use-voice-command';
@@ -18,8 +16,9 @@ import { createHarmoniousGreeting, VisualStyle } from '@/lib/voice-visual-harmon
 import { isInvalidSlug } from '@/lib/utils/guard';
 import { type IncomingAIAction } from '@/hooks/use-voice-command';
 import { useHannah } from '@/contexts/HannahContext';
-import type { SuggestedAction } from '@/lib/schemas/tenant-config.canonical';
+import type { SuggestedAction, CanonicalBranding } from '@/lib/schemas/tenant-config.canonical';
 import { SuggestedActionsEditor } from '@/components/admin/SuggestedActionsEditor';
+import ChatWidget from '@/components/widget/ChatWidget';
 
 interface ClientWithBranding extends ClientType {
   industry?: string;
@@ -489,59 +488,35 @@ export function ClientBrandingStudio({
 
   /** Shared theme-palette merge engine — used by both SET_COLOR and UPDATE_THEME_COLORS / APPLY_VIBE actions.
    *  Also accepts optional component-scoped blocks (header, footer, widget) that carry
-   *  component-specific properties which override the generic theme values. */
-  /** Compute a luminance value (0-255) from a hex or rgba color string.
-   *  Used to switch text color for contrast safety over dynamic backgrounds.
-   *  Returns a value between 0 (dark) and 255 (light). */
-  const getLuminance = useCallback((color: string): number => {
-    // Extract RGB components from hex (#fff, #ffffff) or rgba/rgb
-    let r = 0, g = 0, b = 0;
-    const hexMatch = color.match(/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
-    if (hexMatch) {
-      r = parseInt(hexMatch[1], 16);
-      g = parseInt(hexMatch[2], 16);
-      b = parseInt(hexMatch[3], 16);
-    } else {
-      const shortHexMatch = color.match(/^#?([a-f\d])([a-f\d])([a-f\d])$/i);
-      if (shortHexMatch) {
-        r = parseInt(shortHexMatch[1] + shortHexMatch[1], 16);
-        g = parseInt(shortHexMatch[2] + shortHexMatch[2], 16);
-        b = parseInt(shortHexMatch[3] + shortHexMatch[3], 16);
-      } else {
-        const rgbaMatch = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
-        if (rgbaMatch) {
-          r = parseInt(rgbaMatch[1], 10);
-          g = parseInt(rgbaMatch[2], 10);
-          b = parseInt(rgbaMatch[3], 10);
-        }
-      }
-    }
-    // Relative luminance using WCAG weights
-    return 0.299 * r + 0.587 * g + 0.114 * b;
-  }, []);
+    *  component-specific properties which override the generic theme values. */
 
-  /** Determines whether text on the chat body should be light or dark for contrast safety.
-   *  When widgetBodyOpacity < 1.0 (transparent/glassmorphic), we check the background color's
-   *  luminance and the transparency level to choose the optimal text color. */
-  const chatBodyTextColor = useMemo<string>(() => {
-    const bg = config.widgetBodyBackground || 'rgba(31, 41, 55, 1.0)';
-    const opacity = config.widgetBodyOpacity ?? 1.0;
-    // When fully opaque or very close, use default white-on-dark text
-    if (opacity >= 0.85) return 'text-white';
-    // When semi-transparent, check luminance for contrast safety
-    const lum = getLuminance(bg);
-    // If the underlying color is light (high luminance) use dark text, otherwise white
-    return lum > 128 ? 'text-gray-900' : 'text-white';
-  }, [config.widgetBodyBackground, config.widgetBodyOpacity, getLuminance]);
-
-  /** Memoized style object for the chat body / message window container.
-   *  When widgetBodyOpacity < 1.0, applies glassmorphic backdrop-filter blur(12px)
-   *  for contrast safety over potentially dynamic backgrounds. */
-  const chatBodyStyle = useMemo<React.CSSProperties>(() => ({
-    backgroundColor: config.widgetBodyBackground || `rgba(31, 41, 55, ${config.widgetBodyOpacity ?? 1})`,
-    backdropFilter: (config.widgetBodyOpacity !== undefined && config.widgetBodyOpacity < 1) ? 'blur(12px)' : 'none',
-    WebkitBackdropFilter: (config.widgetBodyOpacity !== undefined && config.widgetBodyOpacity < 1) ? 'blur(12px)' : 'none',
-  }), [config.widgetBodyBackground, config.widgetBodyOpacity]);
+  const canonicalBranding = useMemo<Partial<CanonicalBranding>>(() => {
+    const backgroundType = config.headerBackgroundType as 'solid' | 'gradient' | 'image';
+    const footerBgType = config.footerBackgroundType as 'solid' | 'gradient' | 'image';
+    return {
+      primaryColor: config.headerBackground,
+      accentColor: config.footerBackground,
+      logoUrl: config.logoUrl || undefined,
+      brandName: config.brandName || undefined,
+      widgetPosition: 'bottom-right',
+      headerConfig: {
+        type: backgroundType,
+        colorStart: config.headerBackground,
+        colorEnd: config.headerBackgroundType === 'gradient' ? config.headerGradientEnd : config.headerBackground,
+        image: config.headerBackgroundType === 'image' ? config.headerImage || null : null,
+        opacity: config.headerOpacity,
+      },
+      footerConfig: {
+        type: footerBgType,
+        colorStart: config.footerBackground,
+        colorEnd: config.footerBackgroundType === 'gradient' ? config.footerGradientEnd : config.footerBackground,
+        image: config.footerBackgroundType === 'image' ? config.footerImage || null : null,
+        opacity: config.footerOpacity,
+      },
+      widgetBodyOpacity: config.widgetBodyOpacity,
+      widgetBodyBackground: config.widgetBodyBackground,
+    };
+  }, [config]);
 
   const handleThemeUpdateEngine = useCallback((theme: Record<string, unknown>) => {
     setConfig(prev => {
@@ -609,15 +584,7 @@ export function ClientBrandingStudio({
    *  which created split-brain save risks. */
   const handleCommit = useCallback(async (): Promise<boolean> => {
     const studioConfig = {
-      branding: {
-        primaryColor: config.headerBackground,
-        accentColor: config.footerBackground,
-        logoUrl: config.logoUrl,
-        brandName: config.brandName,
-        widgetBodyOpacity: config.widgetBodyOpacity,
-        widgetBodyBackground: config.widgetBodyBackground,
-        customCssCode: config.customCssCode,
-      },
+      branding: canonicalBranding,
       features: {
         aiInsightBadge: config.aiInsightBadge,
         aiDesignMirror: config.aiDesignMirror,
@@ -656,7 +623,7 @@ export function ClientBrandingStudio({
       setSaveMessage(`Error: ${errorMessage}`);
       return false;
     }
-  }, [config, clientId, suggestedActions, generatedGreeting]);
+  }, [config, clientId, suggestedActions, generatedGreeting, canonicalBranding]);
 
   // Handle save — uses atomic commit pipeline with version_stamp optimistic locking
   const handleSave = useCallback(async () => {
@@ -958,33 +925,37 @@ export function ClientBrandingStudio({
       if (!response.ok) return;
       const tenant = await response.json();
       const widgetConfig = tenant.widget_config || {};
-      const branding = (widgetConfig.branding || {}) as Partial<BrandingConfig>;
+      const branding = (widgetConfig.branding || {}) as Record<string, unknown>;
+      const headerConfig = (branding.headerConfig as Record<string, unknown> | undefined) || {};
+      const footerConfig = (branding.footerConfig as Record<string, unknown> | undefined) || {};
       const features = (widgetConfig.features || {}) as { aiInsightBadge?: boolean; aiDesignMirror?: boolean; customCss?: boolean; voiceFeaturesEnabled?: boolean; localFallbackAlert?: boolean };
       const aiSettings = (widgetConfig.ai_settings || {}) as { voiceId?: string };
       const theme = (widgetConfig.theme || {}) as Record<string, unknown>;
 
+      const flattenHeaderType = (type: unknown) => ((type as string) === 'gradient' || (type as string) === 'solid' || (type as string) === 'image') ? type as 'solid' | 'gradient' | 'image' : 'solid';
+      const flattenFooterType = (type: unknown) => ((type as string) === 'gradient' || (type as string) === 'solid' || (type as string) === 'image') ? type as 'solid' | 'gradient' | 'image' : 'solid';
+
       setConfig(prev => ({
         ...prev,
-        headerBackground: (branding.headerBackground || theme.primary || prev.headerBackground) as string,
-        headerBackgroundType: (branding.headerBackgroundType || theme.backgroundType || prev.headerBackgroundType) as 'solid' | 'gradient' | 'image',
-        headerGradientStart: (branding.headerGradientStart || theme.primaryGradientStart || prev.headerGradientStart) as string,
-        headerGradientEnd: (branding.headerGradientEnd || theme.primaryGradientEnd || prev.headerGradientEnd) as string,
-        headerOpacity: (branding.headerOpacity ?? theme.opacity ?? prev.headerOpacity) as number,
-        footerBackground: (branding.footerBackground || theme.secondary || prev.footerBackground) as string,
-        footerBackgroundType: (branding.footerBackgroundType || theme.backgroundType || prev.footerBackgroundType) as 'solid' | 'gradient' | 'image',
-        footerGradientStart: (branding.footerGradientStart || theme.secondaryGradientStart || prev.footerGradientStart) as string,
-        footerGradientEnd: (branding.footerGradientEnd || theme.secondaryGradientEnd || prev.footerGradientEnd) as string,
-        footerOpacity: (branding.footerOpacity ?? theme.opacity ?? prev.footerOpacity) as number,
-        logoUrl: (branding.logoUrl || theme.logoUrl || prev.logoUrl) as string,
+        headerBackground: (headerConfig.colorStart as string) || (branding.headerBackground as string) || (theme.primary as string) || prev.headerBackground,
+        headerBackgroundType: flattenHeaderType(headerConfig.type) || flattenHeaderType(branding.headerBackgroundType) || (theme.backgroundType as string) || prev.headerBackgroundType,
+        headerGradientStart: (headerConfig.colorStart as string) || (branding.headerGradientStart as string) || (theme.primaryGradientStart as string) || prev.headerGradientStart,
+        headerGradientEnd: (headerConfig.colorEnd as string) || (branding.headerGradientEnd as string) || (theme.primaryGradientEnd as string) || prev.headerGradientEnd,
+        headerOpacity: (headerConfig.opacity ?? (branding.headerOpacity as number | undefined) ?? (theme.opacity as number | undefined) ?? prev.headerOpacity) as number,
+        footerBackground: (footerConfig.colorStart as string) || (branding.footerBackground as string) || (theme.secondary as string) || prev.footerBackground,
+        footerBackgroundType: flattenFooterType(footerConfig.type) || flattenFooterType(branding.footerBackgroundType) || (theme.backgroundType as string) || prev.footerBackgroundType,
+        footerGradientStart: (footerConfig.colorStart as string) || (branding.footerGradientStart as string) || (theme.secondaryGradientStart as string) || prev.footerGradientStart,
+        footerGradientEnd: (footerConfig.colorEnd as string) || (branding.footerGradientEnd as string) || (theme.secondaryGradientEnd as string) || prev.footerGradientEnd,
+        footerOpacity: (footerConfig.opacity ?? (branding.footerOpacity as number | undefined) ?? (theme.opacity as number | undefined) ?? prev.footerOpacity) as number,
+        logoUrl: (branding.logoUrl as string) || (theme.logoUrl as string) || prev.logoUrl,
         aiInsightBadge: (features.aiInsightBadge ?? prev.aiInsightBadge) as boolean,
         aiDesignMirror: (features.aiDesignMirror ?? prev.aiDesignMirror) as boolean,
         customCss: (features.customCss ?? prev.customCss) as boolean,
         voiceFeaturesEnabled: (features.voiceFeaturesEnabled ?? prev.voiceFeaturesEnabled) as boolean,
         localFallbackAlert: (features.localFallbackAlert ?? prev.localFallbackAlert) as boolean,
         defaultTtsVoice: (aiSettings.voiceId || prev.defaultTtsVoice) as string,
-        // ── Widget Body (Chat Window) Re-hydration ─────────────────────────
-        widgetBodyOpacity: (branding.widgetBodyOpacity ?? prev.widgetBodyOpacity) as number,
-        widgetBodyBackground: (branding.widgetBodyBackground || prev.widgetBodyBackground) as string,
+        widgetBodyOpacity: (branding.widgetBodyOpacity as number | undefined) ?? prev.widgetBodyOpacity,
+        widgetBodyBackground: (branding.widgetBodyBackground as string) || prev.widgetBodyBackground,
       }));
 
       // NOTE: DO NOT call tts() here for AI response text.
@@ -1085,18 +1056,6 @@ export function ClientBrandingStudio({
 
   const updateConfig = (key: keyof BrandingConfig, value: string | number | boolean) => {
     setConfig((prev) => ({ ...prev, [key]: value }));
-  };
-
-  const getHeaderBackground = () => {
-    if (config.headerBackgroundType === 'image') return config.headerImage || '#0097b2';
-    if (config.headerBackgroundType === 'gradient') return `linear-gradient(135deg, ${config.headerGradientStart}, ${config.headerGradientEnd})`;
-    return config.headerBackground;
-  };
-
-  const getFooterBackground = () => {
-    if (config.footerBackgroundType === 'image') return config.footerImage || '#050a14';
-    if (config.footerBackgroundType === 'gradient') return `linear-gradient(135deg, ${config.footerGradientStart}, ${config.footerGradientEnd})`;
-    return config.footerBackground;
   };
 
   // Feature locking based on plan tier
@@ -2134,106 +2093,23 @@ export function ClientBrandingStudio({
         </div>
 
         <div className="relative rounded-lg overflow-hidden h-[440px]">
-          {/* Widget Preview */}
-          <div className="absolute inset-0 flex flex-col">
-            {/* Header */}
-            <div
-              className="p-4 flex items-center gap-3 relative backdrop-blur-lg"
-              style={{
-                background: config.headerBackgroundType === 'image' && config.headerImage?.startsWith('http')
-                  ? `url(${config.headerImage}) center/cover no-repeat`
-                  : getHeaderBackground(),
-                opacity: config.headerBackgroundType !== 'solid' ? config.headerOpacity : 1,
-              }}
-            >
-              {config.headerBackgroundType === 'image' && (
-                <div
-                  className="absolute inset-0"
-                  style={{ backgroundColor: `rgba(0, 0, 0, ${1 - config.headerOpacity})` }}
-                />
-              )}
-              <div className="relative z-10 flex items-center gap-3">
-                {config.logoUrl && config.logoUrl.startsWith('http') ? (
-                  <div className="relative w-8 h-8 rounded overflow-hidden">
-                    <Image
-                      src={config.logoUrl}
-                      alt="Logo"
-                      fill
-                      className="rounded"
-                      style={{ objectFit: 'cover' }}
-                      unoptimized
-                    />
-                  </div>
-                ) : (
-                  <div className="w-8 h-8 rounded bg-white/20 flex items-center justify-center text-white text-xs font-bold">
-                    AI
-                  </div>
-                )}
-                <div className="text-white font-semibold text-sm drop-shadow-md">Chat Widget</div>
-              </div>
-            </div>
-
-            {/* Content — Chat Body / Message Window */}
-            {/* Glassmorphic rendering: When widgetBodyOpacity < 1.0, applies
-                backdrop-filter blur(12px) and uses luminance-aware text color
-                for contrast safety over dynamic backgrounds. */}
-            <div
-              className={`flex-1 overflow-y-auto p-4 ${chatBodyTextColor}`}
-              style={chatBodyStyle}
-            >
-              <div className="space-y-3">
-                <div className="flex justify-end">
-                  <div className="bg-[#0097b2] text-white px-4 py-2 rounded-lg max-w-[80%] text-sm">
-                    Hello! How can I help you today?
-                  </div>
-                </div>
-                <div className="flex justify-start">
-                  <div className="bg-white/20 text-white px-4 py-2 rounded-lg max-w-[80%] text-sm">
-                    I have a question about your services.
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div
-              className="p-3 relative backdrop-blur-lg"
-              style={{
-                background: config.footerBackgroundType === 'image' && config.footerImage?.startsWith('http')
-                  ? `url(${config.footerImage}) center/cover no-repeat`
-                  : getFooterBackground(),
-                opacity: config.footerBackgroundType !== 'solid' ? config.footerOpacity : 1,
-              }}
-            >
-              {config.footerBackgroundType === 'image' && (
-                <div
-                  className="absolute inset-0"
-                  style={{ backgroundColor: `rgba(0, 0, 0, ${1 - config.footerOpacity})` }}
-                />
-              )}
-              <div className="relative z-10 flex items-center justify-between gap-2 px-2">
-                <div className="flex-1 text-white/60 text-xs text-center drop-shadow-md">
-                  Powered by ZEEDER AI
-                </div>
-                {/* Live mic preview — mirrors the production ChatWidget. Hidden
-                    instantly when the reseller disables Voice Features. */}
-                {config.voiceFeaturesEnabled && (
-                  <button
-                    type="button"
-                    disabled
-                    aria-hidden="true"
-                    title="Client mic (preview)"
-                    className="shrink-0 p-1.5 rounded-full bg-white/10 text-pink-400"
-                  >
-                    {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                  </button>
-                )}
-              </div>
-            </div>
-            {config.customCss && config.customCssCode && (
-              <style dangerouslySetInnerHTML={{ __html: config.customCssCode }} />
-            )}
-          </div>
+          <ChatWidget
+            tenantId=""
+            branding={canonicalBranding}
+            preview
+            liveDraft={{
+              brandName: config.brandName,
+              personaMode: 'sales',
+              systemPrompt: '',
+            }}
+            greeting={generatedGreeting}
+            suggestedActions={suggestedActions}
+            voiceFeaturesEnabled={config.voiceFeaturesEnabled}
+            features={{
+              voiceFeaturesEnabled: config.voiceFeaturesEnabled,
+              customCss: config.customCss,
+            }}
+          />
         </div>
 
         {/* Guided Onboarding Overlay */}

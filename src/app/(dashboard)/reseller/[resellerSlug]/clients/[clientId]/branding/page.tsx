@@ -108,30 +108,31 @@ export default function ClientBrandingPage() {
   }, [resellerSlug, router]);
 
   // Extract features and branding from the tenant's widget_config for toggle hydration.
-  // This ensures that both functional flags and design tokens are cleanly bound
-  // into the initialization context from persistent server records — eliminating
-  // hardcoded UI drift on browser refresh.
-  //
-  // widget_config.branding contains the canonical visual profile (primaryColor,
-  // accentColor, logoUrl, widgetBodyOpacity, widgetBodyBackground) written by the
-  // sync_tenant_config RPC.
-  // widget_config.features contains the functional flag matrix (aiInsightBadge,
-  // aiDesignMirror, customCss).
+  // Flattens canonical nested headerConfig/footerConfig into the flat BrandingConfig
+  // shape expected by ClientBrandingStudio. Supports legacy flat fields as fallback.
   const initialBrandingConfig = clientData
     ? (() => {
         const widgetConfig = (clientData as Record<string, unknown>).widget_config as Record<string, unknown> | undefined;
         const branding = (widgetConfig?.branding || {}) as Record<string, unknown>;
+        const headerConfig = (branding.headerConfig as Record<string, unknown> | undefined) || {};
+        const footerConfig = (branding.footerConfig as Record<string, unknown> | undefined) || {};
         const features = (widgetConfig?.features || {}) as Record<string, unknown> | undefined;
         const suggestedActionsRaw = (widgetConfig?.suggestedActions as unknown[] | undefined) ?? [];
 
         return {
           branding: {
-            headerBackground: (branding.primaryColor as string) || clientData.branding_colors?.primary || '#0097b2',
-            footerBackground: (branding.accentColor as string) || clientData.branding_colors?.secondary || '#050a14',
-            headerImage: clientData.custom_assets?.header_url || '',
-            footerImage: clientData.custom_assets?.footer_url || '',
+            headerBackground: (headerConfig.colorStart as string) || (branding.primaryColor as string) || clientData.branding_colors?.primary || '#0097b2',
+            headerBackgroundType: (((headerConfig.type as string) === 'gradient' || (headerConfig.type as string) === 'solid' || (headerConfig.type as string) === 'image') ? headerConfig.type : 'solid') as 'solid' | 'gradient' | 'image',
+            headerGradientStart: (headerConfig.colorStart as string) || (branding.headerGradientStart as string) || '#0097b2',
+            headerGradientEnd: (headerConfig.colorEnd as string) || (branding.headerGradientEnd as string) || '#226683',
+            headerImage: (headerConfig.image as string) || clientData.custom_assets?.header_url || '',
+            footerBackground: (footerConfig.colorStart as string) || (branding.accentColor as string) || clientData.branding_colors?.secondary || '#050a14',
+            footerBackgroundType: (((footerConfig.type as string) === 'gradient' || (footerConfig.type as string) === 'solid' || (footerConfig.type as string) === 'image') ? footerConfig.type : 'solid') as 'solid' | 'gradient' | 'image',
+            footerGradientStart: (footerConfig.colorStart as string) || (branding.footerGradientStart as string) || '#050a14',
+            footerGradientEnd: (footerConfig.colorEnd as string) || (branding.footerGradientEnd as string) || '#1a1a2e',
+            footerImage: (footerConfig.image as string) || clientData.custom_assets?.footer_url || '',
             logoUrl: (branding.logoUrl as string) || '',
-            widgetBodyOpacity: (branding.widgetBodyOpacity as number) ?? 1.0,
+            widgetBodyOpacity: (branding.widgetBodyOpacity as number | undefined) ?? 1.0,
             widgetBodyBackground: (branding.widgetBodyBackground as string) || 'rgba(31, 41, 55, 1.0)',
           },
           features: features as {

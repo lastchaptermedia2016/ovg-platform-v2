@@ -158,14 +158,32 @@ export default function ResellerBrandingPage() {
         const tenant: TenantRecord = await response.json();
         if (!isActive) return;
 
-        // Map widget_config.branding and features into InitialConfig shape
-        const widgetConfig = tenant.widget_config || {};
-        const branding = widgetConfig.branding as Record<string, unknown> | undefined;
+        const widgetConfig = (tenant.widget_config || {}) as Record<string, unknown>;
+        const branding = (widgetConfig.branding || {}) as Record<string, unknown>;
+        const headerConfig = (branding.headerConfig as Record<string, unknown> | undefined) || {};
+        const footerConfig = (branding.footerConfig as Record<string, unknown> | undefined) || {};
         const features = widgetConfig.features as { aiInsightBadge?: boolean; aiDesignMirror?: boolean; customCss?: boolean } | undefined;
 
         setIntegrationState(readBookingIntegrationState(tenant));
         setHydratedConfig({
-          branding: branding || {},
+          branding: {
+            headerBackground: (headerConfig.colorStart as string) || (branding.primaryColor as string) || (widgetConfig.theme as Record<string, unknown> | undefined)?.primary as string || '#0097b2',
+            headerBackgroundType: (((headerConfig.type as string) === 'gradient' || (headerConfig.type as string) === 'solid' || (headerConfig.type as string) === 'image') ? headerConfig.type : 'solid') as 'solid' | 'gradient' | 'image',
+            headerGradientStart: (headerConfig.colorStart as string) || (branding.headerGradientStart as string) || '#0097b2',
+            headerGradientEnd: (headerConfig.colorEnd as string) || (branding.headerGradientEnd as string) || '#226683',
+            headerImage: (headerConfig.image as string) || '',
+            headerOpacity: (headerConfig.opacity as number | undefined) ?? (branding.headerOpacity as number | undefined) ?? 0.75,
+            footerBackground: (footerConfig.colorStart as string) || (branding.accentColor as string) || (widgetConfig.theme as Record<string, unknown> | undefined)?.secondary as string || '#050a14',
+            footerBackgroundType: (((footerConfig.type as string) === 'gradient' || (footerConfig.type as string) === 'solid' || (footerConfig.type as string) === 'image') ? footerConfig.type : 'solid') as 'solid' | 'gradient' | 'image',
+            footerGradientStart: (footerConfig.colorStart as string) || (branding.footerGradientStart as string) || '#050a14',
+            footerGradientEnd: (footerConfig.colorEnd as string) || (branding.footerGradientEnd as string) || '#1a1a2e',
+            footerImage: (footerConfig.image as string) || '',
+            footerOpacity: (footerConfig.opacity as number | undefined) ?? (branding.footerOpacity as number | undefined) ?? 0.75,
+            logoUrl: (branding.logoUrl as string) || '',
+            widgetBodyOpacity: (branding.widgetBodyOpacity as number | undefined) ?? 1.0,
+            widgetBodyBackground: (branding.widgetBodyBackground as string) || 'rgba(31, 41, 55, 1.0)',
+            brandName: (branding.brandName as string) || '',
+          },
           features: features || {},
         });
 
