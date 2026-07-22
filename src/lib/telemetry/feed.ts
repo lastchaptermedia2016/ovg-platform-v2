@@ -33,7 +33,7 @@ export interface ChatMessageRow {
   id: string;
   tenant_id: string;
   sender_id?: string | null;
-  content: string;
+  message: string;
   created_at: string;
 }
 
@@ -93,8 +93,8 @@ export function normalizeActionLog(row: ActionLogRow): FeedEntry {
   };
 }
 
-/** Parse the JSON-encoded `chat_messages.content` into a User/AI pair. */
-export function parseChatContent(content: string): {
+/** Parse the JSON-encoded `chat_messages.message` into a User/AI pair. */
+export function parseChatMessageContent(content: string): {
   user: string;
   ai: string;
   surface?: string;
@@ -120,7 +120,7 @@ export function parseChatContent(content: string): {
 
 /** Normalize a raw `chat_messages` row into a feed entry. */
 export function normalizeChatMessage(row: ChatMessageRow): FeedEntry {
-  const conversation = parseChatContent(row.content);
+  const conversation = parseChatMessageContent(row.message);
   const scope: FeatureScope =
     conversation.surface === 'reseller' ? 'reseller' : 'client';
   return {

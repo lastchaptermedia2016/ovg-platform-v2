@@ -71,7 +71,7 @@ export default function LiveTelemetryFeed({
           .limit(limit),
         supabase
           .from('chat_messages')
-          .select('id, tenant_id, sender_id, content, created_at')
+          .select('id, tenant_id, sender_id, message, created_at')
           .eq('tenant_id', tenantId)
           .order('created_at', { ascending: false })
           .limit(limit),

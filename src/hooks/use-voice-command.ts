@@ -179,10 +179,8 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
   const broadcastStatus = useCallback((status: "interacting" | "processing" | "online") => {
     const channel = channelRef.current;
     if (!channel) return;
-    channel.send({
-      type: "broadcast",
-      event: "status_change",
-      payload: { status, timestamp: new Date().toISOString() },
+    void channel.httpSend("status_change", { status, timestamp: new Date().toISOString() }).catch(() => {
+      /* best-effort broadcast */
     });
   }, []);
 
@@ -590,14 +588,12 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
 
       if (parsedResponse?.actionType === 'SYSTEM_HELP') {
         const channel = channelRef.current;
-        if (channel) {
-          try {
-            channel.send({
-              type: 'broadcast',
-              event: 'intent-command',
-              payload: { intent: 'list_capabilities', tenantId: currentTtsContext.tenantId },
-            });
-            window.dispatchEvent(new MessageEvent('message', {
+      if (channel) {
+        try {
+          void channel.httpSend('intent-command', { intent: 'list_capabilities', tenantId: currentTtsContext.tenantId }).catch(() => {
+            /* best-effort broadcast */
+          });
+          window.dispatchEvent(new MessageEvent('message', {
               data: JSON.stringify({ type: 'hannah:intent-command', data: { intent: 'list_capabilities', tenantId: currentTtsContext.tenantId } }),
             }));
           } catch { /* no-op */ }

@@ -40,6 +40,8 @@ interface InitialConfig {
   defaultTtsVoice?: string;
   /** Dynamic quick-action pills shown above the widget chat input. */
   suggestedActions?: SuggestedAction[];
+  /** Pre-configured greeting text loaded from widget_config. */
+  greeting?: string;
 }
 
 interface ClientBrandingStudioProps {
@@ -184,8 +186,8 @@ export function ClientBrandingStudio({
     voiceFeaturesEnabled: initialConfig?.features?.voiceFeaturesEnabled ?? true,
     localFallbackAlert: initialConfig?.features?.localFallbackAlert ?? false,
     defaultTtsVoice: initialConfig?.defaultTtsVoice || 'hannah',
-    widgetBodyOpacity: 1.0,
-    widgetBodyBackground: 'rgba(31, 41, 55, 1.0)',
+    widgetBodyOpacity: initialConfig?.branding?.widgetBodyOpacity ?? 1.0,
+    widgetBodyBackground: initialConfig?.branding?.widgetBodyBackground || 'rgba(31, 41, 55, 1.0)',
   });
 
   const [suggestedActions, setSuggestedActions] = useState<SuggestedAction[]>(
@@ -209,7 +211,7 @@ export function ClientBrandingStudio({
   const [showGuidedSetup, setShowGuidedSetup] = useState(false);
 
   // Voice-Visual Harmony State
-  const [generatedGreeting, setGeneratedGreeting] = useState<string>('');
+  const [generatedGreeting, setGeneratedGreeting] = useState<string>(initialConfig?.greeting || '');
   const [greetingExplanation, setGreetingExplanation] = useState<string>('');
   const [showGreetingPreview, setShowGreetingPreview] = useState(false);
 
@@ -296,6 +298,11 @@ export function ClientBrandingStudio({
       return {
         ...prev,
         headerBackground: currentStaging.primaryColor,
+        // Preserve gradient type and end color — only override the base color,
+        // not the full gradient config (prevents solid-default clobber).
+        ...(prev.headerBackgroundType !== 'solid' && prev.headerGradientEnd
+          ? {}
+          : { footerBackground: currentStaging.accentColor }),
         footerBackground: currentStaging.accentColor,
         logoUrl: currentStaging.logoUrl || prev.logoUrl,
       };
@@ -490,6 +497,12 @@ export function ClientBrandingStudio({
    *  Also accepts optional component-scoped blocks (header, footer, widget) that carry
     *  component-specific properties which override the generic theme values. */
 
+  const buildLayerValue = (type: string, start: string, end: string, image: string): string | null => {
+    if (type === 'gradient') return `linear-gradient(135deg, ${start}, ${end})`;
+    if (type === 'image') return image || null;
+    return start;
+  };
+
   const canonicalBranding = useMemo<Partial<CanonicalBranding>>(() => {
     const backgroundType = config.headerBackgroundType as 'solid' | 'gradient' | 'image';
     const footerBgType = config.footerBackgroundType as 'solid' | 'gradient' | 'image';
@@ -499,6 +512,24 @@ export function ClientBrandingStudio({
       logoUrl: config.logoUrl || undefined,
       brandName: config.brandName || undefined,
       widgetPosition: 'bottom-right',
+      header: {
+        type: backgroundType,
+        value: buildLayerValue(backgroundType, config.headerBackground, config.headerGradientEnd, config.headerImage),
+        opacity: config.headerOpacity,
+        backdropBlur: false,
+      },
+      footer: {
+        type: footerBgType,
+        value: buildLayerValue(footerBgType, config.footerBackground, config.footerGradientEnd, config.footerImage),
+        opacity: config.footerOpacity,
+        backdropBlur: false,
+      },
+      widgetBody: {
+        type: 'solid',
+        value: config.widgetBodyBackground,
+        opacity: config.widgetBodyOpacity,
+        backdropBlur: false,
+      },
       headerConfig: {
         type: backgroundType,
         colorStart: config.headerBackground,
@@ -957,6 +988,8 @@ export function ClientBrandingStudio({
         widgetBodyOpacity: (branding.widgetBodyOpacity as number | undefined) ?? prev.widgetBodyOpacity,
         widgetBodyBackground: (branding.widgetBodyBackground as string) || prev.widgetBodyBackground,
       }));
+      setGeneratedGreeting((widgetConfig.greeting as string) || '');
+      setSuggestedActions((widgetConfig.suggestedActions as SuggestedAction[]) || []);
 
       // NOTE: DO NOT call tts() here for AI response text.
       // The internal pipeline in useVoiceCommand (processAudioPipeline) already
@@ -970,6 +1003,39 @@ export function ClientBrandingStudio({
   // tts intentionally excluded from deps — the AI response text is spoken by the
   // internal pipeline (processAudioPipeline), not by this standalone callback.
   }, [clientId, handleThemeUpdateEngine]);
+
+  // Hydrate greeting and suggested actions from persisted widget_config on initial load / client switch
+  const hydratedClientIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!clientId || hydratedClientIdRef.current === clientId) return;
+    hydratedClientIdRef.current = clientId;
+
+    let isActive = true;
+    async function hydrate() {
+      try {
+        const response = await fetch(`/api/tenants/${clientId}`);
+        if (!response.ok) return;
+        const tenant = await response.json();
+        if (!isActive) return;
+        const widgetConfig = tenant.widget_config || {};
+
+        const greeting = widgetConfig.greeting as string | undefined;
+        if (greeting) {
+          setGeneratedGreeting(greeting);
+        }
+
+        const sa = widgetConfig.suggestedActions as SuggestedAction[] | undefined;
+        if (sa && sa.length > 0) {
+          setSuggestedActions(sa);
+        }
+      } catch (err) {
+        console.error('[ClientBrandingStudio] Initial widget_config hydration failed:', err);
+      }
+    }
+
+    hydrate();
+    return () => { isActive = false; };
+  }, [clientId, setGeneratedGreeting, setSuggestedActions]);
 
   // ════════════════════════════════════════════════════════════════════
   // Stable Initialization: Voice pipeline options are memoized so that

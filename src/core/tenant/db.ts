@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { TenantSchema, type Tenant } from "@/types/database";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type { Tenant };
 
@@ -13,30 +14,34 @@ export function safeParseTenant(data: unknown): Tenant | null {
   return null;
 }
 
-export async function getTenantBySlug(slug: string): Promise<Tenant | null> {
+export async function getTenantBySlug(
+  slug: string,
+  supabaseClient?: SupabaseClient,
+): Promise<Tenant | null> {
   try {
-    const supabase = await createClient();
+    const supabase = supabaseClient ?? (await createClient());
 
-    // Try slug column first for human-readable identifiers
-    let { data, error } = await supabase
+    const tenantResult = await supabase
       .from("tenants")
       .select("*")
-      .eq("slug", slug)
+      .eq("tenant_id", slug)
       .maybeSingle();
 
-    // Fallback: the input may be a tenant_id UUID rather than a slug
+    let data = tenantResult.data;
+    let error = tenantResult.error;
+
     if (error || !data) {
-      const fallback = await supabase
+      const idFallback = await supabase
         .from("tenants")
         .select("*")
-        .eq("tenant_id", slug)
+        .eq("id", slug)
         .maybeSingle();
-      data = fallback.data;
-      error = fallback.error;
+      data = idFallback.data;
+      error = idFallback.error;
     }
 
     if (error) {
-      console.error(`Error fetching tenant by slug/tenant_id "${slug}":`, error);
+      console.error(`Error fetching tenant by tenant_id/id "${slug}":`, error);
       return null;
     }
 
@@ -44,11 +49,10 @@ export async function getTenantBySlug(slug: string): Promise<Tenant | null> {
       return null;
     }
 
-    // Use safeParseTenant instead of direct .parse()
     const validatedTenant = safeParseTenant(data);
     return validatedTenant;
   } catch (error) {
-    console.error(`Unexpected error fetching tenant by slug/tenant_id "${slug}"`, error);
+    console.error(`Unexpected error fetching tenant "${slug}"`, error);
     return null;
   }
 }

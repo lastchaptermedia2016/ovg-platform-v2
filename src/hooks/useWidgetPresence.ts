@@ -48,10 +48,8 @@ export function useWidgetPresence(
     };
 
     const heartbeat = () => {
-      channel.send({
-        type: "broadcast",
-        event: "heartbeat",
-        payload: { timestamp: Date.now() },
+      void channel.httpSend("heartbeat", { timestamp: Date.now() }).catch(() => {
+        /* best-effort heartbeat */
       });
     };
 

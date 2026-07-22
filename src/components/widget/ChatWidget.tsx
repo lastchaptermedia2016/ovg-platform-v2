@@ -394,7 +394,7 @@ const ChatWidget = ({
 
       localStorage.setItem(chatHistoryKey, JSON.stringify(newMsgs));
 
-      void fetch('/api/chat/send', {
+      void fetch('/api/chat/send-anon', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tenantId, message: userInputText }),
@@ -867,11 +867,9 @@ const ChatWidget = ({
               >
                 {voiceEnabled ? <Volume2 className="h-4 w-4 text-white" /> : <VolumeX className="h-4 w-4 text-white" />}
               </Button>
-              {!preview && (
-                <Button className="h-8 w-8 rounded-full text-white shrink-0" style={{ backgroundColor: "var(--w-primary, #0097b2)" }} onClick={() => setShowResetConfirm(true)}>
-                  <RefreshCw className="h-4 w-4 text-white" />
-                </Button>
-              )}
+              <Button className="h-8 w-8 rounded-full text-white shrink-0" style={{ backgroundColor: "var(--w-primary, #0097b2)" }} onClick={() => setShowResetConfirm(true)}>
+                <RefreshCw className="h-4 w-4 text-white" />
+              </Button>
               <Button className="h-8 w-8 rounded-full text-white shrink-0" style={{ backgroundColor: "var(--w-primary, #0097b2)" }} onClick={() => setIsOpen(false)}>
                 <X className="h-4 w-4 text-white" />
               </Button>

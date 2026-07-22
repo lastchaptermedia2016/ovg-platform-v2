@@ -40,6 +40,24 @@ export async function middleware(request: NextRequest) {
     }
   }
 
+  // 1.5. Centralized Identity Gate: Protect /client/dashboard/* routes
+  if (pathname.startsWith("/client/dashboard/")) {
+    try {
+      const supabase = await createClient();
+      const { data: { user }, error } = await supabase.auth.getUser();
+
+      if (!user || error) {
+        return NextResponse.redirect(new URL('/client-auth', request.url));
+      }
+
+      const response = NextResponse.next();
+      response.headers.set("x-user-id", user.id);
+      return response;
+    } catch {
+      return NextResponse.redirect(new URL('/client-auth', request.url));
+    }
+  }
+
   // 2. Surgical Strike: Only process paths starting with /widget
   if (pathname.startsWith("/widget/")) {
     const parts = pathname.split("/");
@@ -67,5 +85,6 @@ export const config = {
     "/reseller/:path*",
     "/widget/:path*",
     "/api/chat/:path*",
+    "/client/dashboard/:path*",
   ],
 };

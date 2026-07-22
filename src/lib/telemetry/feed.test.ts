@@ -8,7 +8,7 @@ import {
   deriveActionScope,
   normalizeActionLog,
   normalizeChatMessage,
-  parseChatContent,
+  parseChatMessageContent,
   mergeFeedEntries,
   formatFeedTimestamp,
   type ActionLogRow,
@@ -34,7 +34,7 @@ function makeChat(overrides: Partial<ChatMessageRow> = {}): ChatMessageRow {
   return {
     id: 'c1',
     tenant_id: 't1',
-    content: JSON.stringify({
+    message: JSON.stringify({
       user: 'Hello',
       assistant: { actionType: 'SYSTEM_UPDATE_BRANDING', summary: 'Hi there!', surface: 'client' },
     }),
@@ -43,9 +43,9 @@ function makeChat(overrides: Partial<ChatMessageRow> = {}): ChatMessageRow {
   };
 }
 
-describe('parseChatContent', () => {
+describe('parseChatMessageContent', () => {
   it('parses the JSON-encoded user/assistant pair', () => {
-    const result = parseChatContent(
+    const result = parseChatMessageContent(
       JSON.stringify({
         user: 'Book a demo',
         assistant: { actionType: 'SYSTEM_UPDATE_BRANDING', summary: 'On it!', surface: 'client' },
@@ -55,7 +55,7 @@ describe('parseChatContent', () => {
   });
 
   it('falls back to the raw text when content is not JSON', () => {
-    expect(parseChatContent('just a string')).toEqual({ user: 'just a string', ai: '' });
+    expect(parseChatMessageContent('just a string')).toEqual({ user: 'just a string', ai: '' });
   });
 });
 
@@ -102,7 +102,7 @@ describe('normalizeChatMessage', () => {
   it('honors a reseller surface inside the assistant payload', () => {
     const entry = normalizeChatMessage(
       makeChat({
-        content: JSON.stringify({
+        message: JSON.stringify({
           user: 'u',
           assistant: { actionType: 'X', summary: 'a', surface: 'reseller' },
         }),

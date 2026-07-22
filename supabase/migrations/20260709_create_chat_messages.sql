@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   sender_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  content TEXT NOT NULL,
+  message TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc', now())
 );
 
@@ -40,4 +40,6 @@ CREATE POLICY "Users can insert own chat messages" ON chat_messages
 COMMENT ON TABLE chat_messages IS 'Real-time chat messages between a client and their tenant';
 COMMENT ON COLUMN chat_messages.tenant_id IS 'Tenant the conversation belongs to';
 COMMENT ON COLUMN chat_messages.sender_id IS 'auth.users id of the message author';
-COMMENT ON COLUMN chat_messages.content IS 'Message body';
+COMMENT ON COLUMN chat_messages.message IS 'Message body';
+
+ALTER PUBLICATION supabase_realtime ADD TABLE chat_messages;

@@ -78,13 +78,13 @@ export async function persistChatMessage(
   response: { actionType: string; summary: string }
 ): Promise<void> {
   if (!tenantId) return;
-  try {
+    try {
     await supabase
       .from('chat_messages')
       .insert({
         tenant_id: tenantId,
         sender_id: userId,
-        content: JSON.stringify({
+        message: JSON.stringify({
           user: text,
           assistant: {
             actionType: response.actionType,

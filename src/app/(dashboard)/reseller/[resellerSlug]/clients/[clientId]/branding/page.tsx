@@ -118,6 +118,7 @@ export default function ClientBrandingPage() {
         const footerConfig = (branding.footerConfig as Record<string, unknown> | undefined) || {};
         const features = (widgetConfig?.features || {}) as Record<string, unknown> | undefined;
         const suggestedActionsRaw = (widgetConfig?.suggestedActions as unknown[] | undefined) ?? [];
+        const greetingRaw = (widgetConfig?.greeting as string | undefined) ?? '';
 
         return {
           branding: {
@@ -141,6 +142,7 @@ export default function ClientBrandingPage() {
             customCss?: boolean;
           } | undefined,
           suggestedActions: suggestedActionsRaw as SuggestedAction[],
+          greeting: greetingRaw,
         };
       })()
     : {};

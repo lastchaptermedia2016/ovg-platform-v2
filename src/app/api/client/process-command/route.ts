@@ -970,6 +970,7 @@ async function runSemanticFallback(
         businessName: previewDraft.brandName,
       },
       memories,
+      isAnon ? 'public' : 'client',
     );
 
     // ── Dynamic integration tool injection ──────────────────────────
