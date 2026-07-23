@@ -31,11 +31,9 @@ interface WidgetConfig {
 }
 
 const defaultConfig: WidgetConfig = {
-  logo: "/images/omnivergeglobal.svg",
-  brandName: "Omniverge Global",
   primaryColor: "#0097b2",
   aiName: "Assistant",
-  greeting: "Hi there! I'm OVG, the AI concierge for Omniverge Global. We help businesses like yours grow smarter using strategic marketing and AI. What brings you to our site today?",
+  greeting: "Hi there! How can I help you today?",
   peekText: "Ready to see the future of AI-powered business?",
   syncBadgeText: "VIP BOOKING SECURED • SYNCED TO SANCTUARY",
   phone: "27760330046",
@@ -148,11 +146,20 @@ const ChatWidget = ({
   const [previewInterim, setPreviewInterim] = useState("");
 
   const greetedRef = useRef(false);
+
+  // ── Brand Identity (strict precedence, no hardcoded leak) ──────────
+  // 1. branding prop (canonical studio config)
+  // 2. Generic placeholder when branding exists but fields are empty
+  // 3. "Omniverge Global" legacy fallback ONLY when branding prop is absent
+  const displayBrandName =
+    branding?.brandName ??
+    (branding ? "AI Assistant" : "Omniverge Global");
+  const displayLogoUrl = branding?.logoUrl ?? (!branding ? "/images/omnivergeglobal.svg" : null);
   const chatHistoryKey = `ovgweb_chat_messages_${tenantId}`;
   const previewRef = useRef(preview);
 
   const [messages, setMessages] = useState<WidgetMessage[]>(() => {
-    const effectiveGreeting = greeting ?? defaultConfig.greeting ?? "";
+    const effectiveGreeting = greeting || (defaultConfig.greeting ?? "");
     if (preview) {
       const now = Date.now();
       return [
@@ -814,18 +821,24 @@ const ChatWidget = ({
           {/* Header */}
           <div className="relative widget-header p-5 flex justify-between items-center overflow-hidden">
             <div className="absolute inset-0 bg-black/40" />
-            <div className="relative flex items-center gap-3">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={branding?.logoUrl || config.logo || config.logoUrl || "/images/omnivergeglobal.svg"}
-                alt={branding?.brandName || config.brandName || "Brand"}
-                width={40}
-                height={40}
-                className="object-contain"
-              />
-              <div>
-                <h3 className="font-semibold text-white text-sm">{branding?.brandName || config.brandName || "Omniverge Global"}</h3>
-                <div className="flex items-center gap-1.5">
+              <div className="relative flex items-center gap-3">
+                {displayLogoUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- Dynamic third-party logo URL; next/image remotePatterns cannot be configured for arbitrary user-provided domains in preview mode.
+                  <img
+                    src={displayLogoUrl}
+                    alt={displayBrandName}
+                    width={40}
+                    height={40}
+                    className="object-contain"
+                  />
+                ) : (
+                  <div className="h-10 w-10 rounded-full bg-white/20 flex items-center justify-center text-white font-bold text-sm">
+                    {displayBrandName.charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <div>
+                  <h3 className="font-semibold text-white text-sm">{displayBrandName}</h3>
+                  <div className="flex items-center gap-1.5">
                   <span className="relative flex h-2 w-2">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
@@ -969,7 +982,7 @@ const ChatWidget = ({
                 ))}
 
                 <button
-                  onClick={() => openWhatsApp(config.phone ?? "27760330046", `Hi ${config.brandName ?? "there"}, I'd like to speak to a consultant.`)}
+                  onClick={() => openWhatsApp(config.phone ?? "27760330046", `Hi ${displayBrandName}, I'd like to speak to a consultant.`)}
                   className="px-3 py-1.5 text-xs font-bold rounded-full border border-green-400/50 bg-green-50 text-green-700 hover:bg-green-100 transition-colors shadow-sm flex items-center gap-1"
                 >
                   💬 Speak to a consultant

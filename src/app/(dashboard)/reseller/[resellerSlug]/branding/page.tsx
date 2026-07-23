@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import Image from 'next/image';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { isInvalidSlug } from '@/lib/utils/guard';
 import { ClientBrandingStudio, BrandingConfig } from '@/components/reseller/ClientBrandingStudio';
 import { IntegrationSuite } from '@/components/reseller/IntegrationSuite';
@@ -75,7 +75,11 @@ export default function ResellerBrandingPage() {
   const { setActiveCommands } = useHannah();
 
   // ── Initialization: State ──────────────────────────────────────────
-  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+  const searchParams = useSearchParams();
+  const rawClientId = searchParams.get('client') ?? searchParams.get('clientId');
+  const urlClientId = rawClientId?.trim() ? rawClientId.trim() : null;
+
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(urlClientId);
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -129,7 +133,7 @@ export default function ResellerBrandingPage() {
         const data = await response.json() as Client[];
         setClients(data);
         if (data.length > 0) {
-          setSelectedClientId(data[0].id);
+          setSelectedClientId(prev => prev ?? data[0].id);
         }
         console.log("OVG-PLATFORM-V2: Reseller branding studio initialized for", resellerSlug);
       } catch (err) {
@@ -162,7 +166,7 @@ export default function ResellerBrandingPage() {
         const branding = (widgetConfig.branding || {}) as Record<string, unknown>;
         const headerConfig = (branding.headerConfig as Record<string, unknown> | undefined) || {};
         const footerConfig = (branding.footerConfig as Record<string, unknown> | undefined) || {};
-        const features = widgetConfig.features as { aiInsightBadge?: boolean; aiDesignMirror?: boolean; customCss?: boolean } | undefined;
+        const features = widgetConfig.features as Record<string, unknown> | undefined;
 
         setIntegrationState(readBookingIntegrationState(tenant));
         setHydratedConfig({
@@ -183,8 +187,12 @@ export default function ResellerBrandingPage() {
             widgetBodyOpacity: (branding.widgetBodyOpacity as number | undefined) ?? 1.0,
             widgetBodyBackground: (branding.widgetBodyBackground as string) || 'rgba(31, 41, 55, 1.0)',
             brandName: (branding.brandName as string) || '',
+            customCssCode: (branding.customCssCode as string) || '',
+            widgetPosition: (branding.widgetPosition as string) || undefined,
           },
           features: features || {},
+          suggestedActions: (widgetConfig.suggestedActions as Record<string, unknown>[] | undefined) ?? [],
+          greeting: (widgetConfig.greeting as string) || '',
         });
 
         setHydratedPlanTier(tenant.pricing_tier_key || 'standard');
@@ -252,7 +260,7 @@ export default function ResellerBrandingPage() {
         {selectedClientId ? (
           <>
             <ClientBrandingStudio
-              key={resellerSlug}
+              key={`${resellerSlug}-${selectedClientId}`}
               clientId={selectedClientId}
               resellerSlug={resellerSlug}
               clients={clients}

@@ -133,6 +133,7 @@ export default function ClientBrandingPage() {
             footerGradientEnd: (footerConfig.colorEnd as string) || (branding.footerGradientEnd as string) || '#1a1a2e',
             footerImage: (footerConfig.image as string) || clientData.custom_assets?.footer_url || '',
             logoUrl: (branding.logoUrl as string) || '',
+            brandName: (branding.brandName as string) || clientData.name || '',
             widgetBodyOpacity: (branding.widgetBodyOpacity as number | undefined) ?? 1.0,
             widgetBodyBackground: (branding.widgetBodyBackground as string) || 'rgba(31, 41, 55, 1.0)',
           },

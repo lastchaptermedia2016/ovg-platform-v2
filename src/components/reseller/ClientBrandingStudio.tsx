@@ -8,7 +8,6 @@ function triggerHapticFeedback(): void {
     navigator.vibrate(30);
   }
 }
-import { ColorPicker } from '@/components/reseller/ColorPicker';
 import { useBrandingStudio } from '@/hooks/use-branding-studio';
 import { useVoiceCommand } from '@/hooks/use-voice-command';
 import { Client as ClientType } from '@/types/index';
@@ -19,6 +18,8 @@ import { useHannah } from '@/contexts/HannahContext';
 import type { SuggestedAction, CanonicalBranding } from '@/lib/schemas/tenant-config.canonical';
 import { SuggestedActionsEditor } from '@/components/admin/SuggestedActionsEditor';
 import ChatWidget from '@/components/widget/ChatWidget';
+import { gradientValue, parseGradient, isGradient, isImageBackground } from '@/lib/branding/gradient';
+import { BackgroundControlsPanel } from '@/components/reseller/BackgroundControlsPanel';
 
 interface ClientWithBranding extends ClientType {
   industry?: string;
@@ -77,12 +78,22 @@ export interface BrandingConfig {
   localFallbackAlert: boolean;
   /** Default TTS voice param sent to /api/ai/speech (e.g. 'hannah', 'classic_male'). */
   defaultTtsVoice: string;
+  /** Chat body (message window) background type */
+  widgetBodyBackgroundType: 'solid' | 'gradient' | 'image';
+  /** Chat body (message window) background — solid hex color or gradient start color */
+  widgetBodyBackground: string;
+  /** Chat body gradient start color (only when widgetBodyBackgroundType === 'gradient') */
+  widgetBodyGradientStart: string;
+  /** Chat body gradient end color (only when widgetBodyBackgroundType === 'gradient') */
+  widgetBodyGradientEnd: string;
+  /** Chat body image URL (only when widgetBodyBackgroundType === 'image') */
+  widgetBodyImage: string;
   /** Chat body (message window) transparency — 0.0 (fully transparent) to 1.0 (opaque) */
   widgetBodyOpacity: number;
-  /** Chat body (message window) background — hex, rgb, or rgba color string */
-  widgetBodyBackground: string;
   /** Header title / company name shown in the widget header */
   brandName: string;
+  /** Widget placement corner — synced from tenant widget_config.branding.widgetPosition */
+  widgetPosition: 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left';
 }
 
 type StudioAction = IncomingAIAction;
@@ -156,6 +167,23 @@ function normalizeAcousticCommand(input: string): string {
   );
 }
 
+/** Parse a raw background value (hex, gradient string, or URL) into structured widget body fields. */
+function parseWidgetBodyBackground(
+  value: string | undefined
+): { type: 'solid' | 'gradient' | 'image'; background: string; gradientStart: string; gradientEnd: string; image: string } {
+  if (!value || typeof value !== 'string') {
+    return { type: 'solid', background: '#1f2937', gradientStart: '#1f2937', gradientEnd: '#374151', image: '' };
+  }
+  if (isGradient(value)) {
+    const [start, end] = parseGradient(value);
+    return { type: 'gradient', background: start, gradientStart: start, gradientEnd: end, image: '' };
+  }
+  if (isImageBackground(value)) {
+    return { type: 'image', background: value, gradientStart: '#1f2937', gradientEnd: '#374151', image: value };
+  }
+  return { type: 'solid', background: value, gradientStart: value, gradientEnd: '#374151', image: '' };
+}
+
 export function ClientBrandingStudio({
   clientId,
   resellerSlug,
@@ -188,6 +216,34 @@ export function ClientBrandingStudio({
     defaultTtsVoice: initialConfig?.defaultTtsVoice || 'hannah',
     widgetBodyOpacity: initialConfig?.branding?.widgetBodyOpacity ?? 1.0,
     widgetBodyBackground: initialConfig?.branding?.widgetBodyBackground || 'rgba(31, 41, 55, 1.0)',
+    widgetBodyBackgroundType: (() => {
+      const bg = initialConfig?.branding?.widgetBodyBackground;
+      if (isGradient(bg) || isImageBackground(bg)) {
+        return isGradient(bg) ? 'gradient' : 'image';
+      }
+      return 'solid';
+    })(),
+    widgetBodyGradientStart: (() => {
+      const bg = initialConfig?.branding?.widgetBodyBackground;
+      if (isGradient(bg)) {
+        const [start] = parseGradient(bg ?? null);
+        return start;
+      }
+      return initialConfig?.branding?.widgetBodyBackground || '#1f2937';
+    })(),
+    widgetBodyGradientEnd: (() => {
+      const bg = initialConfig?.branding?.widgetBodyBackground;
+      if (isGradient(bg)) {
+        const [, end] = parseGradient(bg ?? null);
+        return end;
+      }
+      return '#374151';
+    })(),
+    widgetBodyImage: (() => {
+      const bg = initialConfig?.branding?.widgetBodyBackground;
+      return isImageBackground(bg) ? (bg ?? '') : '';
+    })(),
+    widgetPosition: initialConfig?.branding?.widgetPosition || 'bottom-right',
   });
 
   const [suggestedActions, setSuggestedActions] = useState<SuggestedAction[]>(
@@ -214,6 +270,10 @@ export function ClientBrandingStudio({
   const [generatedGreeting, setGeneratedGreeting] = useState<string>(initialConfig?.greeting || '');
   const [greetingExplanation, setGreetingExplanation] = useState<string>('');
   const [showGreetingPreview, setShowGreetingPreview] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+
 
   // Conversational Greeting Edit State
   const [isLongFormSTT, setIsLongFormSTT] = useState(false);
@@ -267,10 +327,17 @@ export function ClientBrandingStudio({
   //   1. studio finishes loading
   //   2. staging values differ from local config
   //   3. tenantId actually changes
+  //   4. AND tenant branding was NOT explicitly provided via initialConfig
+  //      (in which case tenant data takes precedence over reseller defaults)
   // ════════════════════════════════════════════════════════════════════
   const tenantIdForSync = clientId;
+  const hasTenantBranding = !!initialConfig?.branding;
   useEffect(() => {
     if (studio.isLoading) return;
+
+    // When tenant branding was explicitly provided via initialConfig,
+    // do NOT overwrite it with reseller staging defaults.
+    if (hasTenantBranding) return;
 
     const currentStaging = {
       primaryColor: studio.staging.primaryColor,
@@ -313,6 +380,7 @@ export function ClientBrandingStudio({
     studio.staging.accentColor,
     studio.staging.logoUrl,
     tenantIdForSync,
+    hasTenantBranding,
   ]);
 
   // Self-contained TTS for ambient/greeting speech.
@@ -497,12 +565,6 @@ export function ClientBrandingStudio({
    *  Also accepts optional component-scoped blocks (header, footer, widget) that carry
     *  component-specific properties which override the generic theme values. */
 
-  const buildLayerValue = (type: string, start: string, end: string, image: string): string | null => {
-    if (type === 'gradient') return `linear-gradient(135deg, ${start}, ${end})`;
-    if (type === 'image') return image || null;
-    return start;
-  };
-
   const canonicalBranding = useMemo<Partial<CanonicalBranding>>(() => {
     const backgroundType = config.headerBackgroundType as 'solid' | 'gradient' | 'image';
     const footerBgType = config.footerBackgroundType as 'solid' | 'gradient' | 'image';
@@ -511,25 +573,44 @@ export function ClientBrandingStudio({
       accentColor: config.footerBackground,
       logoUrl: config.logoUrl || undefined,
       brandName: config.brandName || undefined,
-      widgetPosition: 'bottom-right',
+      widgetPosition: config.widgetPosition || 'bottom-right',
       header: {
         type: backgroundType,
-        value: buildLayerValue(backgroundType, config.headerBackground, config.headerGradientEnd, config.headerImage),
+        value: backgroundType === 'gradient'
+          ? gradientValue(config.headerBackground, config.headerGradientEnd)
+          : backgroundType === 'image'
+            ? config.headerImage || null
+            : config.headerBackground || null,
         opacity: config.headerOpacity,
         backdropBlur: false,
       },
       footer: {
         type: footerBgType,
-        value: buildLayerValue(footerBgType, config.footerBackground, config.footerGradientEnd, config.footerImage),
+        value: footerBgType === 'gradient'
+          ? gradientValue(config.footerBackground, config.footerGradientEnd)
+          : footerBgType === 'image'
+            ? config.footerImage || null
+            : config.footerBackground || null,
         opacity: config.footerOpacity,
         backdropBlur: false,
       },
-      widgetBody: {
-        type: 'solid',
-        value: config.widgetBodyBackground,
-        opacity: config.widgetBodyOpacity,
-        backdropBlur: false,
-      },
+      widgetBody: (() => {
+        const bodyType = config.widgetBodyBackgroundType;
+        let value: string | null = null;
+        if (bodyType === 'gradient') {
+          value = gradientValue(config.widgetBodyGradientStart, config.widgetBodyGradientEnd);
+        } else if (bodyType === 'image') {
+          value = config.widgetBodyImage || null;
+        } else {
+          value = config.widgetBodyBackground || null;
+        }
+        return {
+          type: bodyType,
+          value,
+          opacity: config.widgetBodyOpacity,
+          backdropBlur: bodyType === 'gradient' ? true : false,
+        };
+      })(),
       headerConfig: {
         type: backgroundType,
         colorStart: config.headerBackground,
@@ -552,7 +633,6 @@ export function ClientBrandingStudio({
   const handleThemeUpdateEngine = useCallback((theme: Record<string, unknown>) => {
     setConfig(prev => {
       // No-op check to prevent jarring flicker when backend confirmation arrives
-      // Include widgetBodyOpacity and widgetBodyBackground so changes clear the gateway
       if (
         (theme.primary === undefined || prev.headerBackground === theme.primary) &&
         (theme.secondary === undefined || prev.footerBackground === theme.secondary) &&
@@ -560,10 +640,19 @@ export function ClientBrandingStudio({
         (theme.headerOpacity === undefined || prev.headerOpacity === theme.headerOpacity) &&
         (theme.footerOpacity === undefined || prev.footerOpacity === theme.footerOpacity) &&
         (theme.widgetBodyOpacity === undefined || prev.widgetBodyOpacity === theme.widgetBodyOpacity) &&
-        (theme.widgetBodyBackground === undefined || prev.widgetBodyBackground === theme.widgetBodyBackground)
+        (theme.widgetBodyBackground === undefined || prev.widgetBodyBackground === theme.widgetBodyBackground) &&
+        (theme.widgetBodyBackgroundType === undefined || prev.widgetBodyBackgroundType === theme.widgetBodyBackgroundType) &&
+        (theme.widgetBodyGradientStart === undefined || prev.widgetBodyGradientStart === theme.widgetBodyGradientStart) &&
+        (theme.widgetBodyGradientEnd === undefined || prev.widgetBodyGradientEnd === theme.widgetBodyGradientEnd) &&
+        (theme.widgetBodyImage === undefined || prev.widgetBodyImage === theme.widgetBodyImage)
       ) {
         return prev;
       }
+
+      const widgetBodyPatch = theme.widgetBodyBackground !== undefined
+        ? parseWidgetBodyBackground(theme.widgetBodyBackground as string)
+        : null;
+
       return {
         ...prev,
         ...(theme.primary !== undefined && { headerBackground: theme.primary as string }),
@@ -595,7 +684,17 @@ export function ClientBrandingStudio({
         ...(theme.widgetOpacity !== undefined && { headerOpacity: theme.widgetOpacity as number, footerOpacity: theme.widgetOpacity as number }),
         // ── Chat Body (Widget) Transparency & Background ────────────────
         ...(theme.widgetBodyOpacity !== undefined && { widgetBodyOpacity: theme.widgetBodyOpacity as number }),
-        ...(theme.widgetBodyBackground !== undefined && { widgetBodyBackground: theme.widgetBodyBackground as string }),
+        ...(theme.widgetBodyBackgroundType !== undefined && { widgetBodyBackgroundType: theme.widgetBodyBackgroundType as 'solid' | 'gradient' | 'image' }),
+        ...(theme.widgetBodyGradientStart !== undefined && { widgetBodyGradientStart: theme.widgetBodyGradientStart as string }),
+        ...(theme.widgetBodyGradientEnd !== undefined && { widgetBodyGradientEnd: theme.widgetBodyGradientEnd as string }),
+        ...(theme.widgetBodyImage !== undefined && { widgetBodyImage: theme.widgetBodyImage as string }),
+        ...(widgetBodyPatch && {
+          widgetBodyBackground: widgetBodyPatch.background,
+          widgetBodyBackgroundType: widgetBodyPatch.type,
+          widgetBodyGradientStart: widgetBodyPatch.gradientStart,
+          widgetBodyGradientEnd: widgetBodyPatch.gradientEnd,
+          widgetBodyImage: widgetBodyPatch.image,
+        }),
       };
     });
   }, []);
@@ -722,7 +821,18 @@ export function ClientBrandingStudio({
           if (w.opacity !== undefined) componentOverrides.widgetOpacity = w.opacity;
           if (w.background !== undefined) componentOverrides.widgetBackground = w.background;
           if (w.bodyOpacity !== undefined) componentOverrides.widgetBodyOpacity = w.bodyOpacity;
-          if (w.bodyBackground !== undefined) componentOverrides.widgetBodyBackground = w.bodyBackground;
+          if (w.bodyBackgroundType !== undefined) componentOverrides.widgetBodyBackgroundType = w.bodyBackgroundType;
+          if (w.bodyBackground !== undefined) {
+            const parsed = parseWidgetBodyBackground(w.bodyBackground as string);
+            componentOverrides.widgetBodyBackgroundType = parsed.type;
+            componentOverrides.widgetBodyBackground = parsed.background;
+            componentOverrides.widgetBodyGradientStart = parsed.gradientStart;
+            componentOverrides.widgetBodyGradientEnd = parsed.gradientEnd;
+            componentOverrides.widgetBodyImage = parsed.image;
+          }
+          if (w.gradientStart !== undefined) componentOverrides.widgetBodyGradientStart = w.gradientStart;
+          if (w.gradientEnd !== undefined) componentOverrides.widgetBodyGradientEnd = w.gradientEnd;
+          if (w.bodyImage !== undefined) componentOverrides.widgetBodyImage = w.bodyImage;
         }
 
         // Blend theme-level properties, raw text payload properties, and
@@ -979,6 +1089,7 @@ export function ClientBrandingStudio({
         footerGradientEnd: (footerConfig.colorEnd as string) || (branding.footerGradientEnd as string) || (theme.secondaryGradientEnd as string) || prev.footerGradientEnd,
         footerOpacity: (footerConfig.opacity ?? (branding.footerOpacity as number | undefined) ?? (theme.opacity as number | undefined) ?? prev.footerOpacity) as number,
         logoUrl: (branding.logoUrl as string) || (theme.logoUrl as string) || prev.logoUrl,
+        brandName: (branding.brandName as string) || prev.brandName,
         aiInsightBadge: (features.aiInsightBadge ?? prev.aiInsightBadge) as boolean,
         aiDesignMirror: (features.aiDesignMirror ?? prev.aiDesignMirror) as boolean,
         customCss: (features.customCss ?? prev.customCss) as boolean,
@@ -1004,7 +1115,7 @@ export function ClientBrandingStudio({
   // internal pipeline (processAudioPipeline), not by this standalone callback.
   }, [clientId, handleThemeUpdateEngine]);
 
-  // Hydrate greeting and suggested actions from persisted widget_config on initial load / client switch
+  // Hydrate full branding config from persisted widget_config on client switch
   const hydratedClientIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!clientId || hydratedClientIdRef.current === clientId) return;
@@ -1018,6 +1129,39 @@ export function ClientBrandingStudio({
         const tenant = await response.json();
         if (!isActive) return;
         const widgetConfig = tenant.widget_config || {};
+        const branding = (widgetConfig.branding || {}) as Record<string, unknown>;
+        const headerConfig = (branding.headerConfig as Record<string, unknown> | undefined) || {};
+        const footerConfig = (branding.footerConfig as Record<string, unknown> | undefined) || {};
+        const features = (widgetConfig.features || {}) as { aiInsightBadge?: boolean; aiDesignMirror?: boolean; customCss?: boolean; voiceFeaturesEnabled?: boolean; localFallbackAlert?: boolean };
+        const aiSettings = (widgetConfig.ai_settings || {}) as { voiceId?: string };
+        const theme = (widgetConfig.theme || {}) as Record<string, unknown>;
+
+        const flattenHeaderType = (type: unknown) => ((type as string) === 'gradient' || (type as string) === 'solid' || (type as string) === 'image') ? type as 'solid' | 'gradient' | 'image' : 'solid';
+        const flattenFooterType = (type: unknown) => ((type as string) === 'gradient' || (type as string) === 'solid' || (type as string) === 'image') ? type as 'solid' | 'gradient' | 'image' : 'solid';
+
+        setConfig(prev => ({
+          ...prev,
+          headerBackground: (headerConfig.colorStart as string) || (branding.headerBackground as string) || (theme.primary as string) || prev.headerBackground,
+          headerBackgroundType: flattenHeaderType(headerConfig.type) || flattenHeaderType(branding.headerBackgroundType) || (theme.backgroundType as string) || prev.headerBackgroundType,
+          headerGradientStart: (headerConfig.colorStart as string) || (branding.headerGradientStart as string) || (theme.primaryGradientStart as string) || prev.headerGradientStart,
+          headerGradientEnd: (headerConfig.colorEnd as string) || (branding.headerGradientEnd as string) || (theme.primaryGradientEnd as string) || prev.headerGradientEnd,
+          headerOpacity: (headerConfig.opacity ?? (branding.headerOpacity as number | undefined) ?? (theme.opacity as number | undefined) ?? prev.headerOpacity) as number,
+          footerBackground: (footerConfig.colorStart as string) || (branding.footerBackground as string) || (theme.secondary as string) || prev.footerBackground,
+          footerBackgroundType: flattenFooterType(footerConfig.type) || flattenFooterType(branding.footerBackgroundType) || (theme.backgroundType as string) || prev.footerBackgroundType,
+          footerGradientStart: (footerConfig.colorStart as string) || (branding.footerGradientStart as string) || (theme.secondaryGradientStart as string) || prev.footerGradientStart,
+          footerGradientEnd: (footerConfig.colorEnd as string) || (branding.footerGradientEnd as string) || (theme.secondaryGradientEnd as string) || prev.footerGradientEnd,
+          footerOpacity: (footerConfig.opacity ?? (branding.footerOpacity as number | undefined) ?? (theme.opacity as number | undefined) ?? prev.footerOpacity) as number,
+          logoUrl: (branding.logoUrl as string) || (theme.logoUrl as string) || prev.logoUrl,
+          brandName: (branding.brandName as string) || prev.brandName,
+          aiInsightBadge: (features.aiInsightBadge ?? prev.aiInsightBadge) as boolean,
+          aiDesignMirror: (features.aiDesignMirror ?? prev.aiDesignMirror) as boolean,
+          customCss: (features.customCss ?? prev.customCss) as boolean,
+          voiceFeaturesEnabled: (features.voiceFeaturesEnabled ?? prev.voiceFeaturesEnabled) as boolean,
+          localFallbackAlert: (features.localFallbackAlert ?? prev.localFallbackAlert) as boolean,
+          defaultTtsVoice: (aiSettings.voiceId || prev.defaultTtsVoice) as string,
+          widgetBodyOpacity: (branding.widgetBodyOpacity as number | undefined) ?? prev.widgetBodyOpacity,
+          widgetBodyBackground: (branding.widgetBodyBackground as string) || prev.widgetBodyBackground,
+        }));
 
         const greeting = widgetConfig.greeting as string | undefined;
         if (greeting) {
@@ -1029,13 +1173,13 @@ export function ClientBrandingStudio({
           setSuggestedActions(sa);
         }
       } catch (err) {
-        console.error('[ClientBrandingStudio] Initial widget_config hydration failed:', err);
+        console.error('[ClientBrandingStudio] Client-switch rehydration failed:', err);
       }
     }
 
     hydrate();
     return () => { isActive = false; };
-  }, [clientId, setGeneratedGreeting, setSuggestedActions]);
+  }, [clientId, setConfig, setGeneratedGreeting, setSuggestedActions]);
 
   // ════════════════════════════════════════════════════════════════════
   // Stable Initialization: Voice pipeline options are memoized so that
@@ -1123,6 +1267,44 @@ export function ClientBrandingStudio({
   const updateConfig = (key: keyof BrandingConfig, value: string | number | boolean) => {
     setConfig((prev) => ({ ...prev, [key]: value }));
   };
+
+  const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploading(true);
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      body.append('tenantId', clientId);
+      const res = await fetch('/api/reseller/upload-logo', {
+        method: 'POST',
+        body,
+      });
+      if (!res.ok) {
+        let message = 'HTTP ' + res.status;
+        try {
+          const errorBody = await res.json();
+          message = (errorBody as Record<string, unknown>).error as string || message;
+        } catch {
+          // Non-JSON error response; fall back to HTTP status.
+        }
+        throw new Error(message);
+      }
+      const result = await res.json();
+      setConfig((prev) => ({ ...prev, logoUrl: result.url as string }));
+      setSaveMessage('Logo uploaded successfully');
+      setTimeout(() => setSaveMessage(null), 3000);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Logo upload failed';
+      console.error('[ClientBrandingStudio] Logo upload error:', message, err);
+      setSaveMessage(message);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  }, [clientId]);
 
   // Feature locking based on plan tier
   const isFeatureLocked = useCallback((feature: string) => {
@@ -1422,313 +1604,92 @@ export function ClientBrandingStudio({
 
         <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-xl p-6">
 
-          {/* Header Background */}
-          <div className="space-y-4 mb-6">
-            <h3 className="text-sm font-semibold text-white/80 uppercase tracking-wider">Header Background</h3>
-            <div className="flex gap-2 mb-3">
-              <button
-                onClick={() => updateConfig('headerBackgroundType', 'solid')}
-                className={`px-3 py-1.5 text-xs rounded transition-all ${
-                  config.headerBackgroundType === 'solid'
-                    ? 'bg-[#0097b2] text-white'
-                    : 'bg-white/10 text-white/60 hover:bg-white/20'
-                }`}
-              >
-                Solid
-              </button>
-              <button
-                onClick={() => updateConfig('headerBackgroundType', 'gradient')}
-                className={`px-3 py-1.5 text-xs rounded transition-all ${
-                  config.headerBackgroundType === 'gradient'
-                    ? 'bg-[#0097b2] text-white'
-                    : 'bg-white/10 text-white/60 hover:bg-white/20'
-                }`}
-              >
-                Gradient
-              </button>
-              <button
-                onClick={() => updateConfig('headerBackgroundType', 'image')}
-                className={`px-3 py-1.5 text-xs rounded transition-all ${
-                  config.headerBackgroundType === 'image'
-                    ? 'bg-[#0097b2] text-white'
-                    : 'bg-white/10 text-white/60 hover:bg-white/20'
-                }`}
-              >
-                Image
-              </button>
-            </div>
-
-            {config.headerBackgroundType === 'solid' ? (
-              <div className="flex items-center gap-3">
-                <ColorPicker
-                  label="Header Color"
-                  value={config.headerBackground}
-                  onChange={(color) => updateConfig('headerBackground', color)}
-                />
-                <input
-                  type="text"
-                  value={config.headerBackground}
-                  onChange={(e) => updateConfig('headerBackground', e.target.value)}
-                  className="flex-1 bg-black/40 text-slate-100 font-medium text-xs px-3 py-2 rounded border border-white/5 focus:border-white/20 outline-none transition-colors"
-                  placeholder="#0097b2"
-                />
-              </div>
-            ) : config.headerBackgroundType === 'gradient' ? (
-              <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <ColorPicker
-                    label="Gradient Start"
-                    value={config.headerGradientStart}
-                    onChange={(color) => updateConfig('headerGradientStart', color)}
-                  />
-                  <input
-                    type="text"
-                    value={config.headerGradientStart}
-                    onChange={(e) => updateConfig('headerGradientStart', e.target.value)}
-                    className="flex-1 bg-black/40 text-slate-100 font-medium text-xs px-3 py-2 rounded border border-white/5 focus:border-white/20 outline-none transition-colors"
-                    placeholder="Start color"
-                  />
-                </div>
-                <div className="flex items-center gap-3">
-                  <ColorPicker
-                    label="Gradient End"
-                    value={config.headerGradientEnd}
-                    onChange={(color) => updateConfig('headerGradientEnd', color)}
-                  />
-                  <input
-                    type="text"
-                    value={config.headerGradientEnd}
-                    onChange={(e) => updateConfig('headerGradientEnd', e.target.value)}
-                    className="flex-1 bg-black/40 text-slate-100 font-medium text-xs px-3 py-2 rounded border border-white/5 focus:border-white/20 outline-none transition-colors"
-                    placeholder="End color"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs text-white/60 uppercase tracking-wider">Background Opacity</label>
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={Math.round(config.headerOpacity * 100)}
-                      onChange={(e) => updateConfig('headerOpacity', parseInt(e.target.value) / 100)}
-                      className="flex-1 h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-[#0097b2]"
-                    />
-                    <span className="text-xs text-white/80 w-12 text-right">{Math.round(config.headerOpacity * 100)}%</span>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <input
-                    type="text"
-                    value={config.headerImage}
-                    onChange={(e) => updateConfig('headerImage', e.target.value)}
-                    className="flex-1 bg-black/30 border border-white/20 rounded px-3 py-2 text-xs text-white focus:border-[#0097b2] outline-none"
-                    placeholder="https://example.com/header-image.jpg"
-                  />
-                  <button className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs rounded transition-all">
-                    Upload
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs text-white/60 uppercase tracking-wider">Background Opacity</label>
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={Math.round(config.headerOpacity * 100)}
-                      onChange={(e) => updateConfig('headerOpacity', parseInt(e.target.value) / 100)}
-                      className="flex-1 h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-[#0097b2]"
-                    />
-                    <span className="text-xs text-white/80 w-12 text-right">{Math.round(config.headerOpacity * 100)}%</span>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          <BackgroundControlsPanel
+            title="Header Background"
+            type={config.headerBackgroundType}
+            onTypeChange={(type) => updateConfig('headerBackgroundType', type)}
+            solidColor={config.headerBackground}
+            onSolidColorChange={(color) => updateConfig('headerBackground', color)}
+            gradientStart={config.headerGradientStart}
+            onGradientStartChange={(color) => updateConfig('headerGradientStart', color)}
+            gradientEnd={config.headerGradientEnd}
+            onGradientEndChange={(color) => updateConfig('headerGradientEnd', color)}
+            imageUrl={config.headerImage}
+            onImageUrlChange={(url) => updateConfig('headerImage', url)}
+            imagePlaceholder="https://example.com/header-image.jpg"
+            opacity={config.headerOpacity}
+            onOpacityChange={(value) => updateConfig('headerOpacity', value)}
+          />
 
           {/* Footer Background */}
-          <div className="space-y-4 mb-6">
-            <h3 className="text-sm font-semibold text-white/80 uppercase tracking-wider">Footer Background</h3>
-            <div className="flex gap-2 mb-3">
-              <button
-                onClick={() => updateConfig('footerBackgroundType', 'solid')}
-                className={`px-3 py-1.5 text-xs rounded transition-all ${
-                  config.footerBackgroundType === 'solid'
-                    ? 'bg-[#0097b2] text-white'
-                    : 'bg-white/10 text-white/60 hover:bg-white/20'
-                }`}
-              >
-                Solid
-              </button>
-              <button
-                onClick={() => updateConfig('footerBackgroundType', 'gradient')}
-                className={`px-3 py-1.5 text-xs rounded transition-all ${
-                  config.footerBackgroundType === 'gradient'
-                    ? 'bg-[#0097b2] text-white'
-                    : 'bg-white/10 text-white/60 hover:bg-white/20'
-                }`}
-              >
-                Gradient
-              </button>
-              <button
-                onClick={() => updateConfig('footerBackgroundType', 'image')}
-                className={`px-3 py-1.5 text-xs rounded transition-all ${
-                  config.footerBackgroundType === 'image'
-                    ? 'bg-[#0097b2] text-white'
-                    : 'bg-white/10 text-white/60 hover:bg-white/20'
-                }`}
-              >
-                Image
-              </button>
-            </div>
-
-            {config.footerBackgroundType === 'solid' ? (
-              <div className="flex items-center gap-3">
-                <ColorPicker
-                  label="Footer Color"
-                  value={config.footerBackground}
-                  onChange={(color) => updateConfig('footerBackground', color)}
-                />
-                <input
-                  type="text"
-                  value={config.footerBackground}
-                  onChange={(e) => updateConfig('footerBackground', e.target.value)}
-                  className="flex-1 bg-black/40 text-slate-100 font-medium text-xs px-3 py-2 rounded border border-white/5 focus:border-white/20 outline-none transition-colors"
-                  placeholder="#050a14"
-                />
-              </div>
-            ) : config.footerBackgroundType === 'gradient' ? (
-              <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <ColorPicker
-                    label="Gradient Start"
-                    value={config.footerGradientStart}
-                    onChange={(color) => updateConfig('footerGradientStart', color)}
-                  />
-                  <input
-                    type="text"
-                    value={config.footerGradientStart}
-                    onChange={(e) => updateConfig('footerGradientStart', e.target.value)}
-                    className="flex-1 bg-black/40 text-slate-100 font-medium text-xs px-3 py-2 rounded border border-white/5 focus:border-white/20 outline-none transition-colors"
-                    placeholder="Start color"
-                  />
-                </div>
-                <div className="flex items-center gap-3">
-                  <ColorPicker
-                    label="Gradient End"
-                    value={config.footerGradientEnd}
-                    onChange={(color) => updateConfig('footerGradientEnd', color)}
-                  />
-                  <input
-                    type="text"
-                    value={config.footerGradientEnd}
-                    onChange={(e) => updateConfig('footerGradientEnd', e.target.value)}
-                    className="flex-1 bg-black/40 text-slate-100 font-medium text-xs px-3 py-2 rounded border border-white/5 focus:border-white/20 outline-none transition-colors"
-                    placeholder="End color"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs text-white/60 uppercase tracking-wider">Background Opacity</label>
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={Math.round(config.footerOpacity * 100)}
-                      onChange={(e) => updateConfig('footerOpacity', parseInt(e.target.value) / 100)}
-                      className="flex-1 h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-[#0097b2]"
-                    />
-                    <span className="text-xs text-white/80 w-12 text-right">{Math.round(config.footerOpacity * 100)}%</span>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <input
-                    type="text"
-                    value={config.footerImage}
-                    onChange={(e) => updateConfig('footerImage', e.target.value)}
-                    className="flex-1 bg-black/30 border border-white/20 rounded px-3 py-2 text-xs text-white focus:border-[#0097b2] outline-none"
-                    placeholder="https://example.com/footer-image.jpg"
-                  />
-                  <button className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs rounded transition-all">
-                    Upload
-                  </button>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs text-white/60 uppercase tracking-wider">Background Opacity</label>
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={Math.round(config.footerOpacity * 100)}
-                      onChange={(e) => updateConfig('footerOpacity', parseInt(e.target.value) / 100)}
-                      className="flex-1 h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-[#0097b2]"
-                    />
-                    <span className="text-xs text-white/80 w-12 text-right">{Math.round(config.footerOpacity * 100)}%</span>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          <BackgroundControlsPanel
+            title="Footer Background"
+            type={config.footerBackgroundType}
+            onTypeChange={(type) => updateConfig('footerBackgroundType', type)}
+            solidColor={config.footerBackground}
+            onSolidColorChange={(color) => updateConfig('footerBackground', color)}
+            solidPlaceholder="#050a14"
+            gradientStart={config.footerGradientStart}
+            onGradientStartChange={(color) => updateConfig('footerGradientStart', color)}
+            gradientEnd={config.footerGradientEnd}
+            onGradientEndChange={(color) => updateConfig('footerGradientEnd', color)}
+            imageUrl={config.footerImage}
+            onImageUrlChange={(url) => updateConfig('footerImage', url)}
+            imagePlaceholder="https://example.com/footer-image.jpg"
+            opacity={config.footerOpacity}
+            onOpacityChange={(value) => updateConfig('footerOpacity', value)}
+          />
 
           {/* ── WIDGET BACKGROUND CARD ─────────────────────────────── */}
           {/* Positioned between Footer Background and Logo to mirror the
               stacked-card hierarchy of Header/Footer/Widget/Logo. */}
-          <div className="space-y-4 mb-6">
-            <h3 className="text-sm font-semibold text-white/80 uppercase tracking-wider">Widget Background</h3>
-            {/* Color Picker */}
-            <div className="flex items-center gap-3">
-              <ColorPicker
-                label="Widget Color"
-                value={config.widgetBodyBackground}
-                onChange={(color) =>
-                  handleThemeUpdateEngine({
-                    widgetBodyBackground: color,
-                    widgetBodyOpacity: config.widgetBodyOpacity,
-                  })
-                }
-              />
-              <input
-                type="text"
-                value={config.widgetBodyBackground}
-                onChange={(e) =>
-                  handleThemeUpdateEngine({
-                    widgetBodyBackground: e.target.value,
-                    widgetBodyOpacity: config.widgetBodyOpacity,
-                  })
-                }
-                className="flex-1 bg-black/40 text-slate-100 font-medium text-xs px-3 py-2 rounded border border-white/5 focus:border-white/20 outline-none transition-colors"
-                placeholder="rgba(31, 41, 55, 1.0)"
-              />
-            </div>
-            {/* Opacity Slider — 0 to 100 maps to 0.0 to 1.0 float */}
-            <div className="space-y-2">
-              <label className="text-xs text-white/60 uppercase tracking-wider">Window Opacity</label>
-              <div className="flex items-center gap-3">
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={Math.round(config.widgetBodyOpacity * 100)}
-                  onChange={(e) =>
-                    handleThemeUpdateEngine({
-                      widgetBodyOpacity: parseInt(e.target.value) / 100,
-                      widgetBodyBackground: config.widgetBodyBackground,
-                    })
-                  }
-                  className="flex-1 h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-[#0097b2]"
-                />
-                <span className="text-xs text-white/80 w-12 text-right">{Math.round(config.widgetBodyOpacity * 100)}%</span>
-              </div>
-            </div>
-          </div>
+          <BackgroundControlsPanel
+            title="Widget Background"
+            type={config.widgetBodyBackgroundType}
+            onTypeChange={(type) => updateConfig('widgetBodyBackgroundType', type)}
+            solidColor={config.widgetBodyBackground}
+            onSolidColorChange={(color) =>
+              handleThemeUpdateEngine({
+                widgetBodyBackground: color,
+                widgetBodyOpacity: config.widgetBodyOpacity,
+              })
+            }
+            solidPlaceholder="#1f2937"
+            gradientStart={config.widgetBodyGradientStart}
+            onGradientStartChange={(color) =>
+              handleThemeUpdateEngine({
+                widgetBodyGradientStart: color,
+                widgetBodyGradientEnd: config.widgetBodyGradientEnd,
+                widgetBodyOpacity: config.widgetBodyOpacity,
+              })
+            }
+            gradientEnd={config.widgetBodyGradientEnd}
+            onGradientEndChange={(color) =>
+              handleThemeUpdateEngine({
+                widgetBodyGradientEnd: color,
+                widgetBodyGradientStart: config.widgetBodyGradientStart,
+                widgetBodyOpacity: config.widgetBodyOpacity,
+              })
+            }
+            imageUrl={config.widgetBodyImage}
+            onImageUrlChange={(url) =>
+              handleThemeUpdateEngine({
+                widgetBodyImage: url,
+                widgetBodyOpacity: config.widgetBodyOpacity,
+              })
+            }
+            imagePlaceholder="https://example.com/widget-bg.jpg"
+            opacity={config.widgetBodyOpacity}
+            onOpacityChange={(value) =>
+              handleThemeUpdateEngine({
+                widgetBodyOpacity: value,
+                ...(config.widgetBodyBackgroundType === 'gradient'
+                  ? { widgetBodyGradientStart: config.widgetBodyGradientStart, widgetBodyGradientEnd: config.widgetBodyGradientEnd }
+                  : { widgetBodyImage: config.widgetBodyImage }),
+              })
+            }
+            opacityLabel="Window Opacity"
+          />
 
           {/* Logo Upload */}
           <div className="space-y-4">
@@ -1741,9 +1702,20 @@ export function ClientBrandingStudio({
                 className="flex-1 bg-black/30 border border-white/20 rounded px-3 py-2 text-xs text-white focus:border-[#0097b2] outline-none"
                 placeholder="Logo URL"
               />
-              <button className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs rounded transition-all">
-                Upload
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+                className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isUploading ? 'Uploading...' : 'Upload'}
               </button>
+              <input
+                type="file"
+                accept="image/*"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                className="hidden"
+              />
             </div>
           </div>
 
@@ -2174,6 +2146,9 @@ export function ClientBrandingStudio({
             features={{
               voiceFeaturesEnabled: config.voiceFeaturesEnabled,
               customCss: config.customCss,
+              aiInsightBadge: config.aiInsightBadge,
+              aiDesignMirror: config.aiDesignMirror,
+              localFallbackAlert: config.localFallbackAlert,
             }}
           />
         </div>

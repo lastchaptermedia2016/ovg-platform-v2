@@ -1,11 +1,10 @@
 'use client';
 
 import {
-  gradientValue,
-  parseGradient,
   type LayerDraft,
   type LayerType,
 } from '@/contexts/StudioDraftContext';
+import { gradientValue, parseGradient } from '@/lib/branding/gradient';
 import { isValidHexColor } from '@/lib/colors';
 import { AssetUploader } from './AssetUploader';
 import { OpacitySlider } from './OpacitySlider';

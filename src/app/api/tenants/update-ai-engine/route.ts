@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAuthClient, getAuthenticatedUser, unauthorizedResponse, validateTenantOwnership } from "@/lib/auth/server";
+import { supabaseAdmin } from "@/lib/supabase/admin";
 import { z } from "zod";
 
 // ──────────────────────────────────────────────
@@ -62,28 +63,36 @@ export async function POST(request: NextRequest) {
     console.log("syncedWithBranding:", syncedWithBranding);
 
     // ── STEP 4: Scoped mutation with explicit reseller context ──
+    const upsertPayload = {
+      tenant_id: tenantId,
+      initial_greeting: initialGreeting,
+      voice_persona_tone: voicePersonaTone,
+      voice_vocabulary_style: voiceVocabularyStyle,
+      synced_with_branding: syncedWithBranding,
+      updated_at: now,
+    };
+
     const { error: upsertError } = await supabase
       .from("ai_settings")
-      .upsert(
-        {
-          tenant_id: tenantId,
-          initial_greeting: initialGreeting,
-          voice_persona_tone: voicePersonaTone,
-          voice_vocabulary_style: voiceVocabularyStyle,
-          synced_with_branding: syncedWithBranding,
-          updated_at: now,
-        },
-        { onConflict: "tenant_id" },
-      );
+      .upsert(upsertPayload, { onConflict: "tenant_id" });
 
     if (upsertError) {
-      console.error("=== UPDATE AI ENGINE ERROR ===");
-      console.error("Database error:", upsertError.message);
+      console.warn("=== UPDATE AI ENGINE ANON FALLBACK ===");
+      console.warn("Anon upsert failed, retrying with admin client:", upsertError.message);
 
-      return NextResponse.json(
-        { success: false, error: "Database write failed" },
-        { status: 500 },
-      );
+      const { error: adminUpsertError } = await supabaseAdmin
+        .from("ai_settings")
+        .upsert(upsertPayload, { onConflict: "tenant_id" });
+
+      if (adminUpsertError) {
+        console.error("=== UPDATE AI ENGINE ERROR ===");
+        console.error("Database write failed (anon + admin):", adminUpsertError.message);
+
+        return NextResponse.json(
+          { success: false, error: "Database write failed" },
+          { status: 500 },
+        );
+      }
     }
 
     console.log("=== UPDATE AI ENGINE SUCCESS ===");

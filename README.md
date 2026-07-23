@@ -197,7 +197,6 @@ components/reseller/
 ├── ClientsGrid.tsx               # Multi-client dashboard
 ├── ClientCard.tsx                # Client summary card
 ├── BrandKit.tsx                  # Branding configuration panel
-├── LivePreview.tsx               # Real-time branding preview
 ├── ResellerHUDClient.tsx         # Reseller heads-up display
 ├── DiagnosticPanel.tsx           # Debug/diagnostic panel
 ├── UploadZone.tsx                # File upload with preview

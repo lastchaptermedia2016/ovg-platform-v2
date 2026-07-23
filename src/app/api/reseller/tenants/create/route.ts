@@ -193,7 +193,10 @@ export async function POST(request: NextRequest) {
 
       if (aiError) {
         console.error("ai_settings insert error (admin):", aiError.message);
-        // Non-fatal: tenant was created
+        return NextResponse.json(
+          { success: false, error: "Failed to initialize AI settings" },
+          { status: 500 },
+        );
       }
 
       return NextResponse.json({
@@ -234,7 +237,10 @@ export async function POST(request: NextRequest) {
 
       if (adminAiError) {
         console.error("ai_settings insert error:", adminAiError.message);
-        // Non-fatal
+        return NextResponse.json(
+          { success: false, error: "Failed to initialize AI settings" },
+          { status: 500 },
+        );
       }
     }
 

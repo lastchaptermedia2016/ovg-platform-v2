@@ -5,6 +5,7 @@ import { createClient as createSupabaseClient } from '@/lib/supabase/client';
 import { resolveTenantId } from '@/lib/resolveTenantId';
 import type { CanonicalBranding, CanonicalAIPersona, LayerConfig, CanonicalBackgroundSection, CanonicalWidgetConfig, SuggestedAction } from '@/lib/schemas/tenant-config.canonical';
 import { normalizeHexColor } from '@/lib/colors';
+import { gradientValue, parseGradient } from '@/lib/branding/gradient';
 
 export type LayerType = 'none' | 'solid' | 'gradient' | 'image';
 
@@ -66,19 +67,6 @@ const defaultDraft: StudioDraft = {
   features: {},
   suggestedActions: [],
 };
-
-/** Build a CSS gradient string from two colors for the 'gradient' layer type. */
-export function gradientValue(start: string, end: string): string {
-  return `linear-gradient(135deg, ${start}, ${end})`;
-}
-
-/** Parse a CSS gradient string back into its two color stops. */
-export function parseGradient(value: string | null): [string, string] {
-  if (!value) return ['#1A73E8', '#0A2540'];
-  const match = value.match(/linear-gradient\([^,]+,\s*([^,]+),\s*([^)]+)\)/);
-  if (match) return [match[1].trim(), match[2].trim()];
-  return ['#1A73E8', '#0A2540'];
-}
 
 /**
  * Convert a partial CanonicalBranding patch into a StudioDraft patch.

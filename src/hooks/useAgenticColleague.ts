@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { useStudioDraft, gradientValue } from '@/contexts/StudioDraftContext';
+import { useStudioDraft } from '@/contexts/StudioDraftContext';
+import { gradientValue } from '@/lib/branding/gradient';
 import { type MapperResult, type ActionIntent } from '@/lib/ai/intent-mapper';
 import {
   CognitiveOrchestrator,
