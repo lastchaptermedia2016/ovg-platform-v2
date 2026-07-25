@@ -55,6 +55,7 @@ interface ClientBrandingStudioProps {
 }
 
 export interface BrandingConfig {
+  primaryColor: string;
   headerBackground: string;
   headerBackgroundType: 'solid' | 'gradient' | 'image';
   headerGradientStart: string;
@@ -193,6 +194,7 @@ export function ClientBrandingStudio({
   planTier,
 }: ClientBrandingStudioProps) {
   const [config, setConfig] = useState<BrandingConfig>({
+    primaryColor: initialConfig?.branding?.primaryColor || initialConfig?.branding?.headerBackground || '#0097b2',
     headerBackground: initialConfig?.branding?.headerBackground || '#0097b2',
     headerBackgroundType: initialConfig?.branding?.headerBackgroundType || 'solid',
     headerGradientStart: initialConfig?.branding?.headerGradientStart || '#0097b2',
@@ -331,7 +333,17 @@ export function ClientBrandingStudio({
   //      (in which case tenant data takes precedence over reseller defaults)
   // ════════════════════════════════════════════════════════════════════
   const tenantIdForSync = clientId;
-  const hasTenantBranding = !!initialConfig?.branding;
+  const hasTenantBranding = useMemo(() => {
+    const branding = initialConfig?.branding;
+    if (!branding || typeof branding !== 'object') return false;
+    // Treat as tenant-branded only if at least one meaningful field is present,
+    // preventing empty objects from falling through to reseller defaults.
+    const meaningfulKeys = ['primaryColor', 'headerBackground', 'footerBackground', 'headerBackgroundType', 'footerBackgroundType', 'widgetBodyBackground', 'brandName', 'logoUrl'] as const;
+    return meaningfulKeys.some(key => {
+      const value = (branding as Record<string, unknown>)[key];
+      return typeof value === 'string' && value.trim().length > 0;
+    });
+  }, [initialConfig?.branding]);
   useEffect(() => {
     if (studio.isLoading) return;
 
@@ -1078,6 +1090,7 @@ export function ClientBrandingStudio({
 
       setConfig(prev => ({
         ...prev,
+        primaryColor: (branding.primaryColor as string) || (theme.primary as string) || prev.primaryColor,
         headerBackground: (headerConfig.colorStart as string) || (branding.headerBackground as string) || (theme.primary as string) || prev.headerBackground,
         headerBackgroundType: flattenHeaderType(headerConfig.type) || flattenHeaderType(branding.headerBackgroundType) || (theme.backgroundType as string) || prev.headerBackgroundType,
         headerGradientStart: (headerConfig.colorStart as string) || (branding.headerGradientStart as string) || (theme.primaryGradientStart as string) || prev.headerGradientStart,
@@ -1141,6 +1154,7 @@ export function ClientBrandingStudio({
 
         setConfig(prev => ({
           ...prev,
+          primaryColor: (branding.primaryColor as string) || (theme.primary as string) || prev.primaryColor,
           headerBackground: (headerConfig.colorStart as string) || (branding.headerBackground as string) || (theme.primary as string) || prev.headerBackground,
           headerBackgroundType: flattenHeaderType(headerConfig.type) || flattenHeaderType(branding.headerBackgroundType) || (theme.backgroundType as string) || prev.headerBackgroundType,
           headerGradientStart: (headerConfig.colorStart as string) || (branding.headerGradientStart as string) || (theme.primaryGradientStart as string) || prev.headerGradientStart,

@@ -171,6 +171,7 @@ export default function ResellerBrandingPage() {
         setIntegrationState(readBookingIntegrationState(tenant));
         setHydratedConfig({
           branding: {
+            primaryColor: (branding.primaryColor as string) || (widgetConfig.theme as Record<string, unknown> | undefined)?.primary as string || '#0097b2',
             headerBackground: (headerConfig.colorStart as string) || (branding.primaryColor as string) || (widgetConfig.theme as Record<string, unknown> | undefined)?.primary as string || '#0097b2',
             headerBackgroundType: (((headerConfig.type as string) === 'gradient' || (headerConfig.type as string) === 'solid' || (headerConfig.type as string) === 'image') ? headerConfig.type : 'solid') as 'solid' | 'gradient' | 'image',
             headerGradientStart: (headerConfig.colorStart as string) || (branding.headerGradientStart as string) || '#0097b2',
@@ -186,7 +187,7 @@ export default function ResellerBrandingPage() {
             logoUrl: (branding.logoUrl as string) || '',
             widgetBodyOpacity: (branding.widgetBodyOpacity as number | undefined) ?? 1.0,
             widgetBodyBackground: (branding.widgetBodyBackground as string) || 'rgba(31, 41, 55, 1.0)',
-            brandName: (branding.brandName as string) || '',
+            brandName: (branding.brandName as string) || (tenant.name as string) || '',
             customCssCode: (branding.customCssCode as string) || '',
             widgetPosition: (branding.widgetPosition as string) || undefined,
           },
