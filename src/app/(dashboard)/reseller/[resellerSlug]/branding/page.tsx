@@ -91,6 +91,11 @@ export default function ResellerBrandingPage() {
   // Hydrated state from the tenant record
   const [hydratedConfig, setHydratedConfig] = useState<Record<string, unknown>>({});
   const [hydratedPlanTier, setHydratedPlanTier] = useState<string>('standard');
+  // Tracks whether tenant config has been fully hydrated before rendering
+  // ClientBrandingStudio. Prevents the studio from receiving an empty
+  // initialConfig on page refresh, which would cause the sync effect to
+  // overwrite client branding with reseller defaults.
+  const [isConfigReady, setIsConfigReady] = useState(false);
 
   // Branding studio-specific command capabilities (static, memoized)
   const BRANDING_COMMANDS = useMemo<CommandCapability[]>(() => [
@@ -198,11 +203,24 @@ export default function ResellerBrandingPage() {
 
         setHydratedPlanTier(tenant.pricing_tier_key || 'standard');
 
+        // Mark config as ready AFTER all state updates are enqueued.
+        // This ensures ClientBrandingStudio receives a fully populated
+        // initialConfig on its first render, preventing the sync effect
+        // from overwriting client branding with reseller defaults.
+        if (isActive) {
+          setIsConfigReady(true);
+        }
+
         console.log("OVG-PLATFORM-V2: Branding studio hydrated for", tenant.name);
       } catch (err) {
         console.error("OVG-PLATFORM-V2: Hydration failed, using defaults:", err);
         setHydratedConfig({});
         setHydratedPlanTier('standard');
+        // Even on failure, mark as ready so the studio renders with defaults
+        // rather than hanging indefinitely.
+        if (isActive) {
+          setIsConfigReady(true);
+        }
       }
     }
 
@@ -260,15 +278,32 @@ export default function ResellerBrandingPage() {
 
         {selectedClientId ? (
           <>
-            <ClientBrandingStudio
-              key={`${resellerSlug}-${selectedClientId}`}
-              clientId={selectedClientId}
-              resellerSlug={resellerSlug}
-              clients={clients}
-              onClientChange={handleClientChange}
-              initialConfig={hydratedConfig as { branding?: Partial<BrandingConfig>; features?: { aiInsightBadge?: boolean; aiDesignMirror?: boolean; customCss?: boolean } }}
-              planTier={hydratedPlanTier}
-            />
+            {/* CRITICAL: Gate ClientBrandingStudio on isConfigReady so it never
+                receives an empty initialConfig on page refresh. The hydration
+                fetch populates hydratedConfig, then sets isConfigReady=true.
+                Without this gate, the studio's sync effect overwrites client
+                branding with reseller defaults before tenant data arrives. */}
+            {isConfigReady ? (
+              <ClientBrandingStudio
+                key={`${resellerSlug}-${selectedClientId}`}
+                clientId={selectedClientId}
+                resellerSlug={resellerSlug}
+                clients={clients}
+                onClientChange={handleClientChange}
+                initialConfig={hydratedConfig as { branding?: Partial<BrandingConfig>; features?: { aiInsightBadge?: boolean; aiDesignMirror?: boolean; customCss?: boolean } }}
+                planTier={hydratedPlanTier}
+              />
+            ) : (
+              <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-xl p-6 mb-6">
+                <div className="animate-pulse space-y-4">
+                  <div className="h-6 bg-white/10 rounded w-1/3" />
+                  <div className="h-10 bg-white/10 rounded w-full" />
+                  <div className="h-32 bg-white/10 rounded w-full" />
+                  <div className="h-32 bg-white/10 rounded w-full" />
+                  <div className="h-20 bg-white/10 rounded w-1/2" />
+                </div>
+              </div>
+            )}
             <IntegrationSuite
               key={selectedClientId}
               tenantId={selectedClientId}

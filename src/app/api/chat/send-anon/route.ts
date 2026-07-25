@@ -2,11 +2,18 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 import { getTenantBySlug } from '@/core/tenant/db';
 import { NextResponse } from 'next/server';
 
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
 export async function POST(request: Request) {
   try {
-    const { tenantId, message } = await request.json();
+    const { tenantId, message, conversationId } = await request.json();
     if (!tenantId || !message?.trim()) {
       return NextResponse.json({ error: 'Missing tenantId or message content' }, { status: 400 });
+    }
+    if (!conversationId || typeof conversationId !== 'string' || !isUuid(conversationId)) {
+      return NextResponse.json({ error: 'Missing or invalid conversationId' }, { status: 400 });
     }
 
     const tenant = await getTenantBySlug(tenantId, supabaseAdmin);
@@ -21,6 +28,7 @@ export async function POST(request: Request) {
         sender_id: null,
         message: message.trim(),
         role: 'visitor',
+        conversation_id: conversationId,
       });
 
     if (insertError) throw insertError;

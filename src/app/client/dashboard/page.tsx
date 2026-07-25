@@ -5,7 +5,7 @@ import { resolveTenantId } from '@/lib/resolveTenantId';
 import TelemetryGrid from '@/components/dashboard/TelemetryGrid';
 import SystemStatusMonitor from '@/components/dashboard/SystemStatusMonitor';
 import ControlPanel from '@/components/dashboard/ControlPanel';
-import { LiveChat } from '@/components/ui/LiveChat';
+import { LiveChatInbox } from '@/components/ui/live-chat/LiveChatInbox';
 import { useEffect, useState } from 'react';
 
 function readInitialSession() {
@@ -53,7 +53,7 @@ export default function ClientDashboardPage() {
       <SystemStatusMonitor statusItems={[]} />
       <ControlPanel pipelineLayers={[]} autoSync={false} realtimeUpdates={false} />
       {mounted && (
-        <LiveChat tenantId={tenantId} accessToken={initial?.access_token} />
+        <LiveChatInbox tenantId={tenantId} accessToken={initial?.access_token} />
       )}
     </main>
   );

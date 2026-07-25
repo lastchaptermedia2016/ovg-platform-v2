@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { MessageSquare, Send, Minus, ChevronUp } from 'lucide-react';
+import { MessageSquare, Send, Minus, ChevronUp, RefreshCw } from 'lucide-react';
 import { formatMessageContent } from '@/utils/format-chat-message';
 
 interface ChatMessage {
@@ -12,16 +12,25 @@ interface ChatMessage {
   message: string;
   created_at: string;
   role: string;
+  conversation_id?: string;
+}
+
+interface ConversationOption {
+  id: string;
+  label: string;
+  lastMessageAt: string | null;
+  messageCount: number;
 }
 
 interface LiveChatProps {
   tenantId: string;
   accessToken?: string | null;
+  conversationId?: string;
 }
 
 const STORAGE_KEY = 'ovg_livechat_expanded';
 
-export function LiveChat({ tenantId, accessToken }: LiveChatProps) {
+export function LiveChat({ tenantId, accessToken, conversationId }: LiveChatProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [expanded, setExpanded] = useState<boolean>(() => {
@@ -32,11 +41,34 @@ export function LiveChat({ tenantId, accessToken }: LiveChatProps) {
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<ConversationOption[]>([]);
+  const [selectedConversationId, setSelectedConversationId] = useState<string>('');
+  const [conversationsLoading, setConversationsLoading] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const channelRef = useRef<ReturnType<ReturnType<typeof createClient>['channel']> | null>(null);
   const loadedRef = useRef(false);
   const optimisticIdsRef = useRef<Set<string>>(new Set());
+
+  const loadConversations = useCallback(async () => {
+    if (!tenantId) return;
+    setConversationsLoading(true);
+    try {
+      const res = await fetch(`/api/chat/conversations?tenantId=${encodeURIComponent(tenantId)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const list = (data.conversations ?? []) as ConversationOption[];
+      setConversations(list);
+      setSelectedConversationId((prev) => {
+        if (prev && list.some((c) => c.id === prev)) return prev;
+        return list[0]?.id ?? '';
+      });
+    } catch {
+      /* non-fatal */
+    } finally {
+      setConversationsLoading(false);
+    }
+  }, [tenantId]);
 
   // Fetch history + subscribe to realtime inserts for this tenant.
   useEffect(() => {
@@ -50,11 +82,15 @@ export function LiveChat({ tenantId, accessToken }: LiveChatProps) {
       setLoading(true);
       setError(null);
       try {
-        const { data, error: queryError } = await supabase
+        let query = supabase
           .from('chat_messages')
           .select('*')
           .eq('tenant_id', tenantId)
           .order('created_at', { ascending: true });
+        if (selectedConversationId) {
+          query = query.eq('conversation_id', selectedConversationId);
+        }
+        const { data, error: queryError } = await query;
         if (!active) return;
         if (queryError) throw queryError;
         setMessages((data as ChatMessage[]) ?? []);
@@ -107,6 +143,7 @@ export function LiveChat({ tenantId, accessToken }: LiveChatProps) {
       }
 
       await loadMessages();
+      await loadConversations();
       if (!active) return;
 
       const channel = supabase
@@ -140,6 +177,47 @@ export function LiveChat({ tenantId, accessToken }: LiveChatProps) {
               if (prev.some((m) => m.id === row.id)) return prev;
               return [...prev, row];
             });
+
+            if (row.conversation_id) {
+              const convId = row.conversation_id;
+              setConversations((prev) => {
+                const exists = prev.some((c) => c.id === convId);
+                if (exists) {
+                  setSelectedConversationId((current) => {
+                    if (!current) return convId;
+                    return current;
+                  });
+                  return prev.map((c) =>
+                    c.id === convId
+                      ? {
+                          ...c,
+                          label: row.role === 'visitor'
+                            ? `${row.message.replace(/\n/g, ' ').slice(0, 28)} since ${new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                            : c.label,
+                          lastMessageAt: row.created_at,
+                        }
+                      : c,
+                  ).sort((a, b) => {
+                    const aTime = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+                    const bTime = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+                    return bTime - aTime;
+                  });
+                }
+                const newConv: ConversationOption = {
+                  id: convId,
+                  label: `${row.message.replace(/\n/g, ' ').slice(0, 28)} since ${new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+                  lastMessageAt: row.created_at,
+                  messageCount: 1,
+                };
+                const next = [...prev, newConv].sort((a, b) => {
+                  const aTime = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+                  const bTime = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+                  return bTime - aTime;
+                });
+                setSelectedConversationId((current) => current || convId);
+                return next;
+              });
+            }
           },
         )
         .subscribe((status, err) => {
@@ -169,7 +247,7 @@ export function LiveChat({ tenantId, accessToken }: LiveChatProps) {
         channelRef.current = null;
       }
     };
-  }, [tenantId, accessToken]);
+  }, [tenantId, accessToken, selectedConversationId, loadConversations]);
 
   // Auto-scroll to the newest message.
   useEffect(() => {
@@ -192,6 +270,13 @@ export function LiveChat({ tenantId, accessToken }: LiveChatProps) {
     setSending(true);
     setError(null);
 
+    const targetConversationId = selectedConversationId || conversationId;
+    if (!targetConversationId) {
+      setError('Select a conversation first');
+      setSending(false);
+      return;
+    }
+
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     const optimisticMessage: ChatMessage = {
       id: tempId,
@@ -209,7 +294,7 @@ export function LiveChat({ tenantId, accessToken }: LiveChatProps) {
       const response = await fetch('/api/chat/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tenantId, message: content }),
+        body: JSON.stringify({ tenantId, message: content, conversationId: targetConversationId }),
       });
 
       const result = await response.json();
@@ -225,6 +310,10 @@ export function LiveChat({ tenantId, accessToken }: LiveChatProps) {
     }
   };
 
+  const handleRefreshConversations = async () => {
+    await loadConversations();
+  };
+
   if (!tenantId) return null;
 
   return (
@@ -238,16 +327,49 @@ export function LiveChat({ tenantId, accessToken }: LiveChatProps) {
               Live Chat
             </span>
           </div>
-          <button
-            type="button"
-            onClick={toggleExpanded}
-            aria-label={expanded ? 'Minimize chat' : 'Expand chat'}
-            aria-expanded={expanded}
-                 className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-white/5 hover:text-cyan-300 focus:outline-none focus:ring-1 focus:ring-white/20"
-          >
-            {expanded ? <Minus className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handleRefreshConversations}
+              aria-label="Refresh conversations"
+              className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-white/5 hover:text-cyan-300 focus:outline-none focus:ring-1 focus:ring-white/20"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={toggleExpanded}
+              aria-label={expanded ? 'Minimize chat' : 'Expand chat'}
+              aria-expanded={expanded}
+              className="rounded-md p-1 text-zinc-400 transition-colors hover:bg-white/5 hover:text-cyan-300 focus:outline-none focus:ring-1 focus:ring-white/20"
+            >
+              {expanded ? <Minus className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
+            </button>
+          </div>
         </div>
+
+        {/* Conversation picker */}
+        {expanded && (
+          <div className="px-3 py-2 border-b border-white/5">
+            <select
+              value={selectedConversationId}
+              onChange={(e) => setSelectedConversationId(e.target.value)}
+              className="w-full rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-xs text-white outline-none transition-colors focus:border-cyan-500/60 focus:ring-2 focus:ring-cyan-500/20"
+            >
+              {conversationsLoading && (
+                <option value="">Loading conversations…</option>
+              )}
+              {!conversationsLoading && conversations.length === 0 && (
+                <option value="">No conversations yet</option>
+              )}
+              {conversations.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label} ({c.messageCount})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* Body */}
         {expanded && (

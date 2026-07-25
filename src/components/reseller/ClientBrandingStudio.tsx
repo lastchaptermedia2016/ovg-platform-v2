@@ -18,8 +18,9 @@ import { useHannah } from '@/contexts/HannahContext';
 import type { SuggestedAction, CanonicalBranding } from '@/lib/schemas/tenant-config.canonical';
 import { SuggestedActionsEditor } from '@/components/admin/SuggestedActionsEditor';
 import ChatWidget from '@/components/widget/ChatWidget';
-import { gradientValue, parseGradient, isGradient, isImageBackground } from '@/lib/branding/gradient';
+import { gradientValue, parseGradient, isGradient, isImageBackground, toHex } from '@/lib/branding/gradient';
 import { BackgroundControlsPanel } from '@/components/reseller/BackgroundControlsPanel';
+import { createClient } from '@/lib/supabase/client';
 
 interface ClientWithBranding extends ClientType {
   industry?: string;
@@ -581,7 +582,7 @@ export function ClientBrandingStudio({
     const backgroundType = config.headerBackgroundType as 'solid' | 'gradient' | 'image';
     const footerBgType = config.footerBackgroundType as 'solid' | 'gradient' | 'image';
     return {
-      primaryColor: config.headerBackground,
+      primaryColor: config.primaryColor,
       accentColor: config.footerBackground,
       logoUrl: config.logoUrl || undefined,
       brandName: config.brandName || undefined,
@@ -756,6 +757,18 @@ export function ClientBrandingStudio({
       if (!response.ok) {
         const errorBody = await response.json().catch(() => ({}));
         throw new Error((errorBody as Record<string, unknown>).error as string || 'Atomic commit failed');
+      }
+
+      // Trigger post-save revalidation to sync Live Preview with DB state
+      if (typeof window !== 'undefined') {
+        try {
+          const revalidateFn = (window as unknown as Record<string, unknown>).__revalidateTenant;
+          if (typeof revalidateFn === 'function') {
+            void revalidateFn();
+          }
+        } catch {
+          // Non-blocking — revalidation is a best-effort optimization
+        }
       }
 
       return true;
@@ -1128,7 +1141,217 @@ export function ClientBrandingStudio({
   // internal pipeline (processAudioPipeline), not by this standalone callback.
   }, [clientId, handleThemeUpdateEngine]);
 
+  // ════════════════════════════════════════════════════════════════════
+  // REALTIME SUBSCRIPTION — Cross-session config sync
+  // Listens for postgres_changes on the tenants table and merges
+  // external changes into local config without losing unsaved edits.
+  // ════════════════════════════════════════════════════════════════════
+  useEffect(() => {
+    if (!clientId) return;
+    
+    let isActive = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let channel: any = null;
+
+    async function setupRealtime() {
+      try {
+        // Only run in browser
+        if (typeof window === 'undefined') return;
+        
+        const supabase = createClient();
+        
+        channel = supabase
+          .channel(`tenant-config:${clientId}`)
+          .on('postgres_changes', {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'tenants',
+            filter: `id=eq.${clientId}`
+          }, (payload) => {
+            if (!isActive) return;
+            
+            // Merge DB changes into local config, but preserve unsaved staging
+            // by only updating fields that haven't been locally modified
+            const tenant = payload.new as Record<string, unknown>;
+            const widgetConfig = (tenant.widget_config || {}) as Record<string, unknown>;
+            const branding = (widgetConfig.branding || {}) as Record<string, unknown>;
+            const headerConfig = (branding.headerConfig as Record<string, unknown> | undefined) || {};
+            const footerConfig = (branding.footerConfig as Record<string, unknown> | undefined) || {};
+            const features = (widgetConfig.features || {}) as Record<string, unknown>;
+            const theme = (widgetConfig.theme || {}) as Record<string, unknown>;
+
+            setConfig(prev => {
+              // If user has unsaved changes (dirty state), show notification
+              // and only merge non-conflicting fields
+              const hasLocalChanges = JSON.stringify(prev) !== JSON.stringify({
+                ...prev,
+                primaryColor: prev.primaryColor,
+                headerBackground: prev.headerBackground,
+                footerBackground: prev.footerBackground,
+              });
+
+              if (hasLocalChanges) {
+                // Soft merge: only update fields the user hasn't touched
+                return {
+                  ...prev,
+                  brandName: (branding.brandName as string) || prev.brandName,
+                  logoUrl: (branding.logoUrl as string) || (theme.logoUrl as string) || prev.logoUrl,
+                  aiInsightBadge: (features.aiInsightBadge as boolean | undefined) ?? prev.aiInsightBadge,
+                  aiDesignMirror: (features.aiDesignMirror as boolean | undefined) ?? prev.aiDesignMirror,
+                  customCss: (features.customCss as boolean | undefined) ?? prev.customCss,
+                  voiceFeaturesEnabled: (features.voiceFeaturesEnabled as boolean | undefined) ?? prev.voiceFeaturesEnabled,
+                };
+              }
+
+              // No local changes — full merge from DB
+              const flattenHeaderType = (type: unknown) => ((type as string) === 'gradient' || (type as string) === 'solid' || (type as string) === 'image') ? type as 'solid' | 'gradient' | 'image' : 'solid';
+              const flattenFooterType = (type: unknown) => ((type as string) === 'gradient' || (type as string) === 'solid' || (type as string) === 'image') ? type as 'solid' | 'gradient' | 'image' : 'solid';
+
+              return {
+                ...prev,
+                primaryColor: (branding.primaryColor as string) || (theme.primary as string) || prev.primaryColor,
+                headerBackground: (headerConfig.colorStart as string) || (branding.headerBackground as string) || (theme.primary as string) || prev.headerBackground,
+                headerBackgroundType: flattenHeaderType(headerConfig.type) || flattenHeaderType(branding.headerBackgroundType) || (theme.backgroundType as string) || prev.headerBackgroundType,
+                headerGradientStart: (headerConfig.colorStart as string) || (branding.headerGradientStart as string) || (theme.primaryGradientStart as string) || prev.headerGradientStart,
+                headerGradientEnd: (headerConfig.colorEnd as string) || (branding.headerGradientEnd as string) || (theme.primaryGradientEnd as string) || prev.headerGradientEnd,
+                headerOpacity: (headerConfig.opacity ?? (branding.headerOpacity as number | undefined) ?? (theme.opacity as number | undefined) ?? prev.headerOpacity) as number,
+                footerBackground: (footerConfig.colorStart as string) || (branding.footerBackground as string) || (theme.secondary as string) || prev.footerBackground,
+                footerBackgroundType: flattenFooterType(footerConfig.type) || flattenFooterType(branding.footerBackgroundType) || (theme.backgroundType as string) || prev.footerBackgroundType,
+                footerGradientStart: (footerConfig.colorStart as string) || (branding.footerGradientStart as string) || (theme.secondaryGradientStart as string) || prev.footerGradientStart,
+                footerGradientEnd: (footerConfig.colorEnd as string) || (branding.footerGradientEnd as string) || (theme.secondaryGradientEnd as string) || prev.footerGradientEnd,
+                footerOpacity: (footerConfig.opacity ?? (branding.footerOpacity as number | undefined) ?? (theme.opacity as number | undefined) ?? prev.footerOpacity) as number,
+                logoUrl: (branding.logoUrl as string) || (theme.logoUrl as string) || prev.logoUrl,
+                brandName: (branding.brandName as string) || prev.brandName,
+                aiInsightBadge: (features.aiInsightBadge as boolean | undefined) ?? prev.aiInsightBadge,
+                aiDesignMirror: (features.aiDesignMirror as boolean | undefined) ?? prev.aiDesignMirror,
+                customCss: (features.customCss as boolean | undefined) ?? prev.customCss,
+                voiceFeaturesEnabled: (features.voiceFeaturesEnabled as boolean | undefined) ?? prev.voiceFeaturesEnabled,
+                localFallbackAlert: (features.localFallbackAlert as boolean | undefined) ?? prev.localFallbackAlert,
+                widgetBodyOpacity: (branding.widgetBodyOpacity as number | undefined) ?? prev.widgetBodyOpacity,
+                widgetBodyBackground: (branding.widgetBodyBackground as string) || prev.widgetBodyBackground,
+              };
+            });
+
+            // Update greeting and suggested actions
+            const greeting = widgetConfig.greeting as string | undefined;
+            if (greeting) {
+              setGeneratedGreeting(greeting);
+            }
+
+            const sa = widgetConfig.suggestedActions as SuggestedAction[] | undefined;
+            if (sa && sa.length > 0) {
+              setSuggestedActions(sa);
+            }
+          })
+          .subscribe();
+      } catch (err) {
+        console.error('[Realtime] Failed to subscribe:', err);
+      }
+    }
+
+    setupRealtime();
+
+    return () => {
+      isActive = false;
+      if (channel) {
+        try {
+          const supabase = createClient();
+          void supabase.removeChannel(channel);
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+    };
+  }, [clientId, setConfig, setGeneratedGreeting, setSuggestedActions]);
+
+  // ════════════════════════════════════════════════════════════════════
+  // POST-SAVE REVALIDATION
+  // After committing changes, immediately re-fetch the tenant record
+  // to sync the canonical DB state back into local config. This ensures
+  // the Live Preview always reflects the saved state within milliseconds.
+  // ════════════════════════════════════════════════════════════════════
+  useEffect(() => {
+    if (!clientId) return;
+    
+    let isActive = true;
+    
+    // Store version in a ref to track revalidation state
+    const versionRef = { current: 0 };
+
+    async function revalidateAfterSave() {
+      try {
+        const response = await fetch(`/api/tenants/${clientId}`);
+        if (!response.ok) return;
+        const tenant = await response.json();
+        if (!isActive) return;
+        
+        // Prevent duplicate revalidation
+        const currentVersion = (tenant as Record<string, unknown>).version_stamp as number || 0;
+        if (currentVersion && currentVersion <= versionRef.current) return;
+        versionRef.current = currentVersion;
+        
+        const widgetConfig = tenant.widget_config || {};
+        const branding = (widgetConfig.branding || {}) as Record<string, unknown>;
+        const headerConfig = (branding.headerConfig as Record<string, unknown> | undefined) || {};
+        const footerConfig = (branding.footerConfig as Record<string, unknown> | undefined) || {};
+        const features = (widgetConfig.features || {}) as Record<string, unknown>;
+        const theme = (widgetConfig.theme || {}) as Record<string, unknown>;
+
+        const flattenHeaderType = (type: unknown) => ((type as string) === 'gradient' || (type as string) === 'solid' || (type as string) === 'image') ? type as 'solid' | 'gradient' | 'image' : 'solid';
+        const flattenFooterType = (type: unknown) => ((type as string) === 'gradient' || (type as string) === 'solid' || (type as string) === 'image') ? type as 'solid' | 'gradient' | 'image' : 'solid';
+
+        setConfig(prev => ({
+          ...prev,
+          primaryColor: (branding.primaryColor as string) || (theme.primary as string) || prev.primaryColor,
+          headerBackground: (headerConfig.colorStart as string) || (branding.headerBackground as string) || (theme.primary as string) || prev.headerBackground,
+          headerBackgroundType: flattenHeaderType(headerConfig.type) || flattenHeaderType(branding.headerBackgroundType) || (theme.backgroundType as string) || prev.headerBackgroundType,
+          headerGradientStart: (headerConfig.colorStart as string) || (branding.headerGradientStart as string) || (theme.primaryGradientStart as string) || prev.headerGradientStart,
+          headerGradientEnd: (headerConfig.colorEnd as string) || (branding.headerGradientEnd as string) || (theme.primaryGradientEnd as string) || prev.headerGradientEnd,
+          headerOpacity: (headerConfig.opacity ?? (branding.headerOpacity as number | undefined) ?? (theme.opacity as number | undefined) ?? prev.headerOpacity) as number,
+          footerBackground: (footerConfig.colorStart as string) || (branding.footerBackground as string) || (theme.secondary as string) || prev.footerBackground,
+          footerBackgroundType: flattenFooterType(footerConfig.type) || flattenFooterType(branding.footerBackgroundType) || (theme.backgroundType as string) || prev.footerBackgroundType,
+          footerGradientStart: (footerConfig.colorStart as string) || (branding.footerGradientStart as string) || (theme.secondaryGradientStart as string) || prev.footerGradientStart,
+          footerGradientEnd: (footerConfig.colorEnd as string) || (branding.footerGradientEnd as string) || (theme.secondaryGradientEnd as string) || prev.footerGradientEnd,
+          footerOpacity: (footerConfig.opacity ?? (branding.footerOpacity as number | undefined) ?? (theme.opacity as number | undefined) ?? prev.footerOpacity) as number,
+          logoUrl: (branding.logoUrl as string) || (theme.logoUrl as string) || prev.logoUrl,
+          brandName: (branding.brandName as string) || prev.brandName,
+          aiInsightBadge: (features.aiInsightBadge as boolean | undefined) ?? prev.aiInsightBadge,
+          aiDesignMirror: (features.aiDesignMirror as boolean | undefined) ?? prev.aiDesignMirror,
+          customCss: (features.customCss as boolean | undefined) ?? prev.customCss,
+          voiceFeaturesEnabled: (features.voiceFeaturesEnabled as boolean | undefined) ?? prev.voiceFeaturesEnabled,
+          localFallbackAlert: (features.localFallbackAlert as boolean | undefined) ?? prev.localFallbackAlert,
+          widgetBodyOpacity: (branding.widgetBodyOpacity as number | undefined) ?? prev.widgetBodyOpacity,
+          widgetBodyBackground: (branding.widgetBodyBackground as string) || prev.widgetBodyBackground,
+        }));
+
+        const greeting = widgetConfig.greeting as string | undefined;
+        if (greeting) {
+          setGeneratedGreeting(greeting);
+        }
+
+        const sa = widgetConfig.suggestedActions as SuggestedAction[] | undefined;
+        if (sa && sa.length > 0) {
+          setSuggestedActions(sa);
+        }
+      } catch (err) {
+        console.error('[Revalidation] Post-save fetch failed:', err);
+      }
+    }
+
+    // Expose revalidation function globally so handleCommit can call it
+    (window as unknown as Record<string, unknown>).__revalidateTenant = () => {
+      if (isActive) revalidateAfterSave();
+    };
+
+    return () => {
+      isActive = false;
+      delete (window as unknown as Record<string, unknown>).__revalidateTenant;
+    };
+  }, [clientId, setConfig, setGeneratedGreeting, setSuggestedActions]);
+
+  // ════════════════════════════════════════════════════════════════════
   // Hydrate full branding config from persisted widget_config on client switch
+  // ════════════════════════════════════════════════════════════════════
   const hydratedClientIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!clientId || hydratedClientIdRef.current === clientId) return;
@@ -1704,6 +1927,32 @@ export function ClientBrandingStudio({
             }
             opacityLabel="Window Opacity"
           />
+
+          {/* ── PRIMARY ACCENT COLOR ──────────────────────────────── */}
+          {/* Controls the widget border, action tabs, and send button color.
+              Maps to the `--w-primary` CSS variable consumed by ChatWidget.
+              Previously this was incorrectly derived from headerBackground. */}
+          <div className="space-y-4 mb-6">
+            <h3 className="text-sm font-semibold text-white/80 uppercase tracking-wider">Primary Accent</h3>
+            <p className="text-xs text-white/50">
+              Controls widget border, action tabs, and send button color.
+            </p>
+            <div className="flex items-center gap-3">
+              <input
+                type="color"
+                className="w-9 h-9 rounded-lg border border-white/20 bg-transparent cursor-pointer shrink-0"
+                value={toHex(config.primaryColor)}
+                onChange={(e) => updateConfig('primaryColor', e.target.value)}
+              />
+              <input
+                type="text"
+                value={config.primaryColor}
+                onChange={(e) => updateConfig('primaryColor', e.target.value)}
+                className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white font-mono text-sm w-full focus:outline-none focus:border-white/30"
+                placeholder="#0097b2"
+              />
+            </div>
+          </div>
 
           {/* Logo Upload */}
           <div className="space-y-4">

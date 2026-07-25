@@ -91,27 +91,13 @@ const CommandRequestSchema = z.object({
   actionId: z.string().optional(),
   payload: z.record(z.unknown()).optional().default({}),
   currentPath: z.string().optional(),
-  /**
-   * Public widget embed supply their tenant identifier here. Anonymous callers
-   * have no session, so the tenant is resolved server-side (via supabaseAdmin)
-   * from this client-supplied value — never trusted as an identity, only as a
-   * lookup key. Authenticated callers ignore this and resolve via their session.
-   */
   tenantId: z.string().min(1).max(200).optional(),
-  /**
-   * Sandbox flag raised by the Branding Studio preview widget. When true, the
-   * request is a non-persistent "test drive": the route never writes to the
-   * conversations / messages log tables (see `persistEnabled` in the handler).
-   */
   testMode: z.boolean().optional().default(false),
   isTestDrive: z.boolean().optional().default(false),
-  /**
-   * Transient, unsaved brand overrides surfaced by the live Studio preview so
-   * the AI can answer using the on-screen vibe/brand before the user saves.
-   */
   draftBrandName: z.string().optional(),
   draftVibe: z.string().optional(),
   draftPersona: z.string().optional(),
+  conversationId: z.string().optional(),
   context: z
     .object({
       clientProfileId: z.string().optional(),
@@ -468,6 +454,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
     draftBrandName,
     draftVibe,
     draftPersona,
+    conversationId,
   } = parsed;
 
   // ── Tenant resolution ───────────────────────────────────────────────
@@ -540,6 +527,27 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
   if (draftBrandName) previewDraft.brandName = draftBrandName;
   if (draftVibe) previewDraft.vibe = draftVibe;
   if (draftPersona) previewDraft.persona = draftPersona;
+
+  if (conversationId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId)) {
+    const tenantIdForMute = resolvedTenantId ?? suppliedTenantId;
+    const { data: muteRow } = await supabaseAdmin
+      .from('conversation_mute_state')
+      .select('is_ai_muted, scheduled_reenable_at')
+      .eq('conversation_id', conversationId)
+      .eq('tenant_id', tenantIdForMute)
+      .maybeSingle();
+
+    const isMuted = muteRow?.is_ai_muted && (!muteRow.scheduled_reenable_at || new Date(muteRow.scheduled_reenable_at) > new Date());
+    if (isMuted) {
+      return corsJson({
+        success: true,
+        actionType: 'CLIENT_NOP',
+        targetIds: [],
+        payload: {},
+        summary: 'A human agent is currently handling this conversation.',
+      });
+    }
+  }
 
   // Anonymous callers persist nothing to chat_messages / platform_actions
   // (no session => no userId, and we must not mutate tenant config). Only an
@@ -1014,23 +1022,19 @@ async function runSemanticFallback(
     });
 
     const content = completion.choices[0]?.message?.content;
-    let parsed: { actionType?: string; summary?: string; payload?: unknown } = {};
+    let llmParsed: { actionType?: string; summary?: string; payload?: unknown } = {};
     if (content) {
       try {
         const maybe = JSON.parse(content);
-        // JSON.parse accepts non-objects (null, [], "", numbers). Only a plain
-        // object carries actionType/summary/payload; anything else is treated as
-        // an unparseable turn so capture/routing degrades gracefully instead of
-        // throwing on parsed.actionType.
         if (maybe && typeof maybe === 'object' && !Array.isArray(maybe)) {
-          parsed = maybe as { actionType?: string; summary?: string; payload?: unknown };
+          llmParsed = maybe as { actionType?: string; summary?: string; payload?: unknown };
         }
       } catch {
-        parsed = {};
+        llmParsed = {};
       }
     }
 
-    const rawAction = (parsed.actionType ?? 'CLIENT_NOP').toString().toUpperCase();
+    const rawAction = (llmParsed.actionType ?? 'CLIENT_NOP').toString().toUpperCase();
     // When the request was routed as a booking intent, FORCE the booking action
     // type so capture is deterministic — the model may not emit the exact
     // SYSTEM_BOOKING_CAPTURE label, but we still extract its structured payload.
@@ -1055,14 +1059,8 @@ async function runSemanticFallback(
     // ── Booking capture (allowed for anon + authed) ─────────────────
     // Sanitize the LLM-extracted payload (untrusted model output) and persist a
     // lead row to tenant_appointments when a contact detail is present.
-    // NOTE: tenant_appointments.start_time is NOT NULL and status is constrained to
-    // {AVAILABLE, RESERVED, CONFIRMED, LEAD}. A captured lead (no slot chosen yet)
-    // is stored with status='LEAD' plus a now() placeholder for start_time/end_time
-    // (NOT NULL). The booking-bridge / booking_slots phase will create real
-    // reservations (status='RESERVED') on actual slots. 'LEAD' marks a lead row
-    // distinctly from a held slot so downstream reporting never conflates them.
     if (actionType === 'SYSTEM_BOOKING_CAPTURE') {
-      const booking = buildBookingCapture(parsed.payload ?? {}, text, parsed.summary ?? null);
+      const booking = buildBookingCapture(llmParsed.payload ?? {}, text, llmParsed.summary ?? null);
       if (booking && booking.hasContact && persistCtx?.tenantId) {
         try {
           await supabaseAdmin.from('tenant_appointments').insert({
@@ -1100,7 +1098,7 @@ async function runSemanticFallback(
     // ── Integration tool execution ──────────────────────────────────
     // BLOCKED for anon (see activeTools=[] above). For authed callers, execute
     // only allowed tenant tools and fold the confirmation into the summary.
-    const functionCall = parseFunctionCall(parsed as Record<string, unknown>);
+    const functionCall = parseFunctionCall(llmParsed as Record<string, unknown>);
     let toolResultMessage: string | null = null;
     if (functionCall && !isAnon && INTEGRATION_TOOL_BY_NAME[functionCall.name]) {
       const isAllowed = activeTools.some((t) => t.name === functionCall.name);
@@ -1116,7 +1114,7 @@ async function runSemanticFallback(
 
     const summary =
       toolResultMessage ??
-      (parsed.summary?.toString().trim() ||
+      (llmParsed.summary?.toString().trim() ||
         "I didn't quite catch that. What can I help you configure in your portal today?");
 
     const data: ClientCommandResponse = {

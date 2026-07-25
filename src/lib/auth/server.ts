@@ -1,7 +1,8 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import type { User } from '@supabase/supabase-js'
+import { supabaseAdmin } from '@/lib/supabase/admin'
 
 export async function createAuthClient() {
   const cookieStore = await cookies()
@@ -52,6 +53,20 @@ export async function getAuthenticatedUser(): Promise<AuthResult> {
     email: user.email ?? null,
     error: null,
   }
+}
+
+export async function getUserFromRequest(request: NextRequest): Promise<AuthResult> {
+  const authHeader = request.headers.get('authorization')
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice(7)
+    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token)
+    if (error || !user) {
+      return { user: null, userId: null, email: null, error: error || new Error('Unauthorized') }
+    }
+    return { user, userId: user.id, email: user.email ?? null, error: null }
+  }
+
+  return getAuthenticatedUser()
 }
 
 export function unauthorizedResponse() {

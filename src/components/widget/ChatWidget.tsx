@@ -132,6 +132,43 @@ const ChatWidget = ({
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [mounted, setMounted] = useState(false);
 
+  function isUuid(value: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+  }
+
+  const conversationStorageKey = `ovgweb_conversation_${tenantId}`;
+  const [conversationId, _setConversationId] = useState<string>(() => {
+    if (typeof window === 'undefined') return '';
+    try {
+      const stored = sessionStorage.getItem(conversationStorageKey);
+      if (stored && isUuid(stored)) return stored;
+    } catch {
+      /* no-op */
+    }
+    const generated = crypto.randomUUID();
+    try {
+      sessionStorage.setItem(conversationStorageKey, generated);
+    } catch {
+      /* no-op */
+    }
+    return generated;
+  });
+
+  const [muteState, setMuteState] = useState<{
+    isAiMuted: boolean;
+    isHumanTakingOver: boolean;
+    scheduledReenableAt: string | null;
+    handoverInitiatedAt: string | null;
+  }>({
+    isAiMuted: false,
+    isHumanTakingOver: false,
+    scheduledReenableAt: null,
+    handoverInitiatedAt: null,
+  });
+
+  const lastServerSinceRef = useRef<string>('');
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   // ── Cognitive Memory (relational recognition) state ─────────────
   // Fetched from the client-safe /api/client/memories endpoint so the widget
   // can surface a subtle "Recognized User" pill when the concierge has prior
@@ -404,7 +441,7 @@ const ChatWidget = ({
       void fetch('/api/chat/send-anon', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tenantId, message: userInputText }),
+        body: JSON.stringify({ tenantId, message: userInputText, conversationId }),
       }).catch(() => {
         /* non-blocking best-effort sync */
       });
@@ -416,6 +453,7 @@ const ChatWidget = ({
         body: JSON.stringify({
           text: userInputText,
           tenantId,
+          conversationId,
           context: {
             surface: "chat-widget-embed",
           },
@@ -465,7 +503,7 @@ const ChatWidget = ({
     } finally {
       setIsTyping(false);
     }
-  }, [messages, refreshConfiguration, preview, voiceEnabled, liveDraft, speakPreview, tenantId, clientMemories, chatHistoryKey]);
+  }, [messages, refreshConfiguration, preview, voiceEnabled, liveDraft, speakPreview, tenantId, clientMemories, chatHistoryKey, conversationId]);
 
   // ── Preview test-drive STT (Web Speech API) ─────────────────────────
   const startPreviewListening = useCallback(() => {
@@ -665,6 +703,81 @@ const ChatWidget = ({
     };
   }, [preview, messages, tenantId]);
 
+  // Poll server for new messages and mute state.
+  useEffect(() => {
+    if (preview) return;
+    if (!tenantId || !conversationId) return;
+
+    const poll = async () => {
+      try {
+        const params = new URLSearchParams({
+          tenantId,
+          conversationId,
+        });
+        if (lastServerSinceRef.current) {
+          params.set('since', lastServerSinceRef.current);
+        }
+        const sinceSent = lastServerSinceRef.current || '(none)';
+        console.log('[WidgetPoll] poll() fired', {
+          since: sinceSent,
+          url: `/api/widget/chat/messages?${params.toString()}`,
+        });
+        const res = await fetch(`/api/widget/chat/messages?${params.toString()}`);
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          messages: Array<{ id: string; sender_id: string | null; message: string; role: string; created_at: string }>;
+          muteState: {
+            isAiMuted: boolean;
+            isHumanTakingOver: boolean;
+            scheduledReenableAt: string | null;
+            handoverInitiatedAt: string | null;
+          };
+        };
+        const lastCreated = data.messages && data.messages.length > 0
+          ? data.messages[data.messages.length - 1].created_at
+          : null;
+        console.log('[WidgetPoll] poll() response', {
+          count: data.messages?.length ?? 0,
+          lastCreatedAt: lastCreated,
+          previousSince: sinceSent,
+          newSince: lastServerSinceRef.current,
+        });
+        if (lastCreated) {
+          lastServerSinceRef.current = lastCreated;
+        }
+        if (data.messages && data.messages.length > 0) {
+          setMessages((prev) => {
+            const existingIds = new Set(prev.map((m) => m.id));
+            const incoming = data.messages.filter((m) => !existingIds.has(m.id));
+            if (incoming.length === 0) return prev;
+            const next = [...prev, ...incoming.map((m) => ({
+              id: m.id,
+              role: (m.role === 'visitor' ? 'user' : 'assistant') as WidgetMessage['role'],
+              text: m.message,
+              timestamp: new Date(m.created_at).getTime(),
+            }))];
+            localStorage.setItem(chatHistoryKey, JSON.stringify(next));
+            return next;
+          });
+        }
+        if (data.muteState) {
+          setMuteState(data.muteState);
+        }
+      } catch {
+        /* non-fatal: poll failure */
+      }
+    };
+
+    void poll();
+    pollIntervalRef.current = setInterval(poll, 5000);
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+    };
+  }, [preview, tenantId, conversationId, chatHistoryKey]);
+
   return (
     <>
       {/* ===== PEEK TEASER ===== */}
@@ -845,6 +958,12 @@ const ChatWidget = ({
                   </span>
                   <span className="text-[11px] text-white/70 font-medium">Online now</span>
                 </div>
+                {muteState.isAiMuted && (
+                  <div className="mt-1 inline-flex items-center gap-1.5 rounded-full border px-2 py-[2px] text-[10px] font-medium tracking-wide backdrop-blur-md bg-amber-500/15 text-amber-300 border-amber-500/30">
+                    <span className="h-1.5 w-1.5 rounded-full animate-pulse bg-amber-400" />
+                    Owner speaking
+                  </div>
+                )}
                 {hasClientMemory && !preview && (
                   <div
                     className="mt-1 inline-flex items-center gap-1.5 rounded-full border px-2 py-[2px] text-[10px] font-medium tracking-wide backdrop-blur-md"
