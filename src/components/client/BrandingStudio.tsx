@@ -59,6 +59,7 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
 
   const [isLoading, setIsLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadingAssetLayer, setUploadingAssetLayer] = useState<'header' | 'footer' | 'widgetBody' | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
 
   const logoInputRef = useRef<HTMLInputElement>(null);
@@ -99,6 +100,49 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
       setFeedback({ type: 'error', message });
     } finally {
       setIsUploading(false);
+    }
+  }, [tenantId, tenantIdError, setDraftConfig]);
+
+  const uploadAsset = useCallback(async (layer: 'header' | 'footer' | 'widgetBody', file: File) => {
+    if (!tenantId) {
+      setFeedback({
+        type: 'error',
+        message: tenantIdError || 'Unable to resolve tenant ID. Please refresh the page.',
+      });
+      return;
+    }
+    setUploadingAssetLayer(layer);
+    setFeedback(null);
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      body.append('layer', layer === 'widgetBody' ? 'widget-body' : layer);
+      const response = await fetch('/api/client/upload-asset', {
+        method: 'POST',
+        body,
+      });
+      if (!response.ok) {
+        let message = `HTTP ${response.status}`;
+        try {
+          const errorData = await response.json();
+          message = (errorData as Record<string, unknown>).error as string || message;
+        } catch {
+          // Non-JSON error response; fall back to HTTP status.
+        }
+        throw new Error(message);
+      }
+      const result = await response.json();
+      setDraftConfig((prev) => ({
+        ...prev,
+        [layer]: { ...prev[layer], value: result.url as string | null },
+      }));
+      setFeedback({ type: 'success', message: 'Image uploaded successfully!' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Image upload failed';
+      console.error('[BrandingStudio] Asset upload error:', message, error);
+      setFeedback({ type: 'error', message });
+    } finally {
+      setUploadingAssetLayer(null);
     }
   }, [tenantId, tenantIdError, setDraftConfig]);
 
@@ -167,7 +211,7 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
         suggestedActions,
       };
 
-      const response = await fetch('/api/client/update-studio-config', {
+      let response = await fetch('/api/client/update-studio-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -176,13 +220,30 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
         }),
       });
 
+      response = await withRetryResponse(response, (signal) =>
+        fetch('/api/client/update-studio-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tenantId,
+            studioConfig,
+          }),
+          signal,
+        })
+      );
+
       if (!response.ok) {
         let errorMessage = `HTTP ${response.status}`;
         try {
           const errorData = await response.json();
-          errorMessage = (errorData as Record<string, unknown>).error as string || errorMessage;
+          const raw = ((errorData as Record<string, unknown>).error as string) || '';
+          if (raw.includes('<!DOCTYPE html>') || raw.includes('<html') || raw.includes('520:')) {
+            errorMessage = 'The configuration service is temporarily unavailable. Please try again shortly.';
+          } else if (raw.trim()) {
+            errorMessage = raw;
+          }
         } catch {
-          // If response is not JSON, use HTTP status message
+          // keep fallback HTTP status message if response is not JSON
         }
         throw new Error(errorMessage);
       }
@@ -341,6 +402,8 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
               updateLayer('header', layer);
               clearFeedback();
             }}
+            onFileSelect={(file) => uploadAsset('header', file)}
+            uploadLabel={uploadingAssetLayer === 'header' ? 'Uploading…' : 'Upload'}
           />
           <LayerControls
             title="Footer"
@@ -349,6 +412,8 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
               updateLayer('footer', layer);
               clearFeedback();
             }}
+            onFileSelect={(file) => uploadAsset('footer', file)}
+            uploadLabel={uploadingAssetLayer === 'footer' ? 'Uploading…' : 'Upload'}
           />
           <LayerControls
             title="Widget Body"
@@ -358,6 +423,8 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
               updateLayer('widgetBody', layer);
               clearFeedback();
             }}
+            onFileSelect={(file) => uploadAsset('widgetBody', file)}
+            uploadLabel={uploadingAssetLayer === 'widgetBody' ? 'Uploading…' : 'Upload'}
           />
         </div>
 
@@ -435,4 +502,40 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
       </p>
     </div>
   );
+}
+
+async function withRetryResponse(
+  response: Response,
+  fetcher: (signal: AbortSignal) => Promise<Response>,
+  retries = 1,
+  baseDelayMs = 400
+): Promise<Response> {
+  if (response.ok) return response;
+
+  let lastResponse = response;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt === 0) {
+      lastResponse = response;
+    } else {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30_000);
+      try {
+        lastResponse = await fetcher(controller.signal);
+      } finally {
+        clearTimeout(timeout);
+      }
+    }
+
+    if (lastResponse.ok) return lastResponse;
+
+    const status = lastResponse.status;
+    const shouldRetry = status === 500 || status === 502 || status === 503 || status === 520;
+    if (!shouldRetry || attempt === retries) {
+      return lastResponse;
+    }
+
+    await new Promise(resolve => setTimeout(resolve, baseDelayMs * 2 ** attempt));
+  }
+
+  return lastResponse;
 }

@@ -67,7 +67,7 @@ export function ClientPolicyManager({
     setUploading(type);
 
     try {
-      const url = await uploadBrandingAsset(tenantId, type, file);
+      const url = await uploadBrandingAsset(tenantId, type, file, 'tenant');
       setCustomAssets({
         ...customAssets,
         [`${type}_url`]: url,

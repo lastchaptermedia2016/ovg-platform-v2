@@ -1,5 +1,7 @@
 'use client';
 
+import { useState, useRef } from 'react';
+
 interface BackgroundControlsPanelProps {
   title: string;
   type: 'solid' | 'gradient' | 'image';
@@ -12,6 +14,7 @@ interface BackgroundControlsPanelProps {
   onGradientEndChange: (color: string) => void;
   imageUrl: string;
   onImageUrlChange: (url: string) => void;
+  onFileSelect?: (file: File) => Promise<void> | void;
   uploadLabel?: string;
   imagePlaceholder?: string;
   opacity: number;
@@ -34,6 +37,7 @@ export function BackgroundControlsPanel({
   onGradientEndChange,
   imageUrl,
   onImageUrlChange,
+  onFileSelect,
   uploadLabel,
   imagePlaceholder,
   opacity,
@@ -41,6 +45,10 @@ export function BackgroundControlsPanel({
   opacityLabel,
   solidPlaceholder,
 }: BackgroundControlsPanelProps) {
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
   const typeButtonClass = (current: string) =>
     `px-3 py-1.5 text-xs rounded transition-all ${
       type === current
@@ -53,6 +61,22 @@ export function BackgroundControlsPanel({
 
   const textInputClass =
     'flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-white font-mono text-sm w-full focus:outline-none focus:border-white/30';
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !onFileSelect) return;
+    setError(null);
+    setUploading(true);
+    try {
+      await onFileSelect(file);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Upload failed';
+      setError(message);
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
 
   return (
     <div className="space-y-4 mb-6">
@@ -136,10 +160,25 @@ export function BackgroundControlsPanel({
               className="flex-1 bg-black/30 border border-white/20 rounded px-3 py-2 text-xs text-white focus:border-[#0097b2] outline-none"
               placeholder={imagePlaceholder ?? 'https://example.com/image.jpg'}
             />
-            <button className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs rounded transition-all">
-              {uploadLabel ?? 'Upload'}
+            <button
+              type="button"
+              onClick={() => inputRef.current?.click()}
+              disabled={uploading}
+              className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white text-xs rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {uploading ? (uploadLabel ?? 'Uploading…') : (uploadLabel ?? 'Upload')}
             </button>
+            <input
+              ref={inputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="hidden"
+              onChange={handleFileChange}
+            />
           </div>
+          {error && (
+            <p className="text-xs text-red-400">{error}</p>
+          )}
           <div className="space-y-2">
             <label className="text-xs text-white/60 uppercase tracking-wider">{opacityLabel ?? 'Background Opacity'}</label>
             <div className="flex items-center gap-3">

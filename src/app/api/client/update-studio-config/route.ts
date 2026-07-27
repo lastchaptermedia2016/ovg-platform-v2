@@ -5,6 +5,9 @@ import { dispatchAction, ActionContext, ActionResult } from '@/lib/actionRegistr
 import { safeParseClientWidgetStudio } from '@/lib/schemas/client-config.schema';
 import { checkTenantAiExecutePermission } from '@/lib/checkTenantAiExecutePermission';
 
+const ROUTE_TIMEOUT_MS = 45_000;
+const CLIENT_FACING_TIMEOUT = 'The configuration service is temporarily unavailable. Please try again shortly.';
+
 /**
  * Client Studio Config Update Route
  * 
@@ -93,7 +96,10 @@ export async function POST(request: NextRequest) {
       source,
     };
 
-    const result: ActionResult = await dispatchAction('updateStudioConfig', validatedParams, ctx);
+    const result: ActionResult = await withRetry(
+      () => dispatchAction('updateStudioConfig', validatedParams, ctx),
+      { retries: 1, baseDelayMs: 400 }
+    );
 
     return NextResponse.json({
       success: result.success,
@@ -104,10 +110,48 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
+    const message = sanitizeErrorMessage(
+      error instanceof Error ? error.message : 'Internal server error'
+    );
     console.error('[ClientUpdateStudio] Unexpected error:', error);
     return NextResponse.json(
-      { success: false, error: 'Internal server error' },
+      { success: false, error: message },
       { status: 500 }
     );
   }
+}
+
+function sanitizeErrorMessage(message: string): string {
+  if (message.includes('<!DOCTYPE html>') || message.includes('<html') || message.includes('520:')) {
+    return CLIENT_FACING_TIMEOUT;
+  }
+  return message;
+}
+
+async function withRetry<T>(operation: () => Promise<T>, options: { retries: number; baseDelayMs: number }): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= options.retries; attempt++) {
+    try {
+      return await raceWithTimeout(operation(), ROUTE_TIMEOUT_MS);
+    } catch (error) {
+      lastError = error;
+      if (attempt === options.retries) break;
+      const delay = options.baseDelayMs * 2 ** attempt;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+function raceWithTimeout<T>(operation: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(CLIENT_FACING_TIMEOUT)), ms);
+    operation.then(value => {
+      clearTimeout(timer);
+      resolve(value);
+    }).catch(err => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
 }

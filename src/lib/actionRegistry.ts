@@ -81,35 +81,36 @@ export async function dispatchAction<TParams = unknown, TResult = unknown>(
     throw new Error(`Invalid params for action "${actionId}": ${errorMessages}`);
   }
 
-  // Log to action_logs and capture the created row id so we can backfill
-  // the outcome (success / duration / result) after execution.
   let logId: string | null = null;
-  try {
-    const supabase = await createAuthClient();
-    const { data, error } = await supabase
-      .from('action_logs')
-      .insert({
-        action_id: actionId,
-        tenant_id: ctx.tenantId,
-        user_id: ctx.userId,
-        source: ctx.source,
-        params: rawParams as Record<string, unknown>,
-        result: null,
-      })
-      .select('id')
-      .single();
 
-    if (error) {
-      console.error('[ActionRegistry] Failed to log action:', error);
-    } else {
-      logId = data?.id ?? null;
+  void (async () => {
+    try {
+      const supabase = await createAuthClient();
+      const { data, error } = await supabase
+        .from('action_logs')
+        .insert({
+          action_id: actionId,
+          tenant_id: ctx.tenantId,
+          user_id: ctx.userId,
+          source: ctx.source,
+          params: rawParams as Record<string, unknown>,
+          result: null,
+        })
+        .select('id')
+        .single();
+
+      if (error) {
+        console.error('[ActionRegistry] Failed to log action:', error);
+      } else {
+        logId = data?.id ?? null;
+      }
+    } catch (err) {
+      console.error('[ActionRegistry] Failed to log action:', err);
     }
-  } catch (err) {
-    console.error('[ActionRegistry] Failed to log action:', err);
-  }
+  })();
 
-  // Execute with telemetry capture. The update is awaited so logs stay
-  // accurate; the UI thread is already behind an async dispatch boundary.
+  // Execute with telemetry capture. The main flow proceeds without awaiting
+  // the logging tasks; failures are confined to console output.
   const start = performance.now();
   let success = true;
   let outcome: unknown;
@@ -124,8 +125,9 @@ export async function dispatchAction<TParams = unknown, TResult = unknown>(
   }
   const durationMs = Number((performance.now() - start).toFixed(2));
 
-  if (logId) {
+  void (async () => {
     try {
+      if (!logId) return;
       const supabase = await createAuthClient();
       const { error: updateError } = await supabase
         .from('action_logs')
@@ -142,7 +144,7 @@ export async function dispatchAction<TParams = unknown, TResult = unknown>(
     } catch (err) {
       console.error('[ActionRegistry] Failed to update action log:', err);
     }
-  }
+  })();
 
   // Re-throw on failure so callers observe the original error semantics.
   if (!success) {
@@ -309,71 +311,80 @@ export async function dispatchUpdateStudioConfig(
       widget_config: nextConfig,
       updated_at: new Date().toISOString(),
     })
-    .eq('id', tenantId)
-    .single();
+    .eq('id', tenantId);
 
   if (error) {
     throw new Error(error.message);
   }
 
-  // Propagate branding changes to the linked reseller so live widgets
-  // reading resellers.branding_colors / branding_assets stay in sync
-  // with the tenant widget_config.
   const { data: tenantRecord } = await client
     .from('tenants')
     .select('reseller_id')
     .eq('id', tenantId)
-    .single();
+    .maybeSingle();
 
+  // Propagate branding changes to the linked reseller so live widgets
+  // reading resellers.branding_colors / branding_assets stay in sync
+  // with the tenant widget_config. This is fire-and-forget: tenant config
+  // is the source of truth, so reseller sync failures must not block the
+  // save or surface partialFailure to the client.
   if (tenantRecord?.reseller_id) {
-    let resellerTenantId: string | undefined;
-    try {
-      const { data: resellerRecord } = await supabaseAdmin
-        .from('resellers')
-        .select('tenant_id')
-        .eq('id', tenantRecord.reseller_id)
-        .single();
-      resellerTenantId = resellerRecord?.tenant_id;
-    } catch (err) {
-      console.warn('[dispatchUpdateStudioConfig] Reseller lookup failed:', err);
-    }
+    void (async () => {
+      try {
+        let resellerTenantId: string | undefined;
+        try {
+          const { data: resellerRecord } = await supabaseAdmin
+            .from('resellers')
+            .select('tenant_id')
+            .eq('id', tenantRecord.reseller_id)
+            .single();
+          resellerTenantId = resellerRecord?.tenant_id;
+        } catch (lookupErr) {
+          console.warn('[dispatchUpdateStudioConfig] Reseller lookup failed:', lookupErr);
+          return;
+        }
 
-    if (!resellerTenantId) {
-      return { success: true };
-    }
+        if (!resellerTenantId) {
+          return;
+        }
 
-    const propagatedPayload = { ...(nextConfig.branding as Record<string, unknown>) };
-    const brandingColor = (propagatedPayload.primaryColor as string | undefined) ?? '#0097b2';
-    const accentColor = (propagatedPayload.accentColor as string | undefined) ?? '#D4AF37';
-    const logoUrl = (propagatedPayload.logoUrl as string | undefined) ?? null;
+        const propagatedPayload = { ...(nextConfig.branding as Record<string, unknown>) };
+        const brandingColor = (propagatedPayload.primaryColor as string | undefined) ?? '#0097b2';
+        const accentColor = (propagatedPayload.accentColor as string | undefined) ?? '#D4AF37';
+        const logoUrl = (propagatedPayload.logoUrl as string | undefined) ?? null;
 
-    const { data: _rpcResult, error: rpcError } = await supabaseAdmin.rpc(
-      'sync_reseller_branding',
-      {
-        p_tenant_id: resellerTenantId,
-        p_branding_bag: {
-          primaryColor: brandingColor,
-          accentColor: accentColor,
-          logoUrl: logoUrl,
-          favicon: null,
-          metaTitle: null,
-          metaDescription: null,
-          typography: { headingFont: 'Inter', bodyFont: 'Inter' },
-          borderRadius: 8,
-          mode: 'light',
-        },
-        p_expected_version: 1,
+        try {
+          const { error: rpcError } = await supabaseAdmin.rpc(
+            'sync_reseller_branding',
+            {
+              p_tenant_id: resellerTenantId,
+              p_branding_bag: {
+                primaryColor: brandingColor,
+                accentColor: accentColor,
+                logoUrl: logoUrl,
+                favicon: null,
+                metaTitle: null,
+                metaDescription: null,
+                typography: { headingFont: 'Inter', bodyFont: 'Inter' },
+                borderRadius: 8,
+                mode: 'light',
+              },
+              p_expected_version: 1,
+            }
+          );
+
+          if (rpcError) {
+            const message = rpcError instanceof Error ? rpcError.message : JSON.stringify(rpcError);
+            console.error('[dispatchUpdateStudioConfig] Reseller propagation failed:', message);
+          }
+        } catch (rpcErr) {
+          const message = rpcErr instanceof Error ? rpcErr.message : String(rpcErr);
+          console.error('[dispatchUpdateStudioConfig] Reseller propagation threw:', message);
+        }
+      } catch (outerErr) {
+        console.error('[dispatchUpdateStudioConfig] Reseller sync unexpected error:', outerErr);
       }
-    );
-
-    if (rpcError) {
-      const message = rpcError instanceof Error ? rpcError.message : JSON.stringify(rpcError);
-      console.error('[dispatchUpdateStudioConfig] Reseller propagation failed:', message);
-      return {
-        success: true,
-        partialFailure: { step: 'reseller-branding-propagation', error: message },
-      };
-    }
+    })();
   }
 
   return { success: true };

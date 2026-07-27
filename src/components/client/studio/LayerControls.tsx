@@ -15,6 +15,8 @@ interface LayerControlsProps {
   onChange: (layer: LayerDraft) => void;
   /** Show the backdrop blur toggle (used for the widget body layer). */
   allowBlur?: boolean;
+  onFileSelect?: (file: File) => Promise<void> | void;
+  uploadLabel?: string;
 }
 
 const TYPE_OPTIONS: { value: LayerType; label: string }[] = [
@@ -30,7 +32,7 @@ const TYPE_OPTIONS: { value: LayerType; label: string }[] = [
  * optional backdrop-blur toggle. All changes are pushed up via onChange so the
  * parent draft — and therefore the live preview — updates immediately.
  */
-export function LayerControls({ title, layer, onChange, allowBlur = false }: LayerControlsProps) {
+export function LayerControls({ title, layer, onChange, allowBlur = false, onFileSelect, uploadLabel }: LayerControlsProps) {
   // Gradient color stops are derived from the stored CSS gradient string so the
   // preview and the inputs stay in sync without extra state/effects.
   const [gradStart, gradEnd] = parseGradient(layer.type === 'gradient' ? layer.value : null);
@@ -79,6 +81,8 @@ export function LayerControls({ title, layer, onChange, allowBlur = false }: Lay
                 value={layer.value}
                 onChange={(url) => update({ value: url })}
                 label={`${title} Image URL`}
+                onFileSelect={onFileSelect}
+                uploadLabel={uploadLabel}
               />
             ) : layer.type === 'gradient' ? (
               <div className="flex gap-3 items-center">

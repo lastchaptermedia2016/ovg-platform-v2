@@ -75,10 +75,163 @@ export function LiveChat({ tenantId, accessToken, conversationId }: LiveChatProp
     if (!tenantId || loadedRef.current) return;
     loadedRef.current = true;
 
+    const RECONNECT_MAX_ATTEMPTS = 5;
+    const RECONNECT_BASE_DELAY = 1000;
+    const RECONNECT_MAX_DELAY = 30000;
+
+    const reconnectAttemptRef = { current: 0 };
+    const reconnectTimerRef = { current: null as ReturnType<typeof setTimeout> | null };
+    const isReconnectingRef = { current: false };
+
+    const attemptReconnect = () => {
+      if (reconnectAttemptRef.current >= RECONNECT_MAX_ATTEMPTS) {
+        isReconnectingRef.current = false;
+        console.warn('[LiveChat] reconnect exhausted');
+        return;
+      }
+      isReconnectingRef.current = true;
+      const attempt = reconnectAttemptRef.current;
+      const delay = Math.min(RECONNECT_BASE_DELAY * 2 ** attempt, RECONNECT_MAX_DELAY);
+      console.info(`[LiveChat] reconnect attempt ${attempt + 1} in ${delay}ms`);
+      reconnectTimerRef.current = setTimeout(async () => {
+        reconnectAttemptRef.current += 1;
+        try {
+          await subscribeToChatMessages();
+          isReconnectingRef.current = false;
+        } catch {
+          isReconnectingRef.current = false;
+        }
+      }, delay);
+    };
+
     const supabase = createClient();
     let active = true;
 
+    const subscribeToChatMessages = async (): Promise<void> => {
+      const channelName = `chat_messages:${tenantId}`;
+      const expectedTopic = `realtime:chat_messages:${tenantId}`;
+      const existingChannels = (supabase as { realtime?: { channels?: Array<{ topic?: string }> } }).realtime?.channels ?? [];
+      if (channelRef.current) {
+        try {
+          const idx = existingChannels.indexOf(channelRef.current as never);
+          if (idx >= 0) existingChannels.splice(idx, 1);
+        } catch {
+          // best-effort cleanup
+        }
+        channelRef.current = null;
+      }
+      const staleIdx = (existingChannels ?? []).findIndex((ch) => ch.topic && ch.topic.includes(expectedTopic));
+      if (staleIdx >= 0) {
+        try {
+          supabase.removeChannel(existingChannels[staleIdx] as never);
+        } catch {
+          // best-effort cleanup
+        }
+      }
+
+      const channel = supabase
+        .channel(channelName)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'chat_messages',
+            filter: `tenant_id=eq.${tenantId}`,
+          },
+          (payload) => {
+            const row = payload.new as ChatMessage;
+            if (!active) return;
+            setMessages((prev) => {
+              const optimisticIndex = prev.findIndex(
+                (m) =>
+                  optimisticIdsRef.current.has(m.id) &&
+                  m.sender_id === row.sender_id &&
+                  m.message === row.message &&
+                  m.tenant_id === row.tenant_id,
+              );
+
+              if (optimisticIndex !== -1) {
+                const next = [...prev];
+                next[optimisticIndex] = row;
+                optimisticIdsRef.current.delete(prev[optimisticIndex].id);
+                return next;
+              }
+
+              if (prev.some((m) => m.id === row.id)) return prev;
+              return [...prev, row];
+            });
+
+            if (row.conversation_id) {
+              const convId = row.conversation_id;
+              if (!active) return;
+              setConversations((prev) => {
+                const exists = prev.some((c) => c.id === convId);
+                if (exists) {
+                  setSelectedConversationId((current) => {
+                    if (!current) return convId;
+                    return current;
+                  });
+                  return prev.map((c) =>
+                    c.id === convId
+                      ? {
+                          ...c,
+                          label: row.role === 'visitor'
+                            ? `${row.message.replace(/\n/g, ' ').slice(0, 28)} since ${new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                            : c.label,
+                          lastMessageAt: row.created_at,
+                        }
+                      : c,
+                  ).sort((a, b) => {
+                    const aTime = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+                    const bTime = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+                    return bTime - aTime;
+                  });
+                }
+                const newConv: ConversationOption = {
+                  id: convId,
+                  label: `${row.message.replace(/\n/g, ' ').slice(0, 28)} since ${new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+                  lastMessageAt: row.created_at,
+                  messageCount: 1,
+                };
+                const next = [...prev, newConv].sort((a, b) => {
+                  const aTime = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+                  const bTime = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+                  return bTime - aTime;
+                });
+                setSelectedConversationId((current) => current || convId);
+                return next;
+              });
+            }
+          },
+        )
+        .subscribe((status, err) => {
+          if (status === 'SUBSCRIBED') {
+            reconnectAttemptRef.current = 0;
+            console.info(`[LiveChat] subscription active: ${channelName}`);
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            console.error('[LiveChat] subscription error:', status, err);
+            if (!isReconnectingRef.current) {
+              attemptReconnect();
+            }
+          } else if (status === 'CLOSED') {
+            console.warn('[LiveChat] subscription closed:', channelName);
+            if (!isReconnectingRef.current) {
+              attemptReconnect();
+            }
+          }
+        });
+
+      if (active) {
+        channelRef.current = channel;
+      } else {
+        channel.unsubscribe();
+        supabase.removeChannel(channel);
+      }
+    };
+
     const loadMessages = async () => {
+      if (!active) return;
       setLoading(true);
       setError(null);
       try {
@@ -102,7 +255,7 @@ export function LiveChat({ tenantId, accessToken, conversationId }: LiveChatProp
       }
     };
 
-    const hydrateSession = async (client: ReturnType<typeof createClient>) => {
+    const hydrateSession = async (client: typeof supabase) => {
       const token = accessToken;
       if (!token) {
         try {
@@ -146,101 +299,18 @@ export function LiveChat({ tenantId, accessToken, conversationId }: LiveChatProp
       await loadConversations();
       if (!active) return;
 
-      const channel = supabase
-        .channel(`chat_messages:${tenantId}`)
-        .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'chat_messages',
-            filter: `tenant_id=eq.${tenantId}`,
-          },
-          (payload) => {
-            const row = payload.new as ChatMessage;
-            setMessages((prev) => {
-              const optimisticIndex = prev.findIndex(
-                (m) =>
-                  optimisticIdsRef.current.has(m.id) &&
-                  m.sender_id === row.sender_id &&
-                  m.message === row.message &&
-                  m.tenant_id === row.tenant_id,
-              );
-
-              if (optimisticIndex !== -1) {
-                const next = [...prev];
-                next[optimisticIndex] = row;
-                optimisticIdsRef.current.delete(prev[optimisticIndex].id);
-                return next;
-              }
-
-              if (prev.some((m) => m.id === row.id)) return prev;
-              return [...prev, row];
-            });
-
-            if (row.conversation_id) {
-              const convId = row.conversation_id;
-              setConversations((prev) => {
-                const exists = prev.some((c) => c.id === convId);
-                if (exists) {
-                  setSelectedConversationId((current) => {
-                    if (!current) return convId;
-                    return current;
-                  });
-                  return prev.map((c) =>
-                    c.id === convId
-                      ? {
-                          ...c,
-                          label: row.role === 'visitor'
-                            ? `${row.message.replace(/\n/g, ' ').slice(0, 28)} since ${new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-                            : c.label,
-                          lastMessageAt: row.created_at,
-                        }
-                      : c,
-                  ).sort((a, b) => {
-                    const aTime = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
-                    const bTime = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
-                    return bTime - aTime;
-                  });
-                }
-                const newConv: ConversationOption = {
-                  id: convId,
-                  label: `${row.message.replace(/\n/g, ' ').slice(0, 28)} since ${new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
-                  lastMessageAt: row.created_at,
-                  messageCount: 1,
-                };
-                const next = [...prev, newConv].sort((a, b) => {
-                  const aTime = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
-                  const bTime = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
-                  return bTime - aTime;
-                });
-                setSelectedConversationId((current) => current || convId);
-                return next;
-              });
-            }
-          },
-        )
-        .subscribe((status, err) => {
-          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-            console.error('[LiveChat] subscription error:', status, err);
-          } else if (status === 'SUBSCRIBED') {
-            console.info('[LiveChat] subscription active:', `chat_messages:${tenantId}`);
-          } else if (status === 'CLOSED') {
-            console.warn('[LiveChat] subscription closed:', `chat_messages:${tenantId}`);
-          }
-        });
-      if (active) {
-        channelRef.current = channel;
-      } else {
-        channel.unsubscribe();
-        supabase.removeChannel(channel);
-      }
+      await subscribeToChatMessages();
     };
 
     init();
 
     return () => {
       active = false;
+      isReconnectingRef.current = false;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       loadedRef.current = false;
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current);

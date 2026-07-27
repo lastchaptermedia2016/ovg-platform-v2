@@ -6,6 +6,7 @@ import {
   type AISettingsInput,
 } from "@/config/ai-engine";
 import { IntegrationSuite } from "@/components/reseller/IntegrationSuite";
+import { ResellerKnowledgeManager } from "@/components/reseller/ResellerKnowledgeManager";
 import type { BookingProviderType } from "@/interfaces/booking-provider.interface";
 import { useHannah } from "@/contexts/HannahContext";
 
@@ -415,6 +416,12 @@ export function AIEngineStudio({
               onSaved={handleIntegrationSaved}
             />
           )}
+
+          <ResellerKnowledgeManager
+            tenants={tenants}
+            selectedTenantId={selectedTenantId}
+            onSelectedTenantIdChange={setSelectedTenantId}
+          />
 
           {/* ── Synced with Branding Toggle ── */}
           <div className="rounded-xl backdrop-blur-md bg-white/5 border border-white/10 p-3 sm:p-4 transition-all duration-300 ease-in-out">

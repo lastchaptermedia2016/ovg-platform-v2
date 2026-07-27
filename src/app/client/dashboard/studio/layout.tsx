@@ -9,24 +9,76 @@ import { VoiceMicIndicator } from '@/components/studio/VoiceMicIndicator';
 import { CapabilitiesModal } from '@/components/studio/CapabilitiesModal';
 import { CapabilitiesBridge } from '@/components/studio/CapabilitiesBridge';
 import { VoiceProvider } from '@/providers/voice-provider';
+import {
+  Settings,
+  MessageCircle,
+  FileText,
+  Puzzle,
+} from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import type { AuthContext } from '@/lib/actions/auth-middleware';
 
-const navItems = [
+interface NavItem {
+  href: string;
+  label: string;
+  description: string;
+  accentColor: string;
+  borderColor: string;
+  glowColor: string;
+  iconBg: string;
+  iconColor: string;
+  icon: React.ElementType;
+  inactiveBg: string;
+}
+
+const navItems: NavItem[] = [
   {
     href: '/client/dashboard/studio/branding',
     label: 'Branding',
     description: 'Colors, logo, and visual identity',
+    accentColor: '#06b6d4',
+    borderColor: 'rgba(6, 182, 212, 0.45)',
+    glowColor: 'rgba(6, 182, 212, 0.35)',
+    iconBg: 'rgba(6, 182, 212, 0.18)',
+    iconColor: '#22d3ee',
+    icon: Settings,
+    inactiveBg: 'rgba(6, 182, 212, 0.12)',
   },
   {
     href: '/client/dashboard/studio/persona',
     label: 'Persona',
     description: 'AI behavior, tone, and voice',
+    accentColor: '#f59e0b',
+    borderColor: 'rgba(245, 158, 11, 0.45)',
+    glowColor: 'rgba(245, 158, 11, 0.35)',
+    iconBg: 'rgba(245, 158, 11, 0.18)',
+    iconColor: '#fbbf24',
+    icon: MessageCircle,
+    inactiveBg: 'rgba(245, 158, 11, 0.12)',
+  },
+  {
+    href: '/client/dashboard/studio/knowledge',
+    label: 'Knowledge',
+    description: 'FAQ, policies, and training content',
+    accentColor: '#a855f7',
+    borderColor: 'rgba(168, 85, 247, 0.45)',
+    glowColor: 'rgba(168, 85, 247, 0.35)',
+    iconBg: 'rgba(168, 85, 247, 0.18)',
+    iconColor: '#c084fc',
+    icon: FileText,
+    inactiveBg: 'rgba(168, 85, 247, 0.12)',
   },
   {
     href: '/client/dashboard/studio/integrations',
     label: 'Integrations',
     description: 'Smart booking, CRM, commerce & knowledge add-ons',
+    accentColor: '#10b981',
+    borderColor: 'rgba(16, 185, 129, 0.45)',
+    glowColor: 'rgba(16, 185, 129, 0.35)',
+    iconBg: 'rgba(16, 185, 129, 0.18)',
+    iconColor: '#34d399',
+    icon: Puzzle,
+    inactiveBg: 'rgba(16, 185, 129, 0.12)',
   },
 ];
 
@@ -132,35 +184,45 @@ function StudioShell({ pathname, children }: { pathname: string; children: React
       </div>
 
       <div className="flex flex-col lg:flex-row gap-6">
-        {/* Navigation Sidebar */}
-        <aside className="w-full lg:w-64 shrink-0">
-          <nav className="rounded-2xl border border-white/10 bg-slate-950/15 backdrop-blur-xl p-3 space-y-1">
-            {navItems.map((item) => {
-              const isActive = pathname === item.href;
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={`flex flex-col rounded-xl px-4 py-3 transition-colors ${
-                    isActive
-                      ? 'bg-cyan-500/10 border border-cyan-500/30'
-                      : 'border border-transparent hover:bg-white/5 hover:border-white/10'
-                  }`}
-                >
-                  <span
-                    className={`text-xs font-semibold font-agrandir ${
-                      isActive ? 'text-cyan-400' : 'text-white'
-                    }`}
+        {/* Studio Navigation Cards */}
+        <aside className="w-full lg:w-64 shrink-0 space-y-3">
+          {navItems.map((item) => {
+            const isActive = pathname === item.href;
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="block rounded-2xl border p-4 transition-all duration-300 hover:scale-[1.01]"
+                style={{
+                  backgroundColor: isActive ? `${item.accentColor}10` : item.inactiveBg,
+                  borderColor: isActive ? item.borderColor : `${item.accentColor}25`,
+                  boxShadow: isActive ? `0 0 24px ${item.glowColor}` : `0 0 10px ${item.glowColor}`,
+                  backdropFilter: 'blur(16px)',
+                }}
+              >
+                <div className="flex items-center gap-3">
+                  <div
+                    className="flex h-8 w-8 items-center justify-center rounded-lg"
+                    style={{
+                      backgroundColor: item.iconBg,
+                      color: isActive ? item.iconColor : `${item.accentColor}cc`,
+                    }}
                   >
-                    {item.label}
-                  </span>
-                  <span className="text-[10px] text-zinc-500 font-agrandir mt-0.5">
-                    {item.description}
-                  </span>
-                </Link>
-              );
-            })}
-          </nav>
+                    <Icon className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-semibold text-white font-agrandir block">
+                      {item.label}
+                    </span>
+                    <span className="text-[10px] text-slate-300 font-medium font-agrandir">
+                      {item.description}
+                    </span>
+                  </div>
+                </div>
+              </Link>
+            );
+          })}
         </aside>
 
         {/* Split-pane container */}

@@ -934,78 +934,76 @@ const ChatWidget = ({
           {/* Header */}
           <div className="relative widget-header p-5 flex justify-between items-center overflow-hidden">
             <div className="absolute inset-0 bg-black/40" />
-              <div className="relative flex items-center gap-3">
-                {displayLogoUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element -- Dynamic third-party logo URL; next/image remotePatterns cannot be configured for arbitrary user-provided domains in preview mode.
-                  <img
-                    src={displayLogoUrl}
-                    alt={displayBrandName}
-                    width={40}
-                    height={40}
-                    className="object-contain"
-                  />
-                ) : (
-                  <div className="h-10 w-10 rounded-full bg-white/20 flex items-center justify-center text-white font-bold text-sm">
-                    {displayBrandName.charAt(0).toUpperCase()}
-                  </div>
-                )}
-                <div>
-                  <h3 className="font-semibold text-white text-sm">{displayBrandName}</h3>
-                  <div className="flex items-center gap-1.5">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                  </span>
-                  <span className="text-[11px] text-white/70 font-medium">Online now</span>
+            <div className="relative flex items-center gap-3">
+              {displayLogoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element -- Dynamic third-party logo URL; next/image remotePatterns cannot be configured for arbitrary user-provided domains in preview mode.
+                 <img
+                   src={displayLogoUrl}
+                   alt={displayBrandName}
+                   width={64}
+                   height={64}
+                   className="object-contain h-16 w-16"
+                 />
+              ) : (
+                <div className="h-16 w-16 rounded-full bg-white/20 flex items-center justify-center text-white font-bold text-3xl">
+                  {displayBrandName.charAt(0).toUpperCase()}
                 </div>
-                {muteState.isAiMuted && (
-                  <div className="mt-1 inline-flex items-center gap-1.5 rounded-full border px-2 py-[2px] text-[10px] font-medium tracking-wide backdrop-blur-md bg-amber-500/15 text-amber-300 border-amber-500/30">
-                    <span className="h-1.5 w-1.5 rounded-full animate-pulse bg-amber-400" />
-                    Owner speaking
-                  </div>
-                )}
-                {hasClientMemory && !preview && (
-                  <div
-                    className="mt-1 inline-flex items-center gap-1.5 rounded-full border px-2 py-[2px] text-[10px] font-medium tracking-wide backdrop-blur-md"
-                    style={{
-                      borderColor: "var(--w-accent, #D4AF37)",
-                      color: "var(--w-accent, #D4AF37)",
-                      backgroundColor: "color-mix(in srgb, var(--w-accent, #D4AF37) 12%, transparent)",
-                    }}
-                    title={clientMemories.preferences ? `Preferences: ${clientMemories.preferences}` : "We recognize you from prior conversations"}
-                  >
-                    <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ backgroundColor: "var(--w-accent, #D4AF37)" }} />
-                    {clientMemories.client_name
-                      ? `Recognized · ${clientMemories.client_name}`
-                      : clientMemories.company_name
-                        ? `Recognized · ${clientMemories.company_name}`
-                        : "Cognitive Memory Active"}
-                  </div>
-                )}
+              )}
+            </div>
+            <div className="flex-1 flex flex-col items-center justify-center text-center">
+              <h3 className="font-bold text-white text-xs leading-tight">{displayBrandName}</h3>
+              <div className="flex items-center justify-center gap-1.5">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                </span>
+                <span className="text-[11px] text-white/70 font-medium">Online now</span>
               </div>
+              {muteState.isAiMuted && (
+                <div className="mt-1 inline-flex items-center gap-1.5 rounded-full border px-2 py-[2px] text-[10px] font-medium tracking-wide backdrop-blur-md bg-amber-500/15 text-amber-300 border-amber-500/30">
+                  <span className="h-1.5 w-1.5 rounded-full animate-pulse bg-amber-400" />
+                  Owner speaking
+                </div>
+              )}
+              {hasClientMemory && !preview && (
+                <div
+                  className="mt-1 inline-flex items-center gap-1.5 rounded-full border px-2 py-[2px] text-[10px] font-medium tracking-wide backdrop-blur-md"
+                  style={{
+                    borderColor: "var(--w-accent, #D4AF37)",
+                    color: "var(--w-accent, #D4AF37)",
+                    backgroundColor: "color-mix(in srgb, var(--w-accent, #D4AF37) 12%, transparent)",
+                  }}
+                  title={clientMemories.preferences ? `Preferences: ${clientMemories.preferences}` : "We recognize you from prior conversations"}
+                >
+                  <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ backgroundColor: "var(--w-accent, #D4AF37)" }} />
+                  {clientMemories.client_name
+                    ? `Recognized · ${clientMemories.client_name}`
+                    : clientMemories.company_name
+                      ? `Recognized · ${clientMemories.company_name}`
+                      : "Cognitive Memory Active"}
+                </div>
+              )}
             </div>
-
-            {/* Controls */}
-            <div className="relative flex items-center gap-2">
-              <Button
-                className="h-8 w-8 rounded-full text-white shrink-0"
-                style={{ backgroundColor: "var(--w-primary, #0097b2)" }}
-                onClick={() => {
-                  const next = !voiceEnabled;
-                  setVoiceEnabled(next);
-                  localStorage.setItem("ovgweb_voice_mute", next ? "" : "true");
-                  if (!next && audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
-                }}
-              >
-                {voiceEnabled ? <Volume2 className="h-4 w-4 text-white" /> : <VolumeX className="h-4 w-4 text-white" />}
-              </Button>
-              <Button className="h-8 w-8 rounded-full text-white shrink-0" style={{ backgroundColor: "var(--w-primary, #0097b2)" }} onClick={() => setShowResetConfirm(true)}>
-                <RefreshCw className="h-4 w-4 text-white" />
-              </Button>
-              <Button className="h-8 w-8 rounded-full text-white shrink-0" style={{ backgroundColor: "var(--w-primary, #0097b2)" }} onClick={() => setIsOpen(false)}>
-                <X className="h-4 w-4 text-white" />
-              </Button>
-            </div>
+             <div className="relative flex items-center gap-3">
+                <Button
+                  className="h-11 w-11 rounded-full text-white shrink-0 flex items-center justify-center"
+                  style={{ backgroundColor: "var(--w-primary, #0097b2)" }}
+                  onClick={() => {
+                    const next = !voiceEnabled;
+                    setVoiceEnabled(next);
+                    localStorage.setItem("ovgweb_voice_mute", next ? "" : "true");
+                    if (!next && audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+                  }}
+                >
+                  {voiceEnabled ? <Volume2 className="h-6 w-6 text-white" /> : <VolumeX className="h-6 w-6 text-white" />}
+                </Button>
+                <Button className="h-11 w-11 rounded-full text-white shrink-0 flex items-center justify-center" style={{ backgroundColor: "var(--w-primary, #0097b2)" }} onClick={() => setShowResetConfirm(true)}>
+                  <RefreshCw className="h-6 w-6 text-white" />
+                </Button>
+                <Button className="h-11 w-11 rounded-full text-white shrink-0 flex items-center justify-center" style={{ backgroundColor: "var(--w-primary, #0097b2)" }} onClick={() => setIsOpen(false)}>
+                  <X className="h-6 w-6 text-white" />
+                </Button>
+              </div>
           </div>
 
           {/* Messages */}
@@ -1141,7 +1139,7 @@ const ChatWidget = ({
                   aria-label={isRecording ? "Stop listening" : "Hold to talk"}
                   className={`shrink-0 h-10 w-10 flex items-center justify-center rounded-full ${isRecording ? "text-blue-500 animate-pulse scale-110" : "text-pink-500 hover:text-pink-600"}`}
                 >
-                  {isRecording ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                   {isRecording ? <MicOff className="h-8 w-8" /> : <Mic className="h-8 w-8" />}
                 </Button>
               )}
 

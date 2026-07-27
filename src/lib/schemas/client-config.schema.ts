@@ -26,12 +26,14 @@ export const ClientHexColorSchema = z
 
 /**
  * URL validation schema.
- * Accepts absolute and relative URLs.
+ * Accepts absolute URLs, relative paths, data URLs for Base64-encoded assets,
+ * and plain /-rooted paths used by the file/media pipeline.
  */
 export const ClientURLSchema = z
   .string()
   .url({ message: 'Must be a valid URL' })
-  .or(z.string().startsWith('/'));
+  .or(z.string().startsWith('/'))
+  .or(z.string().startsWith('data:'));
 
 // ============================================================================
 // AI Persona Schema (Client Edition)

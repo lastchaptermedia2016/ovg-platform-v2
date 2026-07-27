@@ -6,29 +6,55 @@ interface AssetUploaderProps {
   value: string | null;
   onChange: (url: string) => void;
   label?: string;
+  onFileSelect?: (file: File) => Promise<void> | void;
+  uploadLabel?: string;
 }
 
 /**
- * Image source picker for layered backgrounds. Accepts a direct URL or a local
- * file (read as a data URL so it persists in the draft without a backend upload
- * endpoint). Emits the resulting URL via onChange.
+ * Image source picker for layered backgrounds.
+ *
+ * - If onFileSelect is provided, selected files are uploaded via the parent's async handler
+ *   and the resulting URL is applied through onChange.
+ * - If onFileSelect is omitted, files are read as data URLs client-side (legacy fallback).
  */
-export function AssetUploader({ value, onChange, label = 'Background Image URL' }: AssetUploaderProps) {
+export function AssetUploader({
+  value,
+  onChange,
+  label = 'Background Image URL',
+  onFileSelect,
+  uploadLabel,
+}: AssetUploaderProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
 
-  const handleFile = (file: File | undefined) => {
+  const handleFile = async (file: File | undefined) => {
     if (!file) return;
     if (!file.type.startsWith('image/')) {
       setError('Please choose an image file');
       return;
     }
     setError(null);
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') onChange(reader.result);
-    };
-    reader.readAsDataURL(file);
+    setUploading(true);
+
+    try {
+      if (onFileSelect) {
+        await onFileSelect(file);
+      } else {
+        const reader = new FileReader();
+        const result = await new Promise<string | ArrayBuffer>((resolve, reject) => {
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(reader.error ?? new Error('File read failed'));
+          reader.readAsDataURL(file);
+        });
+        if (typeof result === 'string') onChange(result);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Upload failed';
+      setError(message);
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -48,16 +74,20 @@ export function AssetUploader({ value, onChange, label = 'Background Image URL' 
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
-          className="text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:border-cyan-500/50 text-zinc-200 transition-colors"
+          disabled={uploading}
+          className="text-xs px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:border-cyan-500/50 text-zinc-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Upload image
+          {uploading ? 'Uploading…' : (uploadLabel ?? 'Upload image')}
         </button>
         <input
           ref={inputRef}
           type="file"
           accept="image/*"
           className="hidden"
-          onChange={(e) => handleFile(e.target.files?.[0])}
+          onChange={(e) => {
+            void handleFile(e.target.files?.[0]);
+            if (inputRef.current) inputRef.current.value = '';
+          }}
         />
         {value ? (
           <span className="text-xs text-emerald-400 truncate max-w-[8rem]">Image set</span>

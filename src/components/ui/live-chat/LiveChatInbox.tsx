@@ -65,6 +65,7 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
   const optimisticIdsRef = useRef<Set<string>>(new Set());
   const flashTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const selectedRef = useRef(selectedConversationId);
+  const isUnmountingRef = useRef(false);
 
   const supabase = useMemo(() => createClient(), []);
 
@@ -255,35 +256,48 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
   useEffect(() => {
     if (!tenantId || loadedRef.current) return;
     loadedRef.current = true;
+    isUnmountingRef.current = false;
 
-    const init = async () => {
-      await hydrateSession();
-      const { data: { user: _user } } = await supabase.auth.getUser();
-      if (_user) {
-        setCurrentUserId(_user.id);
+    const RECONNECT_MAX_ATTEMPTS = 5;
+    const RECONNECT_BASE_DELAY = 1000;
+    const RECONNECT_MAX_DELAY = 30000;
+
+    const reconnectAttemptRef = { current: 0 };
+    const reconnectTimerRef = { current: null as ReturnType<typeof setTimeout> | null };
+    const isReconnectingRef = { current: false };
+
+    const attemptReconnect = () => {
+      if (reconnectAttemptRef.current >= RECONNECT_MAX_ATTEMPTS) {
+        isReconnectingRef.current = false;
+        console.warn('[LiveChat] reconnect exhausted');
+        return;
       }
+      isReconnectingRef.current = true;
+      const attempt = reconnectAttemptRef.current;
+      const delay = Math.min(RECONNECT_BASE_DELAY * 2 ** attempt, RECONNECT_MAX_DELAY);
+      console.info(`[LiveChat] reconnect attempt ${attempt + 1} in ${delay}ms`);
+      reconnectTimerRef.current = setTimeout(async () => {
+        reconnectAttemptRef.current += 1;
+        try {
+          await subscribeToChatMessages();
+          isReconnectingRef.current = false;
+        } catch {
+          isReconnectingRef.current = false;
+        }
+      }, delay);
+    };
 
+    const subscribeToChatMessages = async (): Promise<void> => {
       await loadConversations();
 
       const channelName = `chat_messages:${tenantId}`;
-      const expectedTopic = `realtime:chat_messages:${tenantId}`;
-      const existingChannels = (supabase as { realtime?: { channels?: Array<{ topic?: string }> } }).realtime?.channels ?? [];
       if (channelRef.current) {
         try {
-          const idx = existingChannels.indexOf(channelRef.current as never);
-          if (idx >= 0) existingChannels.splice(idx, 1);
+          await supabase.removeChannel(channelRef.current);
         } catch {
           // best-effort cleanup
         }
         channelRef.current = null;
-      }
-      const staleIdx = (existingChannels ?? []).findIndex((ch) => ch.topic && ch.topic.includes(expectedTopic));
-      if (staleIdx >= 0) {
-        try {
-          supabase.removeChannel(existingChannels[staleIdx] as never);
-        } catch {
-          // best-effort cleanup
-        }
       }
 
       const channel = supabase
@@ -330,7 +344,7 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
                               : c.label,
                             lastMessageAt: row.created_at,
                           }
-                      : c,
+                        : c,
                     )
                   : [
                       ...prev,
@@ -376,8 +390,19 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
           },
         )
         .subscribe((status, err) => {
-          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          if (status === 'SUBSCRIBED') {
+            reconnectAttemptRef.current = 0;
+            console.info(`[LiveChat] subscription active: ${channelName}`);
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
             console.error('[LiveChat] subscription error:', status, err);
+            if (!isReconnectingRef.current && !isUnmountingRef.current) {
+              attemptReconnect();
+            }
+          } else if (status === 'CLOSED') {
+            console.warn('[LiveChat] subscription closed:', channelName);
+            if (!isReconnectingRef.current && !isUnmountingRef.current) {
+              attemptReconnect();
+            }
           }
         });
 
@@ -390,26 +415,33 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
       }
     };
 
+    const init = async () => {
+      await hydrateSession();
+      const { data: { user: _user } } = await supabase.auth.getUser();
+      if (_user) {
+        setCurrentUserId(_user.id);
+      }
+
+      await subscribeToChatMessages();
+    };
+
     init();
 
     return () => {
       loadedRef.current = false;
+      isUnmountingRef.current = true;
+      isReconnectingRef.current = false;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       if (channelRef.current) {
         try { channelRef.current.unsubscribe(); } catch {}
         try { supabase.removeChannel(channelRef.current); } catch {}
-        try {
-          const realtimeChannels = (supabase as { realtime?: { channels?: Array<{ topic?: string }> } }).realtime?.channels ?? [];
-          const idx = realtimeChannels.indexOf(channelRef.current as never);
-          if (idx >= 0) {
-            realtimeChannels.splice(idx, 1);
-          }
-        } catch {
-          // best-effort cleanup
-        }
         channelRef.current = null;
       }
     };
-  }, [tenantId, accessToken, hydrateSession]);
+  }, [tenantId, accessToken, supabase]);
 
   useEffect(() => {
     selectedRef.current = selectedConversationId;

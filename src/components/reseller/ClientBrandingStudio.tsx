@@ -274,7 +274,126 @@ export function ClientBrandingStudio({
   const [greetingExplanation, setGreetingExplanation] = useState<string>('');
   const [showGreetingPreview, setShowGreetingPreview] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadingAssetLayer, setUploadingAssetLayer] = useState<'header' | 'footer' | 'widgetBody' | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Background asset uploaders (header / footer / widget body)
+  const handleThemeUpdateEngine = useCallback((theme: Record<string, unknown>) => {
+    setConfig(prev => {
+      // No-op check to prevent jarring flicker when backend confirmation arrives
+      if (
+        (theme.primary === undefined || prev.headerBackground === theme.primary) &&
+        (theme.secondary === undefined || prev.footerBackground === theme.secondary) &&
+        (theme.logoUrl === undefined || prev.logoUrl === theme.logoUrl) &&
+        (theme.headerOpacity === undefined || prev.headerOpacity === theme.headerOpacity) &&
+        (theme.footerOpacity === undefined || prev.footerOpacity === theme.footerOpacity) &&
+        (theme.widgetBodyOpacity === undefined || prev.widgetBodyOpacity === theme.widgetBodyOpacity) &&
+        (theme.widgetBodyBackground === undefined || prev.widgetBodyBackground === theme.widgetBodyBackground) &&
+        (theme.widgetBodyBackgroundType === undefined || prev.widgetBodyBackgroundType === theme.widgetBodyBackgroundType) &&
+        (theme.widgetBodyGradientStart === undefined || prev.widgetBodyGradientStart === theme.widgetBodyGradientStart) &&
+        (theme.widgetBodyGradientEnd === undefined || prev.widgetBodyGradientEnd === theme.widgetBodyGradientEnd) &&
+        (theme.widgetBodyImage === undefined || prev.widgetBodyImage === theme.widgetBodyImage)
+      ) {
+        return prev;
+      }
+
+      const widgetBodyPatch = theme.widgetBodyBackground !== undefined
+        ? parseWidgetBodyBackground(theme.widgetBodyBackground as string)
+        : null;
+
+      return {
+        ...prev,
+        ...(theme.primary !== undefined && { headerBackground: theme.primary as string }),
+        ...(theme.secondary !== undefined && { footerBackground: theme.secondary as string }),
+        ...(theme.backgroundType !== undefined && {
+          headerBackgroundType: theme.backgroundType as 'solid' | 'gradient' | 'image',
+          footerBackgroundType: theme.backgroundType as 'solid' | 'gradient' | 'image',
+        }),
+        ...(theme.primaryGradientStart !== undefined && { headerGradientStart: theme.primaryGradientStart as string }),
+        ...(theme.primaryGradientEnd !== undefined && { headerGradientEnd: theme.primaryGradientEnd as string }),
+        ...(theme.secondaryGradientStart !== undefined && { footerGradientStart: theme.secondaryGradientStart as string }),
+        ...(theme.secondaryGradientEnd !== undefined && { footerGradientEnd: theme.secondaryGradientEnd as string }),
+        ...(theme.opacity !== undefined && { headerOpacity: theme.opacity as number, footerOpacity: theme.opacity as number }),
+        ...(theme.logoUrl !== undefined && { logoUrl: theme.logoUrl as string }),
+        // ── Component-Scoped Overrides ─────────────────────────────────
+        // These handle explicit header/footer/widget blocks returned by the AI
+        // payload. Each block carries component-specific properties that override
+        // the generic theme values above (e.g. header.opacity != footer.opacity).
+        ...(theme.headerBackground !== undefined && { headerBackground: theme.headerBackground as string }),
+        ...(theme.headerBackgroundType !== undefined && { headerBackgroundType: theme.headerBackgroundType as 'solid' | 'gradient' | 'image' }),
+        ...(theme.headerGradientStart !== undefined && { headerGradientStart: theme.headerGradientStart as string }),
+        ...(theme.headerGradientEnd !== undefined && { headerGradientEnd: theme.headerGradientEnd as string }),
+        ...(theme.headerOpacity !== undefined && { headerOpacity: theme.headerOpacity as number }),
+        ...(theme.footerBackground !== undefined && { footerBackground: theme.footerBackground as string }),
+        ...(theme.footerBackgroundType !== undefined && { footerBackgroundType: theme.footerBackgroundType as 'solid' | 'gradient' | 'image' }),
+        ...(theme.footerGradientStart !== undefined && { footerGradientStart: theme.footerGradientStart as string }),
+        ...(theme.footerGradientEnd !== undefined && { footerGradientEnd: theme.footerGradientEnd as string }),
+        ...(theme.footerOpacity !== undefined && { footerOpacity: theme.footerOpacity as number }),
+        ...(theme.widgetOpacity !== undefined && { headerOpacity: theme.widgetOpacity as number, footerOpacity: theme.widgetOpacity as number }),
+        // ── Chat Body (Widget) Transparency & Background ────────────────
+        ...(theme.widgetBodyOpacity !== undefined && { widgetBodyOpacity: theme.widgetBodyOpacity as number }),
+        ...(theme.widgetBodyBackgroundType !== undefined && { widgetBodyBackgroundType: theme.widgetBodyBackgroundType as 'solid' | 'gradient' | 'image' }),
+        ...(theme.widgetBodyGradientStart !== undefined && { widgetBodyGradientStart: theme.widgetBodyGradientStart as string }),
+        ...(theme.widgetBodyGradientEnd !== undefined && { widgetBodyGradientEnd: theme.widgetBodyGradientEnd as string }),
+        ...(theme.widgetBodyImage !== undefined && { widgetBodyImage: theme.widgetBodyImage as string }),
+        ...(widgetBodyPatch && {
+          widgetBodyBackground: widgetBodyPatch.background,
+          widgetBodyBackgroundType: widgetBodyPatch.type,
+          widgetBodyGradientStart: widgetBodyPatch.gradientStart,
+          widgetBodyGradientEnd: widgetBodyPatch.gradientEnd,
+          widgetBodyImage: widgetBodyPatch.image,
+        }),
+      };
+    });
+  }, []);
+
+  // Background asset uploaders (header / footer / widget body)
+  const uploadBackgroundAsset = useCallback(async (layer: 'header' | 'footer' | 'widgetBody', file: File) => {
+    if (!clientId) {
+      setSaveMessage('Unable to resolve tenant ID. Please refresh the page.');
+      return;
+    }
+    setUploadingAssetLayer(layer);
+    setSaveMessage(null);
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      body.append('tenantId', clientId);
+      body.append('layer', layer === 'widgetBody' ? 'widget-body' : layer);
+      const res = await fetch('/api/reseller/upload-asset', {
+        method: 'POST',
+        body,
+      });
+      if (!res.ok) {
+        let message = 'HTTP ' + res.status;
+        try {
+          const errorBody = await res.json();
+          message = (errorBody as Record<string, unknown>).error as string || message;
+        } catch {
+          // Non-JSON error response; fall back to HTTP status.
+        }
+        throw new Error(message);
+      }
+      const result = await res.json();
+      const url = (result as { url?: string }).url as string;
+      if (layer === 'header') setConfig((prev) => ({ ...prev, headerImage: url }));
+      if (layer === 'footer') setConfig((prev) => ({ ...prev, footerImage: url }));
+      if (layer === 'widgetBody') {
+        handleThemeUpdateEngine({
+          widgetBodyImage: url,
+          widgetBodyOpacity: config.widgetBodyOpacity,
+        });
+      }
+      setSaveMessage('Image uploaded successfully');
+      setTimeout(() => setSaveMessage(null), 3000);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Upload failed';
+      console.error('[ClientBrandingStudio] Asset upload error:', message, err);
+      setSaveMessage(message);
+    } finally {
+      setUploadingAssetLayer(null);
+    }
+  }, [clientId, config.widgetBodyOpacity, handleThemeUpdateEngine]);
 
 
 
@@ -643,75 +762,6 @@ export function ClientBrandingStudio({
     };
   }, [config]);
 
-  const handleThemeUpdateEngine = useCallback((theme: Record<string, unknown>) => {
-    setConfig(prev => {
-      // No-op check to prevent jarring flicker when backend confirmation arrives
-      if (
-        (theme.primary === undefined || prev.headerBackground === theme.primary) &&
-        (theme.secondary === undefined || prev.footerBackground === theme.secondary) &&
-        (theme.logoUrl === undefined || prev.logoUrl === theme.logoUrl) &&
-        (theme.headerOpacity === undefined || prev.headerOpacity === theme.headerOpacity) &&
-        (theme.footerOpacity === undefined || prev.footerOpacity === theme.footerOpacity) &&
-        (theme.widgetBodyOpacity === undefined || prev.widgetBodyOpacity === theme.widgetBodyOpacity) &&
-        (theme.widgetBodyBackground === undefined || prev.widgetBodyBackground === theme.widgetBodyBackground) &&
-        (theme.widgetBodyBackgroundType === undefined || prev.widgetBodyBackgroundType === theme.widgetBodyBackgroundType) &&
-        (theme.widgetBodyGradientStart === undefined || prev.widgetBodyGradientStart === theme.widgetBodyGradientStart) &&
-        (theme.widgetBodyGradientEnd === undefined || prev.widgetBodyGradientEnd === theme.widgetBodyGradientEnd) &&
-        (theme.widgetBodyImage === undefined || prev.widgetBodyImage === theme.widgetBodyImage)
-      ) {
-        return prev;
-      }
-
-      const widgetBodyPatch = theme.widgetBodyBackground !== undefined
-        ? parseWidgetBodyBackground(theme.widgetBodyBackground as string)
-        : null;
-
-      return {
-        ...prev,
-        ...(theme.primary !== undefined && { headerBackground: theme.primary as string }),
-        ...(theme.secondary !== undefined && { footerBackground: theme.secondary as string }),
-        ...(theme.backgroundType !== undefined && {
-          headerBackgroundType: theme.backgroundType as 'solid' | 'gradient' | 'image',
-          footerBackgroundType: theme.backgroundType as 'solid' | 'gradient' | 'image',
-        }),
-        ...(theme.primaryGradientStart !== undefined && { headerGradientStart: theme.primaryGradientStart as string }),
-        ...(theme.primaryGradientEnd !== undefined && { headerGradientEnd: theme.primaryGradientEnd as string }),
-        ...(theme.secondaryGradientStart !== undefined && { footerGradientStart: theme.secondaryGradientStart as string }),
-        ...(theme.secondaryGradientEnd !== undefined && { footerGradientEnd: theme.secondaryGradientEnd as string }),
-        ...(theme.opacity !== undefined && { headerOpacity: theme.opacity as number, footerOpacity: theme.opacity as number }),
-        ...(theme.logoUrl !== undefined && { logoUrl: theme.logoUrl as string }),
-        // ── Component-Scoped Overrides ─────────────────────────────────
-        // These handle explicit header/footer/widget blocks returned by the AI
-        // payload. Each block carries component-specific properties that override
-        // the generic theme values above (e.g. header.opacity != footer.opacity).
-        ...(theme.headerBackground !== undefined && { headerBackground: theme.headerBackground as string }),
-        ...(theme.headerBackgroundType !== undefined && { headerBackgroundType: theme.headerBackgroundType as 'solid' | 'gradient' | 'image' }),
-        ...(theme.headerGradientStart !== undefined && { headerGradientStart: theme.headerGradientStart as string }),
-        ...(theme.headerGradientEnd !== undefined && { headerGradientEnd: theme.headerGradientEnd as string }),
-        ...(theme.headerOpacity !== undefined && { headerOpacity: theme.headerOpacity as number }),
-        ...(theme.footerBackground !== undefined && { footerBackground: theme.footerBackground as string }),
-        ...(theme.footerBackgroundType !== undefined && { footerBackgroundType: theme.footerBackgroundType as 'solid' | 'gradient' | 'image' }),
-        ...(theme.footerGradientStart !== undefined && { footerGradientStart: theme.footerGradientStart as string }),
-        ...(theme.footerGradientEnd !== undefined && { footerGradientEnd: theme.footerGradientEnd as string }),
-        ...(theme.footerOpacity !== undefined && { footerOpacity: theme.footerOpacity as number }),
-        ...(theme.widgetOpacity !== undefined && { headerOpacity: theme.widgetOpacity as number, footerOpacity: theme.widgetOpacity as number }),
-        // ── Chat Body (Widget) Transparency & Background ────────────────
-        ...(theme.widgetBodyOpacity !== undefined && { widgetBodyOpacity: theme.widgetBodyOpacity as number }),
-        ...(theme.widgetBodyBackgroundType !== undefined && { widgetBodyBackgroundType: theme.widgetBodyBackgroundType as 'solid' | 'gradient' | 'image' }),
-        ...(theme.widgetBodyGradientStart !== undefined && { widgetBodyGradientStart: theme.widgetBodyGradientStart as string }),
-        ...(theme.widgetBodyGradientEnd !== undefined && { widgetBodyGradientEnd: theme.widgetBodyGradientEnd as string }),
-        ...(theme.widgetBodyImage !== undefined && { widgetBodyImage: theme.widgetBodyImage as string }),
-        ...(widgetBodyPatch && {
-          widgetBodyBackground: widgetBodyPatch.background,
-          widgetBodyBackgroundType: widgetBodyPatch.type,
-          widgetBodyGradientStart: widgetBodyPatch.gradientStart,
-          widgetBodyGradientEnd: widgetBodyPatch.gradientEnd,
-          widgetBodyImage: widgetBodyPatch.image,
-        }),
-      };
-    });
-  }, []);
-
   /** Central Commit Wrapper: Bridges UI state to the tenant's persistent config
    *  in a single atomic transaction via the atomic update-config API.
    *
@@ -725,7 +775,44 @@ export function ClientBrandingStudio({
    *  This replaces the old dual-write pipeline that called studio.commit()
    *  (reseller table) independently from the features API (tenants table),
    *  which created split-brain save risks. */
-  const handleCommit = useCallback(async (): Promise<boolean> => {
+
+   async function withRetryResponse(
+     response: Response,
+     fetcher: (signal: AbortSignal) => Promise<Response>,
+     retries = 1,
+     baseDelayMs = 400
+   ): Promise<Response> {
+     if (response.ok) return response;
+
+     let lastResponse = response;
+     for (let attempt = 0; attempt <= retries; attempt++) {
+       if (attempt === 0) {
+         lastResponse = response;
+       } else {
+         const controller = new AbortController();
+         const timeout = setTimeout(() => controller.abort(), 30_000);
+         try {
+           lastResponse = await fetcher(controller.signal);
+         } finally {
+           clearTimeout(timeout);
+         }
+       }
+
+       if (lastResponse.ok) return lastResponse;
+
+       const status = lastResponse.status;
+       const shouldRetry = status === 500 || status === 502 || status === 503 || status === 520;
+       if (!shouldRetry || attempt === retries) {
+         return lastResponse;
+       }
+
+       await new Promise(resolve => setTimeout(resolve, baseDelayMs * 2 ** attempt));
+     }
+
+     return lastResponse;
+   }
+
+   const handleCommit = useCallback(async (): Promise<boolean> => {
     const studioConfig = {
       branding: canonicalBranding,
       features: {
@@ -748,15 +835,35 @@ export function ClientBrandingStudio({
     };
 
     try {
-      const response = await fetch('/api/client/update-studio-config', {
+      let response = await fetch('/api/client/update-studio-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(consolidatedPayload),
       });
 
+      response = await withRetryResponse(response, (signal) =>
+        fetch('/api/client/update-studio-config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(consolidatedPayload),
+          signal,
+        })
+      );
+
       if (!response.ok) {
-        const errorBody = await response.json().catch(() => ({}));
-        throw new Error((errorBody as Record<string, unknown>).error as string || 'Atomic commit failed');
+        let errorMessage = `HTTP ${response.status}`;
+        try {
+          const errorBody = await response.json();
+          const raw = ((errorBody as Record<string, unknown>).error as string) || '';
+          if (raw.includes('<!DOCTYPE html>') || raw.includes('<html') || raw.includes('520:')) {
+            errorMessage = 'The configuration service is temporarily unavailable. Please try again shortly.';
+          } else if (raw.trim()) {
+            errorMessage = raw;
+          }
+        } catch {
+          // keep fallback HTTP status message if response is not JSON
+        }
+        throw new Error(errorMessage);
       }
 
       // Trigger post-save revalidation to sync Live Preview with DB state
@@ -1856,6 +1963,8 @@ export function ClientBrandingStudio({
             imagePlaceholder="https://example.com/header-image.jpg"
             opacity={config.headerOpacity}
             onOpacityChange={(value) => updateConfig('headerOpacity', value)}
+            onFileSelect={(file) => uploadBackgroundAsset('header', file)}
+            uploadLabel={uploadingAssetLayer === 'header' ? 'Uploading…' : 'Upload'}
           />
 
           {/* Footer Background */}
@@ -1875,6 +1984,8 @@ export function ClientBrandingStudio({
             imagePlaceholder="https://example.com/footer-image.jpg"
             opacity={config.footerOpacity}
             onOpacityChange={(value) => updateConfig('footerOpacity', value)}
+            onFileSelect={(file) => uploadBackgroundAsset('footer', file)}
+            uploadLabel={uploadingAssetLayer === 'footer' ? 'Uploading…' : 'Upload'}
           />
 
           {/* ── WIDGET BACKGROUND CARD ─────────────────────────────── */}
@@ -1926,6 +2037,8 @@ export function ClientBrandingStudio({
               })
             }
             opacityLabel="Window Opacity"
+            onFileSelect={(file) => uploadBackgroundAsset('widgetBody', file)}
+            uploadLabel={uploadingAssetLayer === 'widgetBody' ? 'Uploading…' : 'Upload'}
           />
 
           {/* ── PRIMARY ACCENT COLOR ──────────────────────────────── */}

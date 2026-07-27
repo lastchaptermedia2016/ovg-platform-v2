@@ -80,6 +80,13 @@ The **OVG Platform** is now a fully-functional enterprise solution with advanced
 - **AI Audit Logging** — Bulk/single `SYSTEM_UPDATE_BRANDING` config writes from `process-command` are audited to `action_logs` (`source='hannah'`) via the authenticated client, mirroring the human save path.
 - **Isolation** — All Zeeder Client changes are confined to the `/client` surface and never touch the Reseller system (`src/app/(dashboard)/reseller/**`).
 
+#### 7. **Live Chat Inbox (Zeeder Client Surface)**
+- **Realtime Messaging** — `LiveChatInbox` subscribes to `postgres_changes` on `chat_messages` via Supabase Realtime, scoped to `tenant_id=eq.<tenantId>`.
+- **Channel Lifecycle Fix** — The component clears `supabase.realtime.channels` entries (`topic` includes `realtime:chat_messages:${tenantId}`) before re-creating a channel to avoid the runtime error `cannot add postgres_changes callbacks ... after subscribe()`. The callback chain is registered on a fresh channel, and the resolved channel is stored in `channelRef.current`.
+- **Conversation Read State** — Selecting a conversation calls `PATCH /api/chat/conversations/read` to upsert `conversation_read_state` for `(tenant_id, user_id, conversation_id)`, which drives unread indicators and read receipt ordering.
+- **Mute Controls** — `POST /api/chat/mute` toggles AI mute for the active conversation. The response/fallback path in `loadMessages` treats a missing `scheduled_reenable_at` as an explicit “null” payload via the `mute-state` helper, which stores rows with `scheduled_reenable_at = NULL` instead of omitting the field.
+- **Optimistic Sends** — `POST /api/chat/send` accepts `conversationId`, message body, and `tenantId`. Optimistic temp IDs are swapped to real row IDs when the WebSocket payload arrives, preventing duplicate rendered messages.
+
 ### 🎯 Key Capabilities
 
 #### Voice Commands
@@ -145,41 +152,6 @@ POST /api/resellers/create                     # Create reseller account
 ## Admin & Auth
 POST /api/admin/cleanup-tenants          # Admin: purge orphaned tenants
 POST /api/auth/update-reseller-slug      # Update reseller slug
-
-### Security Perimeter
-- **Security Perimeter**:
-  1. Canonical server-side authentication via `supabase.auth.getUser()`
-  2. Multi-tenant isolation via `user_resellers` table validation
-
-### Security Perimeter
-- **Security Perimeter**:
-  1. Canonical server-side authentication via `supabase.auth.getUser()`
-  2. Multi-tenant isolation via `user_resellers` table validation
-
-### Security Perimeter
-- **Two-Step Verification Standard**:
-  1. Canonical server-side authentication using `supabase.auth.getUser()`.
-  2. Strict multi-tenant isolation validation matching `user_id` and `reseller_slug` against the `user_resellers` table.
-
-### Security Perimeter
-- **Two-Step Verification Standard**:
-  1. Canonical server-side authentication using `supabase.auth.getUser()`.
-  2. Strict multi-tenant isolation validation matching `user_id` and `reseller_slug` against the `user_resellers` table.
-
-### Security Perimeter
-- **Two-Step Verification Standard**:
-  1. Canonical server-side authentication using `supabase.auth.getUser()`.
-  2. Strict multi-tenant isolation validation matching `user_id` and `reseller_slug` against the `user_resellers` table.
-
-### Security Perimeter
-- **Two-Step Verification Standard**:
-  1. Canonical server-side authentication using `supabase.auth.getUser()`.
-  2. Strict multi-tenant isolation validation matching `user_id` and `reseller_slug` against the `user_resellers` table.
-
-### Security Perimeter
-- **Two-Step Verification Standard**:
-  1. Canonical server-side authentication using `supabase.auth.getUser()`.
-  2. Strict multi-tenant isolation validation matching `user_id` and `reseller_slug` against the `user_resellers` table.
 
 ### Security Perimeter
 - **Two-Step Verification Standard**:
@@ -485,14 +457,6 @@ An active refactor is underway across three phases. See `.kiro/specs/ovg-platfor
 2. **Lock**: `SELECT...FOR UPDATE` locks the row exclusively
 3. **Write**: Atomic update writes the new `branding` JSONB (no `version_stamp` increment in live)
 4. **Resolve**: On conflict, return diff for UI to reconcile
-
-#### Unified Data Access Layer (DAL)
-- Client deletion logic is centralized in `src/lib/db/reseller-clients.ts` via `deleteResellerClients` and `deleteResellerTenant` helpers, embedding cryptographic `reseller_id` isolation directly into database mutations.
-- These helpers embed cryptographic `reseller_id` isolation directly into database mutation commands, ensuring strict multi-tenant isolation.
-  
-#### Unified Data Access Layer (DAL)
-- Client deletion logic is centralized in `src/lib/db/reseller-clients.ts` via `deleteResellerClients` and `deleteResellerTenant` helpers, embedding cryptographic `reseller_id` isolation directly into database mutations.
-- These helpers embed cryptographic `reseller_id` isolation directly into database mutation commands, ensuring strict multi-tenant isolation.
 
 #### Unified Data Access Layer (DAL)
 - Client deletion logic is centralized in `src/lib/db/reseller-clients.ts` via `deleteResellerClients` and `deleteResellerTenant` helpers, embedding cryptographic `reseller_id` isolation directly into database mutations.
