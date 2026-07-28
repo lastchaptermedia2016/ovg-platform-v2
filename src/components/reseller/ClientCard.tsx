@@ -61,7 +61,7 @@ function ClientMiniAnalytics({ tenant }: { tenant: Tenant }) {
   const signals = tenant.signal_count ?? 0;
 
   return (
-    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[10px] tracking-widest uppercase grid-flow-row">
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-[10px] tracking-widest uppercase grid-flow-row">
       <div className="flex items-center gap-1">
         <span className="text-white/60">Active:</span>
         <span className="text-white font-bold">Yes</span>
@@ -235,7 +235,7 @@ export function ClientCard({
             <div className="flex items-center gap-2 w-[104px] justify-end">
               <button
                 onClick={() => onDiagnosticClick(tenant.id)}
-                className="!opacity-100 !mix-blend-normal backdrop-blur-none w-7 h-7 rounded-lg bg-white/[0.02] border border-white/20 flex items-center justify-center hover:bg-white/5 hover:border-[#00E5FF] transition-all duration-300 shadow-[0_0_10px_rgba(0,229,255,0.3)]"
+                className="!opacity-100 !mix-blend-normal backdrop-blur-none min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg bg-white/[0.02] border border-white/20 hover:bg-white/5 hover:border-[#00E5FF] transition-all duration-300 shadow-[0_0_10px_rgba(0,229,255,0.3)]"
                 title="View Diagnostics"
                 style={{
                   filter: 'drop-shadow(0 0 2px rgba(0, 151, 178, 0.3))',
@@ -254,7 +254,7 @@ export function ClientCard({
               </button>
               <button
                 onClick={() => onPricingClick(tenant.id)}
-                className="p-1.5 rounded-md bg-white/5 hover:bg-white/15 text-white/60 hover:text-white transition-all border border-white/10"
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-md bg-white/5 hover:bg-white/15 text-white/60 hover:text-white transition-all border border-white/10"
                 title="Configure pricing and add-ons"
                 style={{
                   filter: 'drop-shadow(0 0 2px rgba(0, 151, 178, 0.3))',
@@ -272,7 +272,7 @@ export function ClientCard({
               </button>
               <div className="relative !opacity-100 !visible z-50 force-glow-icon">
                 <button
-                  className="!opacity-100 !mix-blend-normal backdrop-blur-none relative z-10 w-7 h-7 rounded-lg bg-white/[0.02] border border-white/20 flex items-center justify-center hover:bg-white/5 hover:border-[#00E5FF] transition-all duration-300 shadow-[0_0_10px_rgba(0,229,255,0.3)]"
+                  className="!opacity-100 !mix-blend-normal backdrop-blur-none relative z-10 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg bg-white/[0.02] border border-white/20 hover:bg-white/5 hover:border-[#00E5FF] transition-all duration-300 shadow-[0_0_10px_rgba(0,229,255,0.3)]"
                   title="Manage Users"
                   style={{
                     filter: 'drop-shadow(0 0 2px rgba(0, 151, 178, 0.3))',
@@ -325,11 +325,11 @@ export function ClientCard({
                   }
                 }}
                 style={{ pointerEvents: 'auto', zIndex: 9999 }}
-                className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-300 transition-transform active:scale-90 cursor-pointer ${
-                  isActive
-                    ? 'bg-[#0097b2]/20 border border-[#0097b2]/50 shadow-[0_0_10px_rgba(0,151,178,0.3)]'
-                    : 'bg-white/[0.02] border border-white/10 opacity-40 hover:opacity-60'
-                } ${isAI ? 'border-2 border-red-500' : ''}`}
+                 className={`min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg transition-all duration-300 transition-transform active:scale-90 cursor-pointer ${
+                   isActive
+                     ? 'bg-[#0097b2]/20 border border-[#0097b2]/50 shadow-[0_0_10px_rgba(0,151,178,0.3)]'
+                     : 'bg-white/[0.02] border border-white/10 opacity-40 hover:opacity-60'
+                 } ${isAI ? 'border-2 border-red-500' : ''}`}
                 title={`Activate/Deactivate ${feature.toUpperCase()}`}
               >
                 <span className="text-[10px] uppercase font-bold text-white/80">

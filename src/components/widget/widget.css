@@ -1,16 +1,28 @@
 .widget-body {
-  background: var(--w-body-bg, rgba(var(--w-body-bg-rgb, 255, 255, 255), var(--w-body-bg-opacity, 0)));
+  background-color: var(--w-body-bg, rgba(255, 255, 255, 0));
+  background-image: var(--w-body-bg-image, none);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
   backdrop-filter: blur(var(--w-body-backdrop-blur, 0px));
 }
 
 .widget-header {
-  background: var(--w-header-bg, transparent);
+  background-color: var(--w-header-bg, transparent);
+  background-image: var(--w-header-bg-image, none);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
   opacity: var(--w-header-opacity, 1);
   backdrop-filter: blur(var(--w-header-backdrop-blur, 0px));
 }
 
 .widget-footer {
-  background: var(--w-footer-bg, transparent);
+  background-color: var(--w-footer-bg, transparent);
+  background-image: var(--w-footer-bg-image, none);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
   opacity: var(--w-footer-opacity, 1);
   backdrop-filter: blur(var(--w-footer-backdrop-blur, 0px));
 }

@@ -861,7 +861,7 @@ const ChatWidget = ({
               className="mx-4 w-full max-w-sm rounded-2xl border p-6 shadow-2xl"
               style={{
                 background:
-                  "var(--w-body-bg, linear-gradient(to bottom, rgba(17,24,39,0.92), rgba(3,7,18,0.96)))",
+                  "var(--w-body-bg, var(--w-body-bg-image, linear-gradient(to bottom, rgba(17,24,39,0.92), rgba(3,7,18,0.96))))",
                 backdropFilter: "var(--w-body-backdrop-blur, 0px)",
                 WebkitBackdropFilter: "var(--w-body-backdrop-blur, 0px)",
                 borderColor: "rgba(255, 255, 255, 0.15)",
@@ -933,7 +933,11 @@ const ChatWidget = ({
         >
           {/* Header */}
           <div className="relative widget-header p-5 flex justify-between items-center overflow-hidden">
-            <div className="absolute inset-0 bg-black/40" />
+            {branding?.header?.type === 'image' ? (
+              <div className="absolute inset-0 bg-black/10" />
+            ) : (
+              <div className="absolute inset-0 bg-black/40" />
+            )}
             <div className="relative flex items-center gap-3">
               {displayLogoUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element -- Dynamic third-party logo URL; next/image remotePatterns cannot be configured for arbitrary user-provided domains in preview mode.

@@ -98,7 +98,7 @@ export function WidgetPreview() {
       <div className="flex-1 flex items-center justify-center rounded-xl border border-white/10 bg-slate-950/30 p-4 transition-all duration-300">
         <div
           className={`overflow-hidden rounded-xl border border-white/10 transition-all duration-300 ${
-            isMobile ? 'mx-auto w-full max-w-[380px]' : 'w-full max-w-sm'
+            isMobile ? 'mx-auto w-full max-w-[375px]' : 'w-full'
           }`}
           style={isMobile ? { height: '70vh' } : { height: '100%' }}
         >

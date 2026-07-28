@@ -14,7 +14,7 @@ export default function ChatPanel({ isOpen }: ChatPanelProps) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed bottom-20 right-4 w-96 h-96 bg-white rounded-lg shadow-lg border border-gray-200">
+    <div className="fixed bottom-4 right-4 sm:bottom-20 sm:right-4 w-[calc(100vw-2rem)] sm:w-96 h-[80vh] sm:h-[480px] max-h-[600px] overflow-hidden shadow-2xl z-50 bg-white rounded-lg border border-gray-200">
       <div className="p-4 border-b">
         <h2 className="font-bold">Chat</h2>
       </div>

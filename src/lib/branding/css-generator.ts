@@ -2,15 +2,6 @@ import type { CanonicalBranding, LayerConfig, CanonicalBackgroundSection } from 
 import type { BrandingData } from "@/types";
 import { normalizeHexColor } from "@/lib/colors";
 
-function hexToRgb(hex: string): string {
-  const normalized = hex.replace(/^#/, "");
-  if (normalized.length !== 6) return "0, 0, 0";
-  const r = parseInt(normalized.slice(0, 2), 16);
-  const g = parseInt(normalized.slice(2, 4), 16);
-  const b = parseInt(normalized.slice(4, 6), 16);
-  return `${r}, ${g}, ${b}`;
-}
-
 function layerVars(prefix: string, layer: LayerConfig | undefined): string[] {
   if (!layer) return [];
 
@@ -24,11 +15,15 @@ function layerVars(prefix: string, layer: LayerConfig | undefined): string[] {
   const vars: string[] = [];
   const safeValue = layer.value?.trim();
 
-  if ((layer.type === "solid" || layer.type === "gradient") && safeValue) {
-    if (safeValue.startsWith("#")) {
-      vars.push(`--w-${prefix}-bg-rgb: ${hexToRgb(safeValue)};`);
+  if (layer.type === "solid" && safeValue) {
+    vars.push(`--w-${prefix}-bg: ${safeValue};`);
+  }
+
+  if ((layer.type === "gradient" || layer.type === "image") && safeValue) {
+    if (layer.type === "gradient") {
+      vars.push(`--w-${prefix}-bg-image: ${safeValue};`);
     } else {
-      vars.push(`--w-${prefix}-bg: ${safeValue};`);
+      vars.push(`--w-${prefix}-bg-image: url('${safeValue}');`);
     }
   }
 

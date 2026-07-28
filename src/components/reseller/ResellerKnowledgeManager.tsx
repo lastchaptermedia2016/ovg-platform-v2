@@ -391,13 +391,13 @@ export function ResellerKnowledgeManager({
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        onClick={() => handleToggleActive(entry)}
-                        disabled={togglingId === entry.id}
-                        title={entry.is_active ? 'Deactivate' : 'Activate'}
-                        className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/5 transition-colors disabled:opacity-50"
-                      >
+                     <div className="flex items-center gap-1 shrink-0">
+                       <button
+                         onClick={() => handleToggleActive(entry)}
+                         disabled={togglingId === entry.id}
+                         title={entry.is_active ? 'Deactivate' : 'Activate'}
+                         className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg text-zinc-400 hover:text-white hover:bg-white/5 transition-colors disabled:opacity-50"
+                       >
                         {togglingId === entry.id ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : entry.is_active ? (
@@ -409,7 +409,7 @@ export function ResellerKnowledgeManager({
                       <button
                         onClick={() => openEditForm(entry)}
                         title="Edit entry"
-                        className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
+                        className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg text-zinc-400 hover:text-white hover:bg-white/5 transition-colors"
                       >
                         <FileText className="h-4 w-4" />
                       </button>
@@ -417,7 +417,7 @@ export function ResellerKnowledgeManager({
                         onClick={() => handleDelete(entry.id)}
                         disabled={deletingId === entry.id}
                         title="Delete entry"
-                        className="p-1.5 rounded-lg text-zinc-400 hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                        className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg text-zinc-400 hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
                       >
                         {deletingId === entry.id ? (
                           <Loader2 className="h-4 w-4 animate-spin" />

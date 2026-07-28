@@ -95,9 +95,9 @@ export async function POST(request: NextRequest) {
       });
 
     if (uploadError) {
-      console.error('[ResellerUploadAsset] Storage upload failed:', uploadError.message);
+      console.error('[ResellerUploadAsset] Storage upload failed:', uploadError.message, uploadError);
       return NextResponse.json(
-        { success: false, error: 'Failed to store asset' },
+        { success: false, error: `Failed to store asset: ${uploadError.message}` },
         { status: 500 }
       );
     }

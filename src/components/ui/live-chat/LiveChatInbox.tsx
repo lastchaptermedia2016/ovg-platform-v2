@@ -300,9 +300,8 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
         channelRef.current = null;
       }
 
-      const channel = supabase
-        .channel(channelName)
-        .on(
+      const channel = supabase.channel(channelName);
+      channel.on(
           'postgres_changes',
           {
             event: 'INSERT',
@@ -388,8 +387,8 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
               });
             }
           },
-        )
-        .subscribe((status, err) => {
+        );
+      channel.subscribe((status, err) => {
           if (status === 'SUBSCRIBED') {
             reconnectAttemptRef.current = 0;
             console.info(`[LiveChat] subscription active: ${channelName}`);
