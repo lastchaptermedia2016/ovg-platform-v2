@@ -10,7 +10,7 @@ function triggerHapticFeedback(): void {
 }
 
 export function HannahMicAnchor() {
-  const { isRecording, isProcessing, startListening, stopListeningAndProcess } =
+  const { isRecording, isProcessing, startListening, stopListeningAndProcess, abortRecording } =
     useHannah();
 
   const handleMouseDown = useCallback(() => {
@@ -44,9 +44,9 @@ export function HannahMicAnchor() {
   const handleTouchCancel = useCallback(
     (e: React.TouchEvent) => {
       e.preventDefault();
-      handleMouseUp();
+      abortRecording();
     },
-    [handleMouseUp],
+    [abortRecording],
   );
 
   const isActive = isRecording || isProcessing;

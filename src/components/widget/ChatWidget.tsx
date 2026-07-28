@@ -279,6 +279,7 @@ const ChatWidget = ({
     isRecording,
     startListening,
     stopListeningAndProcess,
+    abortRecording,
     interimTranscript,
     transcript,
   } = useVoiceCommand({
@@ -549,19 +550,6 @@ const ChatWidget = ({
     previewRecognitionRef.current?.stop();
     setPreviewRecording(false);
   }, []);
-
-  const handleMicClick = useCallback(() => {
-    if (preview) {
-      if (previewRecording) stopPreviewListening();
-      else startPreviewListening();
-      return;
-    }
-    if (isRecording) {
-      stopListeningAndProcess();
-    } else {
-      startListening();
-    }
-  }, [preview, previewRecording, startPreviewListening, stopPreviewListening, isRecording, startListening, stopListeningAndProcess]);
 
   // Gate timestamp rendering until after client mount to avoid hydration
   // mismatch from locale/timezone-dependent toLocaleTimeString output.
@@ -990,7 +978,7 @@ const ChatWidget = ({
             </div>
              <div className="relative flex items-center gap-3">
                 <Button
-                  className="h-11 w-11 rounded-full text-white shrink-0 flex items-center justify-center"
+                  className="h-9 w-9 rounded-full text-white shrink-0 flex items-center justify-center"
                   style={{ backgroundColor: "var(--w-primary, #0097b2)" }}
                   onClick={() => {
                     const next = !voiceEnabled;
@@ -999,13 +987,13 @@ const ChatWidget = ({
                     if (!next && audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
                   }}
                 >
-                  {voiceEnabled ? <Volume2 className="h-6 w-6 text-white" /> : <VolumeX className="h-6 w-6 text-white" />}
+                  {voiceEnabled ? <Volume2 className="h-5 w-5 flex-shrink-0 text-white" /> : <VolumeX className="h-5 w-5 flex-shrink-0 text-white" />}
                 </Button>
-                <Button className="h-11 w-11 rounded-full text-white shrink-0 flex items-center justify-center" style={{ backgroundColor: "var(--w-primary, #0097b2)" }} onClick={() => setShowResetConfirm(true)}>
-                  <RefreshCw className="h-6 w-6 text-white" />
+                <Button className="h-9 w-9 rounded-full text-white shrink-0 flex items-center justify-center" style={{ backgroundColor: "var(--w-primary, #0097b2)" }} onClick={() => setShowResetConfirm(true)}>
+                  <RefreshCw className="h-5 w-5 flex-shrink-0 text-white" />
                 </Button>
-                <Button className="h-11 w-11 rounded-full text-white shrink-0 flex items-center justify-center" style={{ backgroundColor: "var(--w-primary, #0097b2)" }} onClick={() => setIsOpen(false)}>
-                  <X className="h-6 w-6 text-white" />
+                <Button className="h-9 w-9 rounded-full text-white shrink-0 flex items-center justify-center" style={{ backgroundColor: "var(--w-primary, #0097b2)" }} onClick={() => setIsOpen(false)}>
+                  <X className="h-5 w-5 flex-shrink-0 text-white" />
                 </Button>
               </div>
           </div>
@@ -1139,11 +1127,38 @@ const ChatWidget = ({
                   so the client-side widget can ship without voice input. */}
               {effectiveVoiceFeaturesEnabled && (
                 <Button
-                  onClick={handleMicClick}
-                  aria-label={isRecording ? "Stop listening" : "Hold to talk"}
+                  onMouseDown={() => {
+                    if (preview) startPreviewListening();
+                    else startListening();
+                  }}
+                  onMouseUp={() => {
+                    if (preview) stopPreviewListening();
+                    else stopListeningAndProcess();
+                  }}
+                  onMouseLeave={() => {
+                    if (preview && previewRecording) stopPreviewListening();
+                    // Regular PTT ignores mouseleave to avoid scale-induced
+                    // false positives; onMouseUp on the pressed element still
+                    // fires even when the pointer is dragged away.
+                  }}
+                  onTouchStart={(e) => {
+                    e.preventDefault();
+                    if (preview) startPreviewListening();
+                    else startListening();
+                  }}
+                  onTouchEnd={(e) => {
+                    e.preventDefault();
+                    if (preview) stopPreviewListening();
+                    else stopListeningAndProcess();
+                  }}
+                  onTouchCancel={() => {
+                    if (preview && previewRecording) stopPreviewListening();
+                    else abortRecording();
+                  }}
+                  aria-label={isRecording ? "Release to stop listening" : "Hold to talk"}
                   className={`shrink-0 h-10 w-10 flex items-center justify-center rounded-full ${isRecording ? "text-blue-500 animate-pulse scale-110" : "text-pink-500 hover:text-pink-600"}`}
                 >
-                   {isRecording ? <MicOff className="h-8 w-8" /> : <Mic className="h-8 w-8" />}
+                   {isRecording ? <MicOff className="h-5 w-5 flex-shrink-0" /> : <Mic className="h-5 w-5 flex-shrink-0" />}
                 </Button>
               )}
 

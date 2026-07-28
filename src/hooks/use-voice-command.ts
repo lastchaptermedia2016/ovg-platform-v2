@@ -1,13 +1,12 @@
 'use client';
 
-import { useState, useRef, useCallback, useEffect, useContext, type MutableRefObject } from 'react';
+import { useState, useRef, useCallback, useEffect, type MutableRefObject } from 'react';
 import { isInvalidSlug } from '@/lib/utils/guard';
 import { useCommandDeck } from '@/contexts/CommandDeckContext';
 import { transcodeBlobToWav } from '@/utils/audio/transcode-to-wav';
 import { createClient as createBrowserClient } from '@/lib/supabase/client';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { getSpeechRecognition, type SpeechRecognitionInstance, type SpeechRecognitionResultEvent } from '@/types/voice-parser';
-import { VoiceStateContext } from '@/providers/voice-provider';
 
 interface UseVoiceCommandReturn {
   /** True while the mic is actively capturing audio. */
@@ -28,13 +27,13 @@ interface UseVoiceCommandReturn {
   error: string | null;
   /** Live interim transcript from Web Speech API while recording. */
   interimTranscript: string;
-  /** Wall-clock start time of the current press (used for the 500ms tap guard). */
+  /** Wall-clock start time of the current press (used for the 600ms tap guard). */
   recordingStartedAtRef: MutableRefObject<number | null>;
   /** Strict PTT: Begin audio capture on mousedown / touchstart. */
   startListening: () => Promise<void>;
   /** @deprecated Use startListening. Retained as a one-cycle alias for UI compatibility. */
   startRecording: () => Promise<void>;
-  /** Strict PTT: Finalize audio on mouseup / touchend. Triggers the pipeline if press >= 500ms. */
+  /** Strict PTT: Finalize audio on mouseup / touchend. Triggers the pipeline if press >= 600ms. */
   stopListeningAndProcess: () => void;
   /** Strict PTT: Abort capture on mouseleave / touchcancel. Never triggers the pipeline. */
   abortRecording: () => void;
@@ -44,9 +43,9 @@ interface UseVoiceCommandReturn {
 
 /** Minimum press duration (ms) before stopListeningAndProcess finalises the pipeline.
  *  Presses shorter than this are treated as accidental taps and aborted.
- *  500ms is the lower bound at which a webm/opus container has produced
+ *  600ms is the lower bound at which a webm/opus container has produced
  *  a valid, decodeable header + initial frames for Groq Whisper. */
-const MIN_RECORDING_DURATION_MS = 500;
+const MIN_RECORDING_DURATION_MS = 600;
 
 interface TenantContext {
   tenantId?: string;
@@ -738,8 +737,12 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
         console.log(`[VoiceCommand] 🔴 onstop — blob size: ${audioBlob.size} bytes, chunks collected: ${audioChunksRef.current.length}`);
         audioChunksRef.current = [];
 
-        if (audioBlob.size < 4096) {
-          console.warn('[VoiceCommand] ⚠️ onstop — blob too small (%d bytes), skipping pipeline', audioBlob.size);
+        // Allow short but valid PTT clips (>=600ms) through the pipeline.
+        // The duration guard below filters accidental taps; this
+        // threshold only drops completely silent or empty recordings.
+        const activeDurationMs = recordingStartedAtRef.current ? Date.now() - recordingStartedAtRef.current : 0;
+        if (audioBlob.size < 1024 || activeDurationMs < MIN_RECORDING_DURATION_MS) {
+          console.warn('[VoiceCommand] ⚠️ onstop — blob too small (%d bytes) or too short (%dms < 600ms), skipping pipeline', audioBlob.size, activeDurationMs);
           cleanup();
           return;
         }
@@ -822,21 +825,6 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     cleanup();
     broadcastStatus("online");
   }, [cleanup, broadcastStatus]);
-
-  const voiceState = useContext(VoiceStateContext);
-  const globalIsListening = voiceState?.isListening ?? false;
-
-  /* eslint-disable react-hooks/set-state-in-effect -- Reactive coupling to centralized VoiceProvider isListening state */
-  useEffect(() => {
-    if (globalIsListening) {
-      console.log('[AudioEngine] Global isListening is TRUE. Initializing media pipeline capture...');
-      startRecording();
-    } else {
-      console.log('[AudioEngine] Global isListening is FALSE. Tearing down audio channels...');
-      abortRecording();
-    }
-  }, [globalIsListening, startRecording, abortRecording]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   const resetState = useCallback(() => {
     isProcessingRef.current = false;
