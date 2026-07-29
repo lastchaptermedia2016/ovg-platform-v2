@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { TenantSchema, type Tenant } from "@/types/database";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
 
 export type { Tenant };
 
@@ -77,7 +77,24 @@ export async function getPublicWidgetConfig(
       .maybeSingle();
 
     if (error) {
-      console.error(`Error loading public widget config for "${tenantId}":`, error);
+      const isDebug = process.env.NODE_ENV !== "production" || process.env.DEBUG_SUPABASE === "true";
+      const safe = {
+        message: (error as PostgrestError)?.message,
+        code: (error as PostgrestError)?.code,
+      };
+
+      if (isDebug) {
+        // Include non-enumerable PostgrestError properties only in debug.
+        const errorProps = JSON.parse(JSON.stringify(error, Object.getOwnPropertyNames(error)));
+        console.error(`Error loading public widget config for "${tenantId}":`, {
+          ...safe,
+          details: (error as PostgrestError)?.details,
+          hint: (error as PostgrestError)?.hint,
+          serialized: errorProps,
+        });
+      } else {
+        console.error(`Error loading public widget config for "${tenantId}":`, safe);
+      }
       return null;
     }
     if (!data) return null;

@@ -290,7 +290,7 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
     const subscribeToChatMessages = async (): Promise<void> => {
       await loadConversations();
 
-      const channelName = `chat_messages:${tenantId}`;
+      const channelName = `chat_messages:${tenantId}:${Math.random().toString(36).slice(2, 9)}`;
       if (channelRef.current) {
         try {
           await supabase.removeChannel(channelRef.current);

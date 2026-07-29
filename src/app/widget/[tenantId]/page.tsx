@@ -4,7 +4,6 @@ import { getPublicWidgetConfig } from "@/core/tenant/db";
 import { notFound } from "next/navigation";
 import WidgetPresence from "./WidgetPresence";
 import ChatWidget from "./ChatWidgetClient";
-import WidgetProviders from "./WidgetProviders";
 import { migrateLegacyBranding } from "@/lib/schemas/tenant-config.canonical";
 import type { CanonicalBranding } from "@/lib/schemas/tenant-config.canonical";
 
@@ -55,10 +54,8 @@ export default async function WidgetPage({
 
   return (
     <TenantProvider>
-      <WidgetProviders tenantId={tenantId}>
-        <WidgetPresence tenantId={tenantId} widgetPosition={canonicalBranding?.widgetPosition} />
-        <ChatWidget tenantId={tenantId} branding={canonicalBranding} widgetPosition={canonicalBranding?.widgetPosition} suggestedActions={suggestedActions} greeting={greeting} features={features} />
-      </WidgetProviders>
+      <WidgetPresence tenantId={tenantId} widgetPosition={canonicalBranding?.widgetPosition} />
+      <ChatWidget tenantId={tenantId} branding={canonicalBranding} widgetPosition={canonicalBranding?.widgetPosition} suggestedActions={suggestedActions} greeting={greeting} features={features} />
     </TenantProvider>
   );
 }

@@ -103,6 +103,7 @@ const CommandRequestSchema = z.object({
       clientProfileId: z.string().optional(),
       activeView: z.string().optional(),
       clientMemories: z.record(z.string()).optional(),
+      surface: z.string().optional(),
     })
     .optional(),
 });
@@ -179,6 +180,9 @@ const CLIENT_PERSONA_NAV_INTENT_REGEX =
  */
 const CLIENT_IDENTITY_INTENT_REGEX =
   /(who\s+(?:are|re)\s+(?:you|u)\b)|(what(?:'s| is|\s+is)?\s+(?:your|ur|the)?\s*name\b)|(?:tell me\s+)?your\s+name\b|(your\s+identity\b)|(what\s+is\s+your\s+identity\b)/i;
+
+const CLIENT_DISARM_INTENT_REGEX =
+  /^(stop|cancel|never\s?mind|forget\s?it|end|goodbye|no\s?thanks|that'?s\s?all|nevermind|nvm|abort|quit|close|hang\s?up)/i;
 
 
 /**
@@ -407,7 +411,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
   // embed visitors (no session) resolve the tenant from the client-supplied
   // tenantId via supabaseAdmin — a lookup key only, never an identity.
   const { userId } = await getAuthenticatedUser();
-  const isAnon = !userId;
+  let isAnon = !userId;
 
   // ── Parse & Validate (Zod gates malformed bodies) ───────────────────
   let raw: unknown;
@@ -456,6 +460,11 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
     draftPersona,
     conversationId,
   } = parsed;
+
+  const isWidgetSurface = parsed.context?.surface === 'chat-widget-embed';
+  if (isWidgetSurface) {
+    isAnon = true;
+  }
 
   // ── Tenant resolution ───────────────────────────────────────────────
   let resolvedTenantId: string | null = null;
@@ -581,18 +590,23 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
 
   // ── Pre-LLM help short-circuit (isolated client capabilities) ───────
   if (CLIENT_HELP_INTENT_REGEX.test(text.trim())) {
-    // Anonymous visitors get a minimal, hardcoded visitor-facing line. We do NOT
-    // surface the Studio capability list / brandingCapabilities — those are
-    // internal platform detail not meant for a public embed. Authenticated
-    // clients keep the full capability listing.
+    // Anonymous visitors get a personalized, visitor-facing line hydrated with
+    // the host business name. We do NOT surface the Studio capability list /
+    // brandingCapabilities — those are internal platform detail not meant for
+    // a public embed. Authenticated clients keep the full capability listing.
     if (isAnon) {
+      const { data: tenantNameRow } = await supabaseAdmin
+        .from('tenants')
+        .select('name')
+        .eq('id', tenantId)
+        .maybeSingle();
+      const businessName = tenantNameRow?.name?.trim() || 'our';
       return corsJson({
         success: true,
         actionType: 'SYSTEM_HELP',
         targetIds: [],
         payload: {},
-        summary:
-          'I can help you book, reschedule, or answer questions about our services.',
+        summary: `I'm ${businessName}'s AI assistant. I can help you book appointments or answer questions about our services. What would you like to know?`,
       });
     }
     const availableCommands = buildClientCapabilities();
@@ -688,16 +702,69 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
     return response;
   }
 
-  // ── Identity question → deterministic ZEEDER name response ─────────
-  // "who are you" / "what is your name" resolve to the canonical identity reply
-  // without any LLM round-trip, guaranteeing the assistant always names ZEEDER.
+  // ── Identity question → deterministic identity response ──────────────
+  // "who are you" / "what is your name" resolve to a surface-appropriate
+  // identity reply without any LLM round-trip. Anonymous visitors hear the
+  // host business name, not the internal "ZEEDER Client Portal assistant" label.
   if (CLIENT_IDENTITY_INTENT_REGEX.test(text.trim())) {
+    if (isAnon) {
+      const { data: tenantNameRow } = await supabaseAdmin
+        .from('tenants')
+        .select('name')
+        .eq('id', tenantId)
+        .maybeSingle();
+      const businessName = tenantNameRow?.name?.trim() || 'our';
+      const data: ClientCommandResponse = {
+        success: true,
+        actionType: 'CLIENT_NOP',
+        targetIds: [],
+        payload: {},
+        summary: `I'm ${businessName}'s AI assistant. How can I help you today?`,
+      };
+      const response = NextResponse.json(data);
+      await tryPersistCommand(data, 'CLIENT_NOP', {});
+      return response;
+    }
     const data: ClientCommandResponse = {
       success: true,
       actionType: 'CLIENT_NOP',
       targetIds: [],
       payload: {},
       summary: "I'm ZEEDER, your Client Portal assistant.",
+    };
+    const response = NextResponse.json(data);
+    await tryPersistCommand(data, 'CLIENT_NOP', {});
+    return response;
+  }
+
+  // ── Disarm / stop / cancel intent → graceful acknowledgement ─────────
+  // Matches cancellation phrases so they never fall through to the LLM as
+  // unhandled conversational noise.
+  if (CLIENT_DISARM_INTENT_REGEX.test(text.trim())) {
+    if (isAnon) {
+      const { data: tenantNameRow } = await supabaseAdmin
+        .from('tenants')
+        .select('name')
+        .eq('id', tenantId)
+        .maybeSingle();
+      const businessName = tenantNameRow?.name?.trim() || 'our';
+      const data: ClientCommandResponse = {
+        success: true,
+        actionType: 'CLIENT_NOP',
+        targetIds: [],
+        payload: {},
+        summary: `No problem at all! Feel free to come back anytime if you have more questions about ${businessName}.`,
+      };
+      const response = NextResponse.json(data);
+      await tryPersistCommand(data, 'CLIENT_NOP', {});
+      return response;
+    }
+    const data: ClientCommandResponse = {
+      success: true,
+      actionType: 'CLIENT_NOP',
+      targetIds: [],
+      payload: {},
+      summary: "Of course — I'm here whenever you need me. Just say the word.",
     };
     const response = NextResponse.json(data);
     await tryPersistCommand(data, 'CLIENT_NOP', {});
@@ -773,13 +840,20 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
 
   // BLOCK for anonymous visitors: the only Tier-1 system actions are branding
   // mutations and telemetry reads — neither may be triggered by a public embed.
+  // Personalize the degradation response with the host business name.
   if (isAnon && (systemType === 'SYSTEM_UPDATE_BRANDING' || systemType === 'SYSTEM_TELEMETRY')) {
+    const { data: tenantNameRow } = await supabaseAdmin
+      .from('tenants')
+      .select('name')
+      .eq('id', tenantId)
+      .maybeSingle();
+    const businessName = tenantNameRow?.name?.trim() || 'us';
     return corsJson({
       success: true,
       actionType: 'CLIENT_NOP',
       targetIds: [],
       payload: {},
-      summary: "I can help you book, reschedule, or answer questions about our services.",
+      summary: `I'm ${businessName}'s AI assistant. I can help you book, reschedule, or answer questions about our services.`,
     });
   }
 

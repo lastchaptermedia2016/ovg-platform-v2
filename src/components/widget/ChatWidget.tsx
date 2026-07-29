@@ -6,7 +6,7 @@ import {
   MessageCircle, X, Send, Mic, MicOff, RefreshCw, Volume2, VolumeX, ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useVoiceCommand } from "@/hooks/use-voice-command";
+import { useAnonVoice } from "@/hooks/useAnonVoice";
 import { generateBrandingCSS } from "@/lib/branding/css-generator";
 import { cornerStyle } from "@/lib/branding/widget-position";
 import type { CanonicalBranding, CanonicalFeatures, SuggestedAction } from "@/lib/schemas/tenant-config.canonical";
@@ -106,6 +106,7 @@ const ChatWidget = ({
   features,
 }: ChatWidgetProps) => {
   const effectiveVoiceFeaturesEnabled = features?.voiceFeaturesEnabled ?? voiceFeaturesEnabled;
+  const speakGreeting = features?.speakGreeting ?? false;
   const [config] = useState<WidgetConfig>(defaultConfig);
   const [isOpen, setIsOpen] = useState(false);
   const [showConsent, setShowConsent] = useState(false);
@@ -239,6 +240,68 @@ const ChatWidget = ({
     }
   });
 
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUrlRef = useRef<string | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+        audioRef.current = null;
+      }
+      if (audioUrlRef.current) {
+        URL.revokeObjectURL(audioUrlRef.current);
+        audioUrlRef.current = null;
+      }
+    };
+  }, []);
+
+  // ── Generic TTS playback (shared by greeting + response paths) ──
+  const playTts = useCallback(async (text: string) => {
+    if (!text.trim() || !voiceEnabled) return;
+    try {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+        audioRef.current = null;
+      }
+      if (audioUrlRef.current) {
+        URL.revokeObjectURL(audioUrlRef.current);
+        audioUrlRef.current = null;
+      }
+      const ttsResponse = await fetch('/api/ai/speech', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text.trim(), voice: 'hannah' }),
+      });
+      if (!ttsResponse.ok) return;
+      const audioBlob = await ttsResponse.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      audioUrlRef.current = audioUrl;
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+      audio.onended = () => {
+        URL.revokeObjectURL(audioUrl);
+        if (audioUrlRef.current === audioUrl) {
+          audioUrlRef.current = null;
+        }
+        audioRef.current = null;
+      };
+      audio.onerror = () => {
+        URL.revokeObjectURL(audioUrl);
+        if (audioUrlRef.current === audioUrl) {
+          audioUrlRef.current = null;
+        }
+        audioRef.current = null;
+      };
+      await audio.play();
+    } catch {
+      /* TTS is best-effort */
+    }
+  }, [voiceEnabled]);
+
   const handleVoiceTranscript = useCallback((text: string) => {
     if (!text.trim()) return;
     const userMsg: WidgetMessage = {
@@ -268,7 +331,10 @@ const ChatWidget = ({
       return next;
     });
     setIsTyping(false);
-  }, [chatHistoryKey]);
+    if (voiceEnabled) {
+      void playTts(text.trim());
+    }
+  }, [chatHistoryKey, voiceEnabled, playTts]);
 
   const handleVoiceError = useCallback((errorMsg: string) => {
     console.error('[ChatWidget] Voice error:', errorMsg);
@@ -282,15 +348,13 @@ const ChatWidget = ({
     abortRecording,
     interimTranscript,
     transcript,
-  } = useVoiceCommand({
-    tenantContext: { tenantId: preview ? "" : tenantId },
+  } = useAnonVoice({
+    tenantId: preview ? "" : tenantId,
+    brandName: branding?.brandName,
     onTranscript: handleVoiceTranscript,
     onAIResponse: handleVoiceAIResponse,
     onError: handleVoiceError,
   });
-
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const openWhatsApp = useCallback((phone: string, message: string) => {
     const cleanPhone = phone.replace(/\D/g, "");
@@ -323,7 +387,19 @@ const ChatWidget = ({
       timestamp: Date.now(),
     };
     setMessages([welcome]);
-  }, [greeting]);
+    if (speakGreeting && voiceEnabled) {
+      void playTts(effectiveGreeting);
+    }
+  }, [greeting, speakGreeting, voiceEnabled, playTts]);
+
+  const handleOpenChat = useCallback(() => {
+    setShowPeek(false);
+    if (!hasConsent) {
+      setShowConsent(true);
+    } else {
+      setIsOpen(true);
+    }
+  }, [hasConsent]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -342,15 +418,6 @@ const ChatWidget = ({
     return () => clearTimeout(id);
   }, [greeting, chatHistoryKey]);
 
-  const handleOpenChat = useCallback(() => {
-    setShowPeek(false);
-    if (!hasConsent) {
-      setShowConsent(true);
-    } else {
-      setIsOpen(true);
-    }
-  }, [hasConsent]);
-
   const refreshConfiguration = useCallback(async () => {
     if (preview) return;
     try {
@@ -365,7 +432,17 @@ const ChatWidget = ({
 
   // ── Preview test-drive TTS (client surface, mirrors useZeederVoice) ──
   const speakPreview = useCallback(async (text: string) => {
+    if (!text.trim()) return;
     try {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
+        audioRef.current = null;
+      }
+      if (audioUrlRef.current) {
+        URL.revokeObjectURL(audioUrlRef.current);
+        audioUrlRef.current = null;
+      }
       const ttsResponse = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -374,8 +451,23 @@ const ChatWidget = ({
       if (!ttsResponse.ok) return;
       const audioBlob = await ttsResponse.blob();
       const audioUrl = URL.createObjectURL(audioBlob);
+      audioUrlRef.current = audioUrl;
       const audio = new Audio(audioUrl);
-      audio.onended = () => URL.revokeObjectURL(audioUrl);
+      audioRef.current = audio;
+      audio.onended = () => {
+        URL.revokeObjectURL(audioUrl);
+        if (audioUrlRef.current === audioUrl) {
+          audioUrlRef.current = null;
+        }
+        audioRef.current = null;
+      };
+      audio.onerror = () => {
+        URL.revokeObjectURL(audioUrl);
+        if (audioUrlRef.current === audioUrl) {
+          audioUrlRef.current = null;
+        }
+        audioRef.current = null;
+      };
       await audio.play();
     } catch {
       /* TTS is best-effort in the preview */
@@ -481,6 +573,10 @@ const ChatWidget = ({
       setMessages(finalMsgs);
       localStorage.setItem(chatHistoryKey, JSON.stringify(finalMsgs));
 
+      if (voiceEnabled) {
+        void playTts(aiText);
+      }
+
       if (data.payload && typeof data.payload === "object" && !isBrandingTheme) {
         console.log("📦 [Jill Capture] Booking payload:", data.payload);
         setShowSyncBadge(true);
@@ -504,7 +600,7 @@ const ChatWidget = ({
     } finally {
       setIsTyping(false);
     }
-  }, [messages, refreshConfiguration, preview, voiceEnabled, liveDraft, speakPreview, tenantId, clientMemories, chatHistoryKey, conversationId]);
+  }, [messages, refreshConfiguration, preview, voiceEnabled, liveDraft, speakPreview, tenantId, clientMemories, chatHistoryKey, conversationId, playTts]);
 
   // ── Preview test-drive STT (Web Speech API) ─────────────────────────
   const startPreviewListening = useCallback(() => {
@@ -977,22 +1073,33 @@ const ChatWidget = ({
               )}
             </div>
              <div className="relative flex items-center gap-3">
-                <Button
-                  className="h-9 w-9 rounded-full text-white shrink-0 flex items-center justify-center"
-                  style={{ backgroundColor: "var(--w-primary, #0097b2)" }}
-                  onClick={() => {
-                    const next = !voiceEnabled;
-                    setVoiceEnabled(next);
-                    localStorage.setItem("ovgweb_voice_mute", next ? "" : "true");
-                    if (!next && audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
-                  }}
-                >
+                 <Button
+                   className="h-9 w-9 rounded-full text-white shrink-0 flex items-center justify-center"
+                   style={{ backgroundColor: "var(--w-primary, #0097b2)" }}
+                   onClick={() => {
+                     const next = !voiceEnabled;
+                     setVoiceEnabled(next);
+                     localStorage.setItem("ovgweb_voice_mute", next ? "" : "true");
+                     if (audioRef.current) {
+                       audioRef.current.pause();
+                       audioRef.current.src = '';
+                       audioRef.current = null;
+                     }
+                   }}
+                 >
                   {voiceEnabled ? <Volume2 className="h-5 w-5 flex-shrink-0 text-white" /> : <VolumeX className="h-5 w-5 flex-shrink-0 text-white" />}
                 </Button>
                 <Button className="h-9 w-9 rounded-full text-white shrink-0 flex items-center justify-center" style={{ backgroundColor: "var(--w-primary, #0097b2)" }} onClick={() => setShowResetConfirm(true)}>
                   <RefreshCw className="h-5 w-5 flex-shrink-0 text-white" />
                 </Button>
-                <Button className="h-9 w-9 rounded-full text-white shrink-0 flex items-center justify-center" style={{ backgroundColor: "var(--w-primary, #0097b2)" }} onClick={() => setIsOpen(false)}>
+                <Button className="h-9 w-9 rounded-full text-white shrink-0 flex items-center justify-center" style={{ backgroundColor: "var(--w-primary, #0097b2)" }} onClick={() => {
+                  if (audioRef.current) {
+                    audioRef.current.pause();
+                    audioRef.current.src = '';
+                    audioRef.current = null;
+                  }
+                  setIsOpen(false);
+                }}>
                   <X className="h-5 w-5 flex-shrink-0 text-white" />
                 </Button>
               </div>
@@ -1122,7 +1229,7 @@ const ChatWidget = ({
             <div className="absolute inset-0 bg-black/40" />
 
             <div className="relative flex gap-2 items-center">
-              {/* Microphone Button - Bound to useVoiceCommand.
+              {/* Microphone Button - Bound to useAnonVoice (anon-tolerant pipeline).
                   Hidden entirely when the reseller disables voice features,
                   so the client-side widget can ship without voice input. */}
               {effectiveVoiceFeaturesEnabled && (

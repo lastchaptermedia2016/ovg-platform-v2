@@ -41,11 +41,7 @@ interface UseVoiceCommandReturn {
   resetState: () => void;
 }
 
-/** Minimum press duration (ms) before stopListeningAndProcess finalises the pipeline.
- *  Presses shorter than this are treated as accidental taps and aborted.
- *  600ms is the lower bound at which a webm/opus container has produced
- *  a valid, decodeable header + initial frames for Groq Whisper. */
-const MIN_RECORDING_DURATION_MS = 600;
+import { ADMIN_MIN_RECORDING_MS } from './use-voice-constants';
 
 interface TenantContext {
   tenantId?: string;
@@ -737,12 +733,24 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
         console.log(`[VoiceCommand] 🔴 onstop — blob size: ${audioBlob.size} bytes, chunks collected: ${audioChunksRef.current.length}`);
         audioChunksRef.current = [];
 
-        // Allow short but valid PTT clips (>=600ms) through the pipeline.
-        // The duration guard below filters accidental taps; this
-        // threshold only drops completely silent or empty recordings.
-        const activeDurationMs = recordingStartedAtRef.current ? Date.now() - recordingStartedAtRef.current : 0;
-        if (audioBlob.size < 1024 || activeDurationMs < MIN_RECORDING_DURATION_MS) {
-          console.warn('[VoiceCommand] ⚠️ onstop — blob too small (%d bytes) or too short (%dms < 600ms), skipping pipeline', audioBlob.size, activeDurationMs);
+        // Duration guard: uses lastRecordingDurationMsRef (set by
+        // stopListeningAndProcess BEFORE it nullifies recordingStartedAtRef,
+        // fixing the stale-ref bug where onstop always read 0ms).
+        // Blob-size guard: drops completely silent or empty recordings.
+        // 512 is generous enough for any non-silent utterance at 300ms+.
+        const capStart = recordingStartedAtRef.current;
+        const capNow = Date.now();
+        const activeDurationMs = lastRecordingDurationMsRef.current ?? (capStart ? capNow - capStart : 0);
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('[VoiceCommand] 🔬 onstop duration check:', {
+            lastRecordingDurationMsRef: lastRecordingDurationMsRef.current,
+            recordingStartedAtRef: capStart,
+            computedActiveMs: activeDurationMs,
+            blobBytes: audioBlob.size,
+          });
+        }
+        if (audioBlob.size < 512 || activeDurationMs < ADMIN_MIN_RECORDING_MS) {
+          console.warn('[VoiceCommand] ⚠️ onstop — blob too small (%d bytes) or too short (%dms < %dms), skipping pipeline', audioBlob.size, activeDurationMs, ADMIN_MIN_RECORDING_MS);
           cleanup();
           return;
         }
@@ -783,14 +791,19 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       return;
     }
     const startedAt = recordingStartedAtRef.current;
+    const elapsed = startedAt !== null ? Date.now() - startedAt : Infinity;
+
+    // ── Duration Gate ───────────────────────────────────────────────────
+    // Capture the elapsed time into a stable ref BEFORE nullifying
+    // recordingStartedAtRef so the asynchronously-firing onstop handler
+    // (triggered by mediaRecorder.stop() below) can read the correct
+    // duration instead of reading the reset-to-null ref.
+    lastRecordingDurationMsRef.current = elapsed;
     recordingStartedAtRef.current = null;
     setIsRecording(false);
 
-    const elapsed = startedAt !== null ? Date.now() - startedAt : Infinity;
-    lastRecordingDurationMsRef.current = elapsed;
-
-    if (elapsed < MIN_RECORDING_DURATION_MS) {
-      console.log(`[VoiceCommand] ⏱ Tap too short (${elapsed}ms < ${MIN_RECORDING_DURATION_MS}ms) — aborting`);
+    if (elapsed < ADMIN_MIN_RECORDING_MS) {
+      console.log(`[VoiceCommand] ⏱ Tap too short (${elapsed}ms < ${ADMIN_MIN_RECORDING_MS}ms) — aborting`);
       stoppedByUserRef.current = false;
       currentSessionIdRef.current += 1;
       cleanup();

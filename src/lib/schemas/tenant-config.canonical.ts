@@ -165,6 +165,7 @@ export const CanonicalFeaturesSchema = z.object({
   customCssCode: z.string().optional(),
   voiceFeaturesEnabled: z.boolean().optional(),
   localFallbackAlert: z.boolean().optional(),
+  speakGreeting: z.boolean().optional(),
 });
 
 export type CanonicalFeatures = z.infer<typeof CanonicalFeaturesSchema>;

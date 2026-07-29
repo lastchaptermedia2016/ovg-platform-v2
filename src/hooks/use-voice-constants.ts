@@ -1,0 +1,2 @@
+export const PUBLIC_MIN_RECORDING_MS = 500;
+export const ADMIN_MIN_RECORDING_MS = 300;
