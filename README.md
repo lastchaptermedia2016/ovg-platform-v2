@@ -391,9 +391,70 @@ npm run build      # Production build
 npm run start      # Start production server
 npm run lint       # Run ESLint
 npm run lint:fix   # Auto-fix lint issues
+npm test           # Run all Vitest test suites
+npm run typecheck  # Type-check with tsc --noEmit
 ```
 
-## 📁 Project Structure
+## 🧪 Testing
+
+### Test Suite Status
+- **16 test files, 285 tests — all green.**
+- Zero-warning / zero-error requirement for types (`npm run typecheck`), linting (`npm run lint`), and builds (`npm run build`).
+
+### Quick-Start Commands
+```bash
+npm test                            # Run all Vitest suites
+npx vitest run <file_path>          # Run an isolated test file
+npx vitest run -t "<test name>"     # Run a single test by name
+npm run typecheck && npm run lint   # Verify code quality
+```
+
+### Testing Guidelines — Supabase Fluent Mock Pattern
+Server-side route handlers and API logic rely on the Supabase JS client's fluent query builder (`from().select().eq().maybeSingle()`). In Vitest tests, mock these with a **chainable builder pattern** so every method returns the same chain object:
+
+```ts
+// Shared helper used across test files
+function createMockChain() {
+  const chain = {
+    from: vi.fn().mockReturnThis(),
+    select: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+    or: vi.fn().mockReturnThis(),
+    in: vi.fn().mockReturnThis(),
+    order: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockReturnThis(),
+    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+    single: vi.fn().mockResolvedValue({ data: null, error: null }),
+    insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+    update: vi.fn().mockResolvedValue({ data: null, error: null }),
+    // Supports direct `await client.from(...)` without a terminal method
+    then: vi.fn().mockImplementation((resolve) => resolve({ data: [], error: null })),
+  };
+  return chain;
+}
+```
+
+#### ⚠️ Thenable Spreading Pitfall
+When a mocked Supabase client (or auth client) is returned from a factory function and subsequently `await`ed, **never spread the `then` property** onto the resolved value. If `then` is present on the client object itself, JavaScript treats it as a thenable — `await clientPromise` will invoke the chain's `then` instead of returning the client instance, causing subtle runtime/mock bugs.
+
+**Correct:**
+```ts
+vi.mock('@/lib/supabase/admin', () => {
+  const chain = createMockChain();
+  const { then: _then, ...chainMethods } = chain; // strip `then`
+  return { supabaseAdmin: { ...chainMethods } };
+});
+```
+
+**Incorrect:**
+```ts
+vi.mock('@/lib/supabase/admin', () => {
+  const chain = createMockChain();
+  return { supabaseAdmin: { ...chain } }; // `then` leaks — await breaks
+});
+```
+
+### Project Structure
 ```
 ovg-platform-v2/
 ├── src/

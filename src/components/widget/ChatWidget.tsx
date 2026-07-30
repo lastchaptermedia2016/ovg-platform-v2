@@ -245,20 +245,52 @@ const ChatWidget = ({
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const isPlayingRef = useRef(false);
+  const playTtsRef = useRef<((text: string) => Promise<void>) | null>(null);
+  const speakPreviewRef = useRef<((text: string) => Promise<void>) | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const ttsGenerationRef = useRef(0);
+  const ttsAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = '';
-        audioRef.current = null;
-      }
       if (audioUrlRef.current) {
         URL.revokeObjectURL(audioUrlRef.current);
         audioUrlRef.current = null;
       }
     };
+  }, []);
+
+  const teardownTtsAudio = useCallback(async () => {
+    if (ttsAbortRef.current) {
+      ttsAbortRef.current.abort();
+      ttsAbortRef.current = null;
+    }
+    const audio = audioRef.current;
+    if (audio) {
+      audio.onplay = null;
+      audio.onpause = null;
+      audio.onstalled = null;
+      audio.oncanplay = null;
+      audio.onwaiting = null;
+      audio.onended = null;
+      audio.onerror = null;
+      const wasPlaying = !audio.paused;
+      audio.pause();
+      if (wasPlaying) {
+        await new Promise(r => setTimeout(r, 50));
+      }
+      if (audioUrlRef.current) {
+        URL.revokeObjectURL(audioUrlRef.current);
+        audioUrlRef.current = null;
+      }
+      audio.src = '';
+      audio.load();
+    } else if (audioUrlRef.current) {
+      URL.revokeObjectURL(audioUrlRef.current);
+      audioUrlRef.current = null;
+    }
+    isPlayingRef.current = false;
   }, []);
 
   // ── Generic TTS playback (shared by greeting + response paths) ──
@@ -267,53 +299,98 @@ const ChatWidget = ({
       console.warn('[ChatWidget-TTS] Skipped: empty text or voice muted', { textLen: text.trim().length, voiceEnabled });
       return;
     }
+    const generation = ++ttsGenerationRef.current;
+    await teardownTtsAudio();
     try {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = '';
-        audioRef.current = null;
-      }
-      if (audioUrlRef.current) {
-        URL.revokeObjectURL(audioUrlRef.current);
-        audioUrlRef.current = null;
-      }
       console.log('[ChatWidget-TTS] Fetching speech for:', text.trim().substring(0, 60));
+      const controller = new AbortController();
+      ttsAbortRef.current = controller;
       const ttsResponse = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: text.trim(), voice: 'hannah' }),
+        signal: controller.signal,
       });
+      if (generation !== ttsGenerationRef.current) {
+        console.log('[ChatWidget-TTS] Superseded by newer request — discarding result');
+        return;
+      }
       console.log('[ChatWidget-TTS] Speech response status:', ttsResponse.status);
-      if (!ttsResponse.ok) return;
+      if (!ttsResponse.ok) {
+        console.error('[ChatWidget-TTS] Speech API error:', ttsResponse.status, ttsResponse.statusText);
+        return;
+      }
       const audioBlob = await ttsResponse.blob();
+      if (generation !== ttsGenerationRef.current) {
+        console.log('[ChatWidget-TTS] Superseded during blob read — discarding result');
+        URL.revokeObjectURL(URL.createObjectURL(audioBlob));
+        return;
+      }
       console.log('[ChatWidget-TTS] Audio blob size:', audioBlob.size, 'type:', audioBlob.type);
       const audioUrl = URL.createObjectURL(audioBlob);
       audioUrlRef.current = audioUrl;
-      const audio = new Audio(audioUrl);
-      audioRef.current = audio;
+      const audio = audioRef.current;
+      if (!audio) {
+        console.warn('[ChatWidget-TTS] No audio element in DOM — cannot play');
+        URL.revokeObjectURL(audioUrl);
+        audioUrlRef.current = null;
+        return;
+      }
+      // --- Diagnostic event listeners (read-only investigation) ---
+      audio.onplay = () => {
+        console.log('[TTS-DIAG] Audio started playing');
+        isPlayingRef.current = true;
+      };
+      audio.onpause = () => {
+        console.log('[TTS-DIAG] Audio paused unexpectedly');
+        isPlayingRef.current = false;
+      };
+      audio.onstalled = () => console.warn('[TTS-DIAG] Audio stalled (buffering issue)');
+      audio.oncanplay = () => console.log('[TTS-DIAG] Audio can play');
+      audio.onwaiting = () => console.warn('[TTS-DIAG] Audio waiting (buffering)');
       audio.onended = () => {
+        isPlayingRef.current = false;
         URL.revokeObjectURL(audioUrl);
         if (audioUrlRef.current === audioUrl) {
           audioUrlRef.current = null;
         }
-        audioRef.current = null;
       };
-      audio.onerror = (e) => {
-        if (audioRef.current !== audio) return;
-        console.error('[ChatWidget-TTS] Audio element error:', e);
+      audio.onerror = () => {
+        console.error('[ChatWidget-TTS] Audio element error');
+        isPlayingRef.current = false;
         URL.revokeObjectURL(audioUrl);
         if (audioUrlRef.current === audioUrl) {
           audioUrlRef.current = null;
         }
-        audioRef.current = null;
       };
+      audio.src = audioUrl;
+      audio.load();
+      console.log('[TTS-DIAG] Pre-play state:', {
+        muted: audio.muted,
+        volume: audio.volume,
+        readyState: audio.readyState,
+        networkState: audio.networkState,
+        currentTime: audio.currentTime,
+        duration: audio.duration,
+      });
       console.log('[ChatWidget-TTS] Attempting audio.play()...');
       await audio.play();
       console.log('[ChatWidget-TTS] audio.play() succeeded');
     } catch (err) {
-      console.error('[ChatWidget-TTS] Playback failed:', err);
+      if (err instanceof Error && err.name === 'AbortError') {
+        console.log('[ChatWidget-TTS] Fetch aborted by newer request');
+        return;
+      }
+      const errMsg = err instanceof Error ? err.name : String(err);
+      if (errMsg === 'NotAllowedError') {
+        console.warn('[ChatWidget-TTS] Autoplay blocked — user interaction required');
+      } else {
+        console.error('[ChatWidget-TTS] Playback failed:', err);
+      }
     }
-  }, [voiceEnabled]);
+  }, [voiceEnabled, teardownTtsAudio]);
+
+  useEffect(() => { playTtsRef.current = playTts; }, [playTts]);
 
   const handleVoiceTranscript = useCallback((text: string) => {
     const cleanText = text.trim();
@@ -485,47 +562,94 @@ const ChatWidget = ({
   // ── Preview test-drive TTS (client surface, mirrors useZeederVoice) ──
   const speakPreview = useCallback(async (text: string) => {
     if (!text.trim()) return;
+    const generation = ++ttsGenerationRef.current;
+    await teardownTtsAudio();
     try {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = '';
-        audioRef.current = null;
-      }
-      if (audioUrlRef.current) {
-        URL.revokeObjectURL(audioUrlRef.current);
-        audioUrlRef.current = null;
-      }
+      console.log('[ChatWidget-TTS] Fetching speech for (preview):', text.trim().substring(0, 60));
+      const controller = new AbortController();
+      ttsAbortRef.current = controller;
       const ttsResponse = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, voice: 'hannah' }),
+        signal: controller.signal,
       });
-      if (!ttsResponse.ok) return;
+      if (generation !== ttsGenerationRef.current) {
+        console.log('[ChatWidget-TTS] Superseded by newer request — discarding result (preview)');
+        return;
+      }
+      if (!ttsResponse.ok) {
+        console.error('[ChatWidget-TTS] Speech API error (preview):', ttsResponse.status, ttsResponse.statusText);
+        return;
+      }
       const audioBlob = await ttsResponse.blob();
+      if (generation !== ttsGenerationRef.current) {
+        console.log('[ChatWidget-TTS] Superseded during blob read — discarding result (preview)');
+        URL.revokeObjectURL(URL.createObjectURL(audioBlob));
+        return;
+      }
       const audioUrl = URL.createObjectURL(audioBlob);
       audioUrlRef.current = audioUrl;
-      const audio = new Audio(audioUrl);
-      audioRef.current = audio;
+      const audio = audioRef.current;
+      if (!audio) {
+        console.warn('[ChatWidget-TTS] No audio element in DOM — cannot play preview');
+        URL.revokeObjectURL(audioUrl);
+        audioUrlRef.current = null;
+        return;
+      }
+      // --- Diagnostic event listeners (read-only investigation) ---
+      audio.onplay = () => {
+        console.log('[TTS-DIAG] Audio started playing');
+        isPlayingRef.current = true;
+      };
+      audio.onpause = () => {
+        console.log('[TTS-DIAG] Audio paused unexpectedly');
+        isPlayingRef.current = false;
+      };
+      audio.onstalled = () => console.warn('[TTS-DIAG] Audio stalled (buffering issue)');
+      audio.oncanplay = () => console.log('[TTS-DIAG] Audio can play');
+      audio.onwaiting = () => console.warn('[TTS-DIAG] Audio waiting (buffering)');
       audio.onended = () => {
+        isPlayingRef.current = false;
         URL.revokeObjectURL(audioUrl);
         if (audioUrlRef.current === audioUrl) {
           audioUrlRef.current = null;
         }
-        audioRef.current = null;
       };
       audio.onerror = () => {
-        if (audioRef.current !== audio) return;
+        console.error('[ChatWidget-TTS] Audio element error (preview)');
+        isPlayingRef.current = false;
         URL.revokeObjectURL(audioUrl);
         if (audioUrlRef.current === audioUrl) {
           audioUrlRef.current = null;
         }
-        audioRef.current = null;
       };
+      audio.src = audioUrl;
+      audio.load();
+      console.log('[TTS-DIAG] Pre-play state:', {
+        muted: audio.muted,
+        volume: audio.volume,
+        readyState: audio.readyState,
+        networkState: audio.networkState,
+        currentTime: audio.currentTime,
+        duration: audio.duration,
+      });
       await audio.play();
-    } catch {
-      /* TTS is best-effort in the preview */
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        console.log('[ChatWidget-TTS] Fetch aborted by newer request (preview)');
+        return;
+      }
+      const errMsg = err instanceof Error ? err.name : String(err);
+      if (errMsg === 'NotAllowedError') {
+        console.warn('[ChatWidget-TTS] Autoplay blocked — user interaction required (preview)');
+      } else {
+        console.error('[ChatWidget-TTS] Playback failed (preview):', err);
+      }
     }
-  }, []);
+  }, [teardownTtsAudio]);
+
+  useEffect(() => { speakPreviewRef.current = speakPreview; }, [speakPreview]);
 
   const sendMessageDirect = useCallback(async (userInputText: string) => {
     if (!userInputText.trim()) return;
@@ -961,6 +1085,13 @@ const ChatWidget = ({
 
   return (
     <>
+      {/* Persistent audio element — kept in the DOM so the browser's audio output pipeline stays active */}
+      <audio
+        ref={audioRef}
+        aria-hidden="true"
+        preload="none"
+        style={{ position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none' }}
+      />
       {/* ===== PEEK TEASER ===== */}
       <AnimatePresence>
         {!preview && !isOpen && !showConsent && showPeek && (
@@ -1179,11 +1310,14 @@ const ChatWidget = ({
                      const next = !voiceEnabled;
                      setVoiceEnabled(next);
                      localStorage.setItem("ovgweb_voice_mute", next ? "" : "true");
-                     if (audioRef.current) {
-                       audioRef.current.pause();
-                       audioRef.current.src = '';
-                       audioRef.current = null;
-                     }
+                      if (audioRef.current) {
+                        audioRef.current.pause();
+                        audioRef.current.currentTime = 0;
+                        if (audioUrlRef.current) {
+                          URL.revokeObjectURL(audioUrlRef.current);
+                          audioUrlRef.current = null;
+                        }
+                      }
                    }}
                  >
                   {voiceEnabled ? <Volume2 className="h-5 w-5 flex-shrink-0 text-white" /> : <VolumeX className="h-5 w-5 flex-shrink-0 text-white" />}
@@ -1192,11 +1326,14 @@ const ChatWidget = ({
                   <RefreshCw className="h-5 w-5 flex-shrink-0 text-white" />
                 </Button>
                 <Button className="h-9 w-9 rounded-full text-white shrink-0 flex items-center justify-center" style={{ backgroundColor: "var(--w-primary, #0097b2)" }} onClick={() => {
-                  if (audioRef.current) {
-                    audioRef.current.pause();
-                    audioRef.current.src = '';
-                    audioRef.current = null;
-                  }
+                   if (audioRef.current) {
+                     audioRef.current.pause();
+                     audioRef.current.currentTime = 0;
+                     if (audioUrlRef.current) {
+                       URL.revokeObjectURL(audioUrlRef.current);
+                       audioUrlRef.current = null;
+                     }
+                   }
                   setIsOpen(false);
                 }}>
                   <X className="h-5 w-5 flex-shrink-0 text-white" />
@@ -1235,7 +1372,7 @@ const ChatWidget = ({
                         : "bg-gradient-to-br from-white/95 to-gray-50/95 text-amber-800 rounded-tl-sm border-b-pink-400 shadow-lg shadow-gray-100/30"
                     }`}
                   >
-                    <span className="font-light">{msg.text}</span>
+                    <span className="font-light whitespace-pre-wrap">{msg.text}</span>
                     {isBrandingAction && (
                       <div className="mt-3 flex gap-2">
                         <button

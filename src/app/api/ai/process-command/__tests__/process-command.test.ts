@@ -28,9 +28,10 @@ let capturedUpdates: Record<string, unknown>[] = [];
  * all resolve to the same { data, error } terminal. `update` records its
  * payload so we can assert on the persisted widget_config.
  */
+
 function createMockChain(): Record<string, unknown> {
   const terminal = {
-    data: { id: TENANT_ID, reseller_id: RESOLVED_RESELLER_ID },
+    data: { id: 'eca76a5b-de2a-41c9-b5e0-5ae7412ef835', reseller_id: 'reseller-uuid-fixed' },
     error: null,
   };
   const chain: Record<string, unknown> = {};
@@ -83,6 +84,7 @@ vi.mock('@/lib/auth/server', () => ({
 
 vi.mock('@/lib/supabase/admin', () => ({
   supabaseAdmin: {
+    ...createMockChain(),
     rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
   },
 }));

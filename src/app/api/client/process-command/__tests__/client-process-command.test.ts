@@ -18,6 +18,22 @@ process.env.GROQ_API_KEY = process.env.GROQ_API_KEY || 'test-groq-key';
 
 let cannedGroqResponse: unknown = null;
 let lastGroqSystemPrompt: string | null = null;
+
+function createMockChain(): Record<string, unknown> {
+  const chain: Record<string, unknown> = {};
+  const builders = ['from', 'select', 'eq', 'or', 'in', 'order', 'limit'];
+  for (const m of builders) {
+    chain[m] = vi.fn().mockImplementation(() => chain);
+  }
+  chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
+  chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
+  chain.insert = vi.fn().mockResolvedValue({ data: null, error: null });
+  chain.update = vi.fn().mockResolvedValue({ data: null, error: null });
+  chain.then = (onFulfilled: (value: { data: unknown[]; error: null }) => unknown) =>
+    Promise.resolve({ data: [], error: null }).then(onFulfilled);
+  return chain;
+}
+
 vi.mock('groq-sdk', () => {
   class Groq {
     chat = {
@@ -50,31 +66,14 @@ vi.mock('@/lib/audit/platform-logger', () => ({
 }));
 
 vi.mock('@/lib/supabase/admin', () => {
-  const tenantAppointmentsChain = {
-    select: vi.fn().mockReturnThis(),
-    eq: vi.fn().mockReturnThis(),
-    maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
-  };
-  const visitorMemoriesChain = {
-    select: vi.fn().mockReturnThis(),
-    eq: vi.fn().mockReturnThis(),
-  };
-  const genericChain = {
-    select: vi.fn().mockReturnThis(),
-    eq: vi.fn().mockReturnThis(),
-    maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'tenant-internal-id', name: 'Demo Business' }, error: null }),
-    insert: vi.fn().mockResolvedValue({ error: null }),
-    upsert: vi.fn().mockResolvedValue({ error: null }),
-  };
-
+  const chain = createMockChain();
+  chain.maybeSingle = vi.fn().mockResolvedValue({ data: { id: 'tenant-internal-id', name: 'Demo Business' }, error: null });
+  chain.single = vi.fn().mockResolvedValue({ data: { id: 'tenant-internal-id', name: 'Demo Business' }, error: null });
+  const { then: _then, ...chainMethods } = chain;
   return {
     supabaseAdmin: {
-      rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
-      from: vi.fn().mockImplementation((table: string) => {
-        if (table === 'tenant_appointments') return tenantAppointmentsChain;
-        if (table === 'visitor_memories') return visitorMemoriesChain;
-        return genericChain;
-      }),
+      ...chainMethods,
+      rpc: vi.fn().mockResolvedValue({ data: null, error: null }),
     },
   };
 });
@@ -114,9 +113,11 @@ beforeEach(() => {
     email: 'client@example.com',
     error: null,
   });
+  const chain = createMockChain();
+  const { then: _then, ...chainMethods } = chain;
   mockCreateAuthClient.mockResolvedValue({
     auth: { getUser: vi.fn() },
-    from: vi.fn(),
+    ...chainMethods,
   } as unknown as Awaited<ReturnType<typeof createAuthClient>>);
   mockResolveTenantId.mockResolvedValue({
     data: 'tenant-uuid-123',
@@ -822,14 +823,12 @@ describe('POST /api/client/process-command - Audit Persistence', () => {
  * and the hydrated system prompt can be asserted.
  */
 function mockTenantRow(row: Record<string, unknown> | null): void {
-  const maybeSingle = vi.fn().mockResolvedValue({ data: row, error: null });
-  const eq = vi.fn().mockReturnValue({ maybeSingle });
-  const select = vi.fn().mockReturnValue({ eq });
+  const chain = createMockChain();
+  chain.maybeSingle = vi.fn().mockResolvedValue({ data: row, error: null });
+  const { then: _then, ...chainMethods } = chain;
   mockCreateAuthClient.mockResolvedValue({
     auth: { getUser: vi.fn() },
-    from: vi.fn().mockImplementation((table: string) =>
-      table === 'tenants' ? { select } : {},
-    ),
+    ...chainMethods,
   } as unknown as Awaited<ReturnType<typeof createAuthClient>>);
 }
 
@@ -875,22 +874,20 @@ describe('POST /api/client/process-command - System Prompt Hydration', () => {
   it('should fetch tenant details using the server-resolved tenantId', async () => {
     cannedGroqResponse = { actionType: 'CLIENT_NOP', summary: 'Sure.' };
 
-    const maybeSingle = vi.fn().mockResolvedValue({
+    const chain = createMockChain();
+    chain.maybeSingle = vi.fn().mockResolvedValue({
       data: { id: 'tenant-uuid-123', name: 'Zeeder Motors' },
       error: null,
     });
-    const eq = vi.fn().mockReturnValue({ maybeSingle });
-    const select = vi.fn().mockReturnValue({ eq });
+    const { then: _then, ...chainMethods } = chain;
     mockCreateAuthClient.mockResolvedValue({
       auth: { getUser: vi.fn() },
-      from: vi.fn().mockImplementation((table: string) =>
-        table === 'tenants' ? { select } : {},
-      ),
+      ...chainMethods,
     } as unknown as Awaited<ReturnType<typeof createAuthClient>>);
 
     await post('what is a widget body?');
 
-    expect(eq).toHaveBeenCalledWith('id', 'tenant-uuid-123');
+    expect(chainMethods.eq).toHaveBeenCalledWith('id', 'tenant-uuid-123');
     expect(lastGroqSystemPrompt).toMatch(/Zeeder Motors/);
   });
 

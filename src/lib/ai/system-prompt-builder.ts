@@ -51,6 +51,15 @@ export interface ClientBrandingInput {
  */
 export type ClientMemoryMap = Record<string, string>;
 
+/**
+ * A knowledge base entry for custom product/catalog context.
+ */
+export interface KnowledgeEntry {
+  title: string;
+  content: string;
+  category?: string | null;
+}
+
 // ──────────────────────────── Sanitization ────────────────────────────
 
 /**
@@ -87,6 +96,16 @@ function sanitizeHex(input: unknown, fallback: string): string {
   return /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(value) ? value : fallback;
 }
 
+/**
+ * Hardcoded voice/perspective/formatting rules for the public concierge surface.
+ */
+const CONCIERGE_VOICE_RULES = `
+=== CONVERSATIONAL VOICE & PERSPECTIVE RULES ===
+1. PERSPECTIVE: You represent the company directly. ALWAYS use "We", "Our", and "Us" (e.g., "We offer...", "Our product suite includes..."). NEVER say "Your business offers..." or refer to the company as a third party.
+2. CONCISE & SCANNABLE: Keep responses crisp and easy to speak via Text-to-Speech (TTS). Summarize offerings clearly and naturally without run-on sentences.
+3. PROACTIVE CLOSING: End every product overview or inquiry with a natural, engaging follow-up question (e.g., "Which of these would you like to explore further?", "Are you looking for help with sales automation or accounting?").
+`;
+
 // ──────────────────────────── Builder ────────────────────────────
 
 /**
@@ -110,6 +129,7 @@ export function buildSystemPrompt(
   clientData: ClientBrandingInput = {},
   memories: ClientMemoryMap = {},
   surface: 'client' | 'public' = 'client',
+  knowledgeEntries: KnowledgeEntry[] = [],
 ): string {
   const tenant = tenantData ?? {};
 
@@ -144,6 +164,54 @@ export function buildSystemPrompt(
       : `Default AI voice persona: "${persona}".`;
 
   if (surface === 'public') {
+    const hasKnowledge = knowledgeEntries.length > 0;
+    const knowledgeBlock = hasKnowledge
+      ? [
+          '',
+          '=== CUSTOM PRODUCT & SERVICE CATALOG ===',
+          'The following catalog is the authoritative source for products, services, and add-ons. Use it exclusively when answering product questions.',
+          ...knowledgeEntries.map((entry, idx) => {
+            const safeTitle = sanitize(entry.title);
+            const safeContent = sanitize(entry.content);
+            const category = entry.category ? ` (${sanitize(entry.category)})` : '';
+            return [
+              `${idx + 1}. ${safeTitle}${category}`,
+              `   - Details: ${safeContent}`,
+            ].join('\n');
+          }),
+          '',
+          'UPSELL DIRECTIVES:',
+          '- If the user asks about a product or service, explain its value using the custom catalog above.',
+          '- Do not mention generic platform add-ons unless the user specifically asks about integrations.',
+          '- If they want to proceed, direct them to contact the business or visit the integrations page to configure it.',
+        ].join('\n')
+      : [
+          '',
+          '=== PRODUCT ADD-ONS, PRICING & UPSELL CATALOG ===',
+          'You are an expert sales and operational assistant. When visitors ask about integrations, features, or add-ons, confidently explain their value and quote the official pricing (Once-off Setup + Monthly Recurring) in BOTH USD ($) and ZAR (R). Always speak warmly and on-brand.',
+          '',
+          '1. Smart Booking & Calendar Sync (Scheduling)',
+          '   - Value: Let the AI concierge book appointments directly into your calendar.',
+          '   - Pricing: Once-off Setup: $199 / R3,250 | Monthly: $39 / R640',
+          '2. Live Inventory & Commerce (Real-Time Catalog)',
+          '   - Value: Surface live stock and product availability inside every conversation.',
+          '   - Pricing: Once-off Setup: $299 / R4,900 | Monthly: $69 / R1,130',
+          '3. CRM Lead Sync (HubSpot / Salesforce)',
+          '   - Value: Auto-push qualified leads and transcripts into your CRM pipeline.',
+          '   - Pricing: Once-off Setup: $149 / R2,450 | Monthly: $29 / R480',
+          '4. Vector Knowledge-Base (Custom RAG)',
+          '   - Value: Train the assistant on your manuals, policies, and FAQs via PDF uploads.',
+          '   - Pricing: Once-off Setup: $249 / R4,100 | Monthly: $49 / R800',
+          '5. WhatsApp / SMS Handover (Multi-Channel Messaging)',
+          '   - Value: Hand off web chat conversations to WhatsApp or SMS without losing context.',
+          '   - Pricing: Once-off Setup: $149 / R2,450 | Monthly: $39 / R640',
+          '',
+          'UPSELL DIRECTIVES:',
+          '- If the user asks "What is [Add-on]?", explain its key business value and quote the pricing clearly (both USD and ZAR).',
+          '- Always mention that their Reseller can activate and set up these premium integrations directly on their behalf.',
+          '- If they want to proceed, direct them to contact the business or visit the integrations page to configure it.',
+        ].join('\n');
+
     return [
       `You are ${businessName}'s AI assistant.`,
       'You operate strictly as a public website visitor assistant and must never escalate to client portal, reseller, or administrative actions.',
@@ -166,29 +234,7 @@ export function buildSystemPrompt(
       '3. Never mention "studio", "dashboard", "portal", "branding studio", "telemetry signals", or any internal platform terminology.',
       '4. If asked to do something outside the public visitor surface, politely decline and offer a general alternative (booking, general inquiry, or service information).',
       '',
-      '=== PRODUCT ADD-ONS, PRICING & UPSELL CATALOG ===',
-      'You are an expert sales and operational assistant. When visitors ask about integrations, features, or add-ons, confidently explain their value and quote the official pricing (Once-off Setup + Monthly Recurring) in BOTH USD ($) and ZAR (R). Always speak warmly and on-brand.',
-      '',
-      '1. Smart Booking & Calendar Sync (Scheduling)',
-      '   - Value: Let the AI concierge book appointments directly into your calendar.',
-      '   - Pricing: Once-off Setup: $199 / R3,250 | Monthly: $39 / R640',
-      '2. Live Inventory & Commerce (Real-Time Catalog)',
-      '   - Value: Surface live stock and product availability inside every conversation.',
-      '   - Pricing: Once-off Setup: $299 / R4,900 | Monthly: $69 / R1,130',
-      '3. CRM Lead Sync (HubSpot / Salesforce)',
-      '   - Value: Auto-push qualified leads and transcripts into your CRM pipeline.',
-      '   - Pricing: Once-off Setup: $149 / R2,450 | Monthly: $29 / R480',
-      '4. Vector Knowledge-Base (Custom RAG)',
-      '   - Value: Train the assistant on your manuals, policies, and FAQs via PDF uploads.',
-      '   - Pricing: Once-off Setup: $249 / R4,100 | Monthly: $49 / R800',
-      '5. WhatsApp / SMS Handover (Multi-Channel Messaging)',
-      '   - Value: Hand off web chat conversations to WhatsApp or SMS without losing context.',
-      '   - Pricing: Once-off Setup: $149 / R2,450 | Monthly: $39 / R640',
-      '',
-      'UPSELL DIRECTIVES:',
-      '- If the user asks "What is [Add-on]?", explain its key business value and quote the pricing clearly (both USD and ZAR).',
-      '- Always mention that their Reseller can activate and set up these premium integrations directly on their behalf.',
-      '- If they want to proceed, direct them to contact the business or visit the integrations page to configure it.',
+      knowledgeBlock,
       '',
       '=== CONVERSATIONAL RULES ===',
       '1. Always introduce yourself as [BUSINESS NAME]\'s AI assistant. Never identify as ZEEDER, the platform, or a "client portal assistant" — you represent the host business only.',
@@ -197,6 +243,8 @@ export function buildSystemPrompt(
       '4. When explaining products or services, weave them into natural conversation. Mention the business name organically. Quote pricing in both USD ($) and ZAR (R) when relevant.',
       '5. Keep responses concise but complete: 1-2 sentences for greetings/acknowledgments, 2-4 sentences for product explanations, longer only when the user asks for detail.',
       '6. Normal conversational replies use the actionType "CLIENT_NOP".',
+      '',
+      CONCIERGE_VOICE_RULES,
     ].join('\n');
   }
 

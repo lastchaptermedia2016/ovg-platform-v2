@@ -27,7 +27,7 @@ import { z } from 'zod';
 import { zeederActionRegistry, isZeederActionId, type ZeederActionId } from '@/lib/zeeder/action-registry';
 import { CLIENT_SYSTEM_REGISTRY, type ClientSystemItem } from '@/lib/client-system-registry';
 import { extractPersonaMode, hasPersonaModeIntent } from '@/lib/ai/extract-persona-mode';
-import { buildSystemPrompt } from '@/lib/ai/system-prompt-builder';
+import { buildSystemPrompt, type KnowledgeEntry } from '@/lib/ai/system-prompt-builder';
 import { getClientMemories, extractAndStoreMemories, type ClientMemoryMap } from '@/lib/ai/memory-service';
 import { getVisitorMemories, extractAndStoreVisitorMemories, touchVisitorMemory, normalizeVisitorPhone, normalizeVisitorEmail, type VisitorIdentityType } from '@/lib/ai/memory-service';
 import { resolveTenantId } from '@/lib/resolveTenantId';
@@ -1044,6 +1044,43 @@ async function runSemanticFallback(
     // admin client; authenticated callers use their own session client.
     const tenantClient = isAnon ? supabaseAdmin : (persistCtx?.supabase ?? null);
     const tenantDetails = await fetchTenantDetails(tenantClient, persistCtx?.tenantId ?? null);
+
+    // ── KB-RAG-TRACE: incoming tenant identity ──────────────────────────
+    console.log('[KB-RAG-TRACE] incoming tenantId:', persistCtx?.tenantId ?? null, 'isAnon:', isAnon, 'query:', text);
+
+    // ── Knowledge Base context fetch ─────────────────────────────────────
+    // Pull active tenant_knowledge entries so the public widget can reference
+    // custom products/services instead of only the hardcoded template catalog.
+    let knowledgeEntries: KnowledgeEntry[] = [];
+    if (persistCtx?.tenantId && tenantClient) {
+      const { data: kbData, error: kbError } = await tenantClient
+        .from('tenant_knowledge')
+        .select('title, content, category')
+        .eq('tenant_id', persistCtx.tenantId)
+        .eq('is_active', true)
+        .order('created_at', { ascending: true });
+
+      // ── KB-RAG-TRACE: exact KB query + raw results ────────────────────
+      console.log('[KB-RAG-TRACE] KB query tenant_id:', persistCtx.tenantId, 'error:', kbError?.message ?? null, 'results:', kbData ?? []);
+
+      if (!kbError && Array.isArray(kbData)) {
+        // Deduplicate by title & content snippet to prevent product repetition.
+        const seen = new Set<string>();
+        knowledgeEntries = kbData
+          .map((row: Record<string, unknown>) => ({
+            title: typeof row.title === 'string' ? row.title : '',
+            content: typeof row.content === 'string' ? row.content : '',
+            category: typeof row.category === 'string' ? row.category : null,
+          }))
+          .filter((entry) => {
+            const key = `${entry.title.trim().toLowerCase()}:${entry.content.trim().slice(0, 50).toLowerCase()}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+      }
+    }
+
     const hydratedSystemPrompt = buildSystemPrompt(
       tenantDetails,
       {
@@ -1053,6 +1090,7 @@ async function runSemanticFallback(
       },
       memories,
       isAnon ? 'public' : 'client',
+      knowledgeEntries,
     );
 
     // ── Dynamic integration tool injection ──────────────────────────
