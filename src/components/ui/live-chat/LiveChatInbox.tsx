@@ -312,6 +312,10 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
           (payload) => {
             const row = payload.new as ChatMessage;
             setMessages((prev) => {
+              // Exact ID collision guard
+              if (prev.some((m) => m.id === row.id)) return prev;
+
+              // Replace optimistic temp message if server echoed it back
               const optimisticIndex = prev.findIndex(
                 (m) =>
                   optimisticIdsRef.current.has(m.id) &&
@@ -325,7 +329,16 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
                 optimisticIdsRef.current.delete(prev[optimisticIndex].id);
                 return next;
               }
-              if (prev.some((m) => m.id === row.id)) return prev;
+
+              // Secondary collision guard: same sender, same content, within 2s
+              const isDuplicate = prev.some(
+                (m) =>
+                  m.sender_id === row.sender_id &&
+                  m.message === row.message &&
+                  Math.abs(new Date(m.created_at).getTime() - new Date(row.created_at).getTime()) < 2000,
+              );
+              if (isDuplicate) return prev;
+
               return [...prev, row];
             });
 
@@ -516,7 +529,7 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
                 <div className="text-[10px] font-semibold tracking-widest text-zinc-500 uppercase">Conversations</div>
               </div>
               <div className="h-[420px] overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
-                {conversationsLoading && (
+                {conversationsLoading && conversations.length === 0 && (
                   <p className="p-3 text-center text-xs text-zinc-500">Loading…</p>
                 )}
                 {!conversationsLoading && conversations.length === 0 && (
@@ -536,15 +549,15 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
                         isFlashing ? 'animate-pulse ring-1 ring-cyan-400 ring-offset-1 ring-offset-[#0a0f1d]' : '',
                       ].join(' ')}
                     >
-                      <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center justify-between gap-2 min-w-0">
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className="truncate text-xs text-white">{conv.label}</span>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="truncate min-w-0 text-xs text-white">{conv.label}</span>
                           </div>
-                          <div className="mt-0.5 flex items-center gap-2">
-                            <span className="text-[10px] text-zinc-500">{getRelativeTime(conv.lastMessageAt)}</span>
+                          <div className="mt-0.5 flex items-center gap-2 min-w-0">
+                            <span className="truncate min-w-0 shrink-0 whitespace-nowrap text-[10px] text-zinc-500">{getRelativeTime(conv.lastMessageAt)}</span>
                             {conv.muteState?.isAiMuted && (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-orange-500/10 px-1.5 py-0.5 text-[10px] text-orange-300">
+                              <span className="shrink-0 whitespace-nowrap inline-flex items-center gap-1 rounded-full bg-orange-500/10 px-1.5 py-0.5 text-[10px] text-orange-300">
                                 <Bot className="h-3 w-3" />
                                 {conv.muteState.isHumanTakingOver ? 'Human handling' : 'AI paused'}
                               </span>

@@ -123,6 +123,10 @@ export function useAnonVoice(options: UseAnonVoiceOptions): UseAnonVoiceReturn {
   const recordingStartedAtRef = useRef<number | null>(null);
   const lastRecordingDurationMsRef = useRef<number | null>(null);
   const mediaMimeTypeRef = useRef<string>('audio/webm');
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const peakVolumeRef = useRef<number>(0);
 
   // ── Hardware cleanup ──────────────────────────────────────────────
   const teardownRecording = useCallback(() => {
@@ -142,6 +146,16 @@ export function useAnonVoice(options: UseAnonVoiceOptions): UseAnonVoiceReturn {
       try { recognitionRef.current.abort(); } catch { /* noop */ }
       recognitionRef.current = null;
     }
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+    analyserRef.current = null;
+    peakVolumeRef.current = 0;
   }, []);
 
   // ── Web Speech API for interim transcripts ───────────────────────
@@ -292,6 +306,51 @@ export function useAnonVoice(options: UseAnonVoiceOptions): UseAnonVoiceReturn {
       }
 
       streamRef.current = stream;
+
+      // ── Track/device telemetry ───────────────────────────────────────
+      const audioTracks = stream.getAudioTracks();
+      const track = audioTracks[0];
+      console.log('[ANON-VOICE] 🎙️ Audio track telemetry:', {
+        trackCount: audioTracks.length,
+        trackId: track?.id,
+        label: track?.label,
+        muted: track?.muted,
+        readyState: track?.readyState,
+        settings: track?.getSettings?.(),
+        constraints: track?.getConstraints?.(),
+      });
+
+      // ── Audio diagnostics ────────────────────────────────────────────
+      // Attach an AnalyserNode to the live stream so we can prove whether
+      // real speech amplitude is reaching the pipeline (or just empty frames).
+      const audioCtx = new AudioContext();
+      audioContextRef.current = audioCtx;
+      console.log('[ANON-VOICE] 🎧 AudioContext state:', {
+        state: audioCtx.state,
+        sampleRate: audioCtx.sampleRate,
+      });
+      if (audioCtx.state === 'suspended') {
+        console.warn('[ANON-VOICE] ⚠️ AudioContext is suspended — analyser will report flatlined 128 values (peakVolume=0) until resumed.');
+      }
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      source.connect(analyser);
+      analyserRef.current = analyser;
+      peakVolumeRef.current = 0;
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      const pollVolume = () => {
+        analyser.getByteTimeDomainData(dataArray);
+        let peak = 0;
+        for (let i = 0; i < dataArray.length; i++) {
+          const v = Math.abs(dataArray[i] - 128);
+          if (v > peak) peak = v;
+        }
+        if (peak > peakVolumeRef.current) peakVolumeRef.current = peak;
+        animationFrameRef.current = requestAnimationFrame(pollVolume);
+      };
+      pollVolume();
+
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : MediaRecorder.isTypeSupported('audio/webm')
@@ -322,15 +381,24 @@ export function useAnonVoice(options: UseAnonVoiceOptions): UseAnonVoiceReturn {
           recordingStartedAtRef: capStart,
           computedActiveMs: activeDurationMs,
           blobBytes: blob.size,
+          peakVolume: peakVolumeRef.current,
         });
 
         if (blob.size < 512 || activeDurationMs < PUBLIC_MIN_RECORDING_MS) {
           console.warn('[ANON-VOICE] ⚠️ onstop — blob too small (%d bytes) or too short (%dms < %dms), skipping pipeline', blob.size, activeDurationMs, PUBLIC_MIN_RECORDING_MS);
+          const errMsg = 'Recording was too short or contained no audio.';
+          setError(errMsg);
+          onErrorRef.current?.(errMsg);
+          setIsProcessing(false);
           return;
         }
 
         if (!stoppedByUserRef.current) {
           console.warn('[ANON-VOICE] ⚠️ onstop — stoppedByUserRef=false, skipping pipeline (abort/cleanup)');
+          const errMsg = 'Recording aborted.';
+          setError(errMsg);
+          onErrorRef.current?.(errMsg);
+          setIsProcessing(false);
           return;
         }
 
@@ -423,6 +491,11 @@ export function useAnonVoice(options: UseAnonVoiceOptions): UseAnonVoiceReturn {
     setIsRecording(false);
     isRecordingRef.current = false;
     abortControllerRef.current?.abort();
+    // Surface cancel to UI so it doesn't hang in processing state.
+    const errMsg = 'Recording aborted.';
+    setError(errMsg);
+    onErrorRef.current?.(errMsg);
+    setIsProcessing(false);
   }, [teardownRecording, stopSpeechRecognition]);
 
   // ── Reset state ───────────────────────────────────────────────────
@@ -455,6 +528,16 @@ export function useAnonVoice(options: UseAnonVoiceOptions): UseAnonVoiceReturn {
       if (recognitionRef.current) {
         try { recognitionRef.current.abort(); } catch { /* noop */ }
       }
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.close().catch(() => {});
+        audioContextRef.current = null;
+      }
+      analyserRef.current = null;
+      peakVolumeRef.current = 0;
       abortControllerRef.current?.abort();
     };
   }, []);

@@ -106,7 +106,7 @@ const ChatWidget = ({
   features,
 }: ChatWidgetProps) => {
   const effectiveVoiceFeaturesEnabled = features?.voiceFeaturesEnabled ?? voiceFeaturesEnabled;
-  const speakGreeting = features?.speakGreeting ?? false;
+  const speakGreeting = features?.speakGreeting ?? true;
   const [config] = useState<WidgetConfig>(defaultConfig);
   const [isOpen, setIsOpen] = useState(false);
   const [showConsent, setShowConsent] = useState(false);
@@ -169,6 +169,9 @@ const ChatWidget = ({
 
   const lastServerSinceRef = useRef<string>('');
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isSendingRef = useRef(false);
+  const lastSubmitRef = useRef<{ text: string; time: number } | null>(null);
+  const optimisticIdsRef = useRef<Set<string>>(new Set());
 
   // ── Cognitive Memory (relational recognition) state ─────────────
   // Fetched from the client-safe /api/client/memories endpoint so the widget
@@ -260,7 +263,10 @@ const ChatWidget = ({
 
   // ── Generic TTS playback (shared by greeting + response paths) ──
   const playTts = useCallback(async (text: string) => {
-    if (!text.trim() || !voiceEnabled) return;
+    if (!text.trim() || !voiceEnabled) {
+      console.warn('[ChatWidget-TTS] Skipped: empty text or voice muted', { textLen: text.trim().length, voiceEnabled });
+      return;
+    }
     try {
       if (audioRef.current) {
         audioRef.current.pause();
@@ -271,13 +277,16 @@ const ChatWidget = ({
         URL.revokeObjectURL(audioUrlRef.current);
         audioUrlRef.current = null;
       }
+      console.log('[ChatWidget-TTS] Fetching speech for:', text.trim().substring(0, 60));
       const ttsResponse = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: text.trim(), voice: 'hannah' }),
       });
+      console.log('[ChatWidget-TTS] Speech response status:', ttsResponse.status);
       if (!ttsResponse.ok) return;
       const audioBlob = await ttsResponse.blob();
+      console.log('[ChatWidget-TTS] Audio blob size:', audioBlob.size, 'type:', audioBlob.type);
       const audioUrl = URL.createObjectURL(audioBlob);
       audioUrlRef.current = audioUrl;
       const audio = new Audio(audioUrl);
@@ -289,27 +298,48 @@ const ChatWidget = ({
         }
         audioRef.current = null;
       };
-      audio.onerror = () => {
+      audio.onerror = (e) => {
+        if (audioRef.current !== audio) return;
+        console.error('[ChatWidget-TTS] Audio element error:', e);
         URL.revokeObjectURL(audioUrl);
         if (audioUrlRef.current === audioUrl) {
           audioUrlRef.current = null;
         }
         audioRef.current = null;
       };
+      console.log('[ChatWidget-TTS] Attempting audio.play()...');
       await audio.play();
-    } catch {
-      /* TTS is best-effort */
+      console.log('[ChatWidget-TTS] audio.play() succeeded');
+    } catch (err) {
+      console.error('[ChatWidget-TTS] Playback failed:', err);
     }
   }, [voiceEnabled]);
 
   const handleVoiceTranscript = useCallback((text: string) => {
-    if (!text.trim()) return;
+    const cleanText = text.trim();
+    if (!cleanText) return;
+
+    const now = Date.now();
+    if (isSendingRef.current) {
+      console.warn('[WIDGET-GUARD] Blocked duplicate voice submission (sending):', cleanText);
+      return;
+    }
+    const last = lastSubmitRef.current;
+    if (last && last.text === cleanText && now - last.time < 2000) {
+      console.warn('[WIDGET-GUARD] Blocked duplicate voice submission (cooldown):', cleanText);
+      return;
+    }
+
+    isSendingRef.current = true;
+    lastSubmitRef.current = { text: cleanText, time: now };
+
     const userMsg: WidgetMessage = {
       id: crypto.randomUUID(),
       role: 'user',
-      text: text.trim(),
+      text: cleanText,
       timestamp: Date.now(),
     };
+    optimisticIdsRef.current.add(userMsg.id);
     setMessages((prev) => {
       const next = [...prev, userMsg];
       localStorage.setItem(chatHistoryKey, JSON.stringify(next));
@@ -331,6 +361,7 @@ const ChatWidget = ({
       return next;
     });
     setIsTyping(false);
+    isSendingRef.current = false;
     if (voiceEnabled) {
       void playTts(text.trim());
     }
@@ -372,8 +403,18 @@ const ChatWidget = ({
     };
     setMessages([initialGreeting]);
     localStorage.setItem(chatHistoryKey, JSON.stringify([initialGreeting]));
+    // Sever link to old server-side conversation so refresh cannot
+    // resynchronize stale history back into the UI.
+    const newConversationId = crypto.randomUUID();
+    try {
+      sessionStorage.setItem(conversationStorageKey, newConversationId);
+    } catch {
+      /* no-op */
+    }
+    _setConversationId(newConversationId);
+    lastServerSinceRef.current = '';
     setShowResetConfirm(false);
-  }, [greeting, chatHistoryKey]);
+  }, [greeting, chatHistoryKey, conversationStorageKey]);
 
   const handleAcceptConsent = useCallback(() => {
     setHasConsent(true);
@@ -398,8 +439,19 @@ const ChatWidget = ({
       setShowConsent(true);
     } else {
       setIsOpen(true);
+      // Voice greeting for returning users with existing chat history.
+      // The auto-greet effect (requires messages.length === 0) won't fire here,
+      // so we explicitly trigger TTS once per session.
+      if (!greetedRef.current && speakGreeting && voiceEnabled) {
+        greetedRef.current = true;
+        const effectiveGreeting = greeting ?? defaultConfig.greeting ?? "";
+        if (effectiveGreeting.trim()) {
+          console.log('[ChatWidget] Playing returning-visitor voice greeting');
+          void playTts(effectiveGreeting.trim());
+        }
+      }
     }
-  }, [hasConsent]);
+  }, [hasConsent, speakGreeting, voiceEnabled, greeting, playTts]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -462,6 +514,7 @@ const ChatWidget = ({
         audioRef.current = null;
       };
       audio.onerror = () => {
+        if (audioRef.current !== audio) return;
         URL.revokeObjectURL(audioUrl);
         if (audioUrlRef.current === audioUrl) {
           audioUrlRef.current = null;
@@ -477,6 +530,17 @@ const ChatWidget = ({
   const sendMessageDirect = useCallback(async (userInputText: string) => {
     if (!userInputText.trim()) return;
 
+    // Re-entrancy / rapid double-submit guard
+    const now = Date.now();
+    if (isSendingRef.current) return;
+    const last = lastSubmitRef.current;
+    if (last && last.text === userInputText && now - last.time < 1000) {
+      return;
+    }
+
+    isSendingRef.current = true;
+    lastSubmitRef.current = { text: userInputText, time: now };
+
     const userMsg: WidgetMessage = {
       id: Date.now().toString(),
       role: "user",
@@ -485,6 +549,7 @@ const ChatWidget = ({
     };
 
     const newMsgs = [...messages, userMsg];
+    optimisticIdsRef.current.add(userMsg.id);
     setMessages(newMsgs);
     setInput("");
     setIsTyping(true);
@@ -558,7 +623,7 @@ const ChatWidget = ({
       const data = await response.json();
       const aiText = data.response || data.summary || "I'm here to help.";
 
-      const isBrandingTheme = data.actionType === 'SYSTEM_APPLY_BRANDING_THEME';
+      const isBrandingTheme = data.actionType === 'SYSTEM_UPDATE_BRANDING';
       const aiMsg: WidgetMessage = {
         id: (Date.now() + 1).toString(),
         role: "assistant",
@@ -599,6 +664,7 @@ const ChatWidget = ({
       console.error("AI Error:", e);
     } finally {
       setIsTyping(false);
+      isSendingRef.current = false;
     }
   }, [messages, refreshConfiguration, preview, voiceEnabled, liveDraft, speakPreview, tenantId, clientMemories, chatHistoryKey, conversationId, playTts]);
 
@@ -831,15 +897,46 @@ const ChatWidget = ({
         }
         if (data.messages && data.messages.length > 0) {
           setMessages((prev) => {
-            const existingIds = new Set(prev.map((m) => m.id));
-            const incoming = data.messages.filter((m) => !existingIds.has(m.id));
-            if (incoming.length === 0) return prev;
-            const next = [...prev, ...incoming.map((m) => ({
-              id: m.id,
-              role: (m.role === 'visitor' ? 'user' : 'assistant') as WidgetMessage['role'],
-              text: m.message,
-              timestamp: new Date(m.created_at).getTime(),
-            }))];
+            const optimistic = optimisticIdsRef.current;
+            const deduped = [...prev];
+
+            // Replace optimistic duplicates with their server-persisted counterparts.
+            for (const m of data.messages) {
+              const matchIndex = deduped.findIndex(
+                (dm) =>
+                  dm.role === (m.role === 'visitor' ? 'user' : 'assistant') &&
+                  dm.text === m.message &&
+                  optimistic.has(dm.id),
+              );
+              if (matchIndex !== -1) {
+                optimistic.delete(deduped[matchIndex].id);
+                deduped[matchIndex] = {
+                  id: m.id,
+                  role: (m.role === 'visitor' ? 'user' : 'assistant') as WidgetMessage['role'],
+                  text: m.message,
+                  timestamp: new Date(m.created_at).getTime(),
+                };
+                continue;
+              }
+            }
+
+            const existingIds = new Set(deduped.map((m) => m.id));
+            const existingTexts = new Set(deduped.map((m) => `${m.role}:${m.text}`));
+            const incoming = data.messages.filter((m) => {
+              const textKey = `${m.role === 'visitor' ? 'user' : 'assistant'}:${m.message}`;
+              if (existingTexts.has(textKey)) return false;
+              return !existingIds.has(m.id);
+            });
+            if (incoming.length === 0 && deduped.length === prev.length) return prev;
+            const next = [
+              ...deduped,
+              ...incoming.map((m) => ({
+                id: m.id,
+                role: (m.role === 'visitor' ? 'user' : 'assistant') as WidgetMessage['role'],
+                text: m.message,
+                timestamp: new Date(m.created_at).getTime(),
+              })),
+            ];
             localStorage.setItem(chatHistoryKey, JSON.stringify(next));
             return next;
           });
@@ -991,6 +1088,8 @@ const ChatWidget = ({
                   onClick={() => {
                     greetedRef.current = true;
                     handleAcceptConsent();
+                    // setIsOpen(true) is already handled inside handleAcceptConsent via the auto-greet effect.
+                    // Keep explicit call here for immediate visual feedback.
                     setIsOpen(true);
                   }}
                 >

@@ -2,6 +2,24 @@ import Groq from "groq-sdk";
 
 export const dynamic = "force-dynamic"; // Prevents build-time API key errors
 
+// ──────────────────────────── CORS ─────────────────────────────────────────
+// Public TTS endpoint consumed by cross-origin widget embeds.
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+function corsResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      ...CORS_HEADERS,
+    },
+  });
+}
+
 const DEFAULT_VOICE = "hannah";
 const TTS_MODEL = "canopylabs/orpheus-v1-english";
 
@@ -126,16 +144,21 @@ async function generateSpeech(input: SpeechInput): Promise<Response> {
   }
 }
 
+export async function OPTIONS(): Promise<Response> {
+  return new Response(null, { status: 204, headers: CORS_HEADERS });
+}
+
 export async function POST(req: Request) {
   let input: SpeechInput = {};
   try {
     input = (await req.json()) as SpeechInput;
   } catch {
-    return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
-      status: 400,
-    });
+    return corsResponse({ error: "Invalid JSON body" }, 400);
   }
-  return generateSpeech(input);
+  const response = await generateSpeech(input);
+  const headers = new Headers(response.headers);
+  headers.set('Access-Control-Allow-Origin', '*');
+  return new Response(response.body, { status: response.status, headers });
 }
 
 export async function GET(req: Request) {
@@ -146,5 +169,8 @@ export async function GET(req: Request) {
     model: url.searchParams.get("model") ?? undefined,
     resellerSlug: url.searchParams.get("resellerSlug") ?? undefined,
   };
-  return generateSpeech(input);
+  const response = await generateSpeech(input);
+  const headers = new Headers(response.headers);
+  headers.set('Access-Control-Allow-Origin', '*');
+  return new Response(response.body, { status: response.status, headers });
 }
