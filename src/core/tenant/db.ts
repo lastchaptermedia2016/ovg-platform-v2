@@ -14,34 +14,34 @@ export function safeParseTenant(data: unknown): Tenant | null {
   return null;
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function getTenantBySlug(
-  slug: string,
+  identifier: string,
   supabaseClient?: SupabaseClient,
 ): Promise<Tenant | null> {
   try {
     const supabase = supabaseClient ?? (await createClient());
+    const trimmed = identifier.trim();
 
-    const tenantResult = await supabase
-      .from("tenants")
-      .select("*")
-      .eq("tenant_id", slug)
-      .maybeSingle();
-
-    let data = tenantResult.data;
-    let error = tenantResult.error;
-
-    if (error || !data) {
-      const idFallback = await supabase
-        .from("tenants")
-        .select("*")
-        .eq("id", slug)
-        .maybeSingle();
-      data = idFallback.data;
-      error = idFallback.error;
+    if (!trimmed) {
+      return null;
     }
 
+    const isUuid = UUID_REGEX.test(trimmed);
+
+    const query = supabase.from("tenants").select("*");
+
+    if (isUuid) {
+      query.or(`id.eq.${trimmed},tenant_id.eq.${trimmed}`);
+    } else {
+      query.eq("tenant_id", trimmed);
+    }
+
+    const { data, error } = await query.maybeSingle();
+
     if (error) {
-      console.error(`Error fetching tenant by tenant_id/id "${slug}":`, error);
+      console.error(`Error fetching tenant by identifier "${trimmed}":`, error);
       return null;
     }
 
@@ -52,7 +52,7 @@ export async function getTenantBySlug(
     const validatedTenant = safeParseTenant(data);
     return validatedTenant;
   } catch (error) {
-    console.error(`Unexpected error fetching tenant "${slug}"`, error);
+    console.error(`Unexpected error fetching tenant "${identifier}"`, error);
     return null;
   }
 }

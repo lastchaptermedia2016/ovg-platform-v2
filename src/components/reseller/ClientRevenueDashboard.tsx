@@ -54,12 +54,11 @@ export function ClientRevenueDashboard({
 
   // ── Financial Cognition Integration ────────────────────────────────
   const {
-    isRecording,
+    isListening,
     isProcessing,
-    transcript,
+    transcript: _transcript,
     startListening: _startListening,
-    stopListeningAndProcess: _stopListeningAndProcess,
-    resetState: _resetState,
+    stopListeningAndProcess: _stopListening,
   } = useHannah();
 
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
@@ -125,9 +124,9 @@ export function ClientRevenueDashboard({
 
   // Process transcript when it changes
   useEffect(() => {
-    if (!transcript || transcript.length === 0) return;
+    if (!_transcript || _transcript.length === 0) return;
 
-    const command = parseFinancialCommand(transcript);
+    const command = parseFinancialCommand(_transcript);
     if (!command) return;
 
     const timer = setTimeout(() => {
@@ -143,14 +142,14 @@ export function ClientRevenueDashboard({
     }, 0);
 
     return () => clearTimeout(timer);
-  }, [transcript, parseFinancialCommand]);
+  }, [_transcript, parseFinancialCommand]);
 
   // Compute status text for telemetry (derived, no setState in effect)
   const statusText = useMemo(() => {
-    if (isRecording) return "LISTENING...";
+    if (isListening) return "LISTENING...";
     if (isProcessing) return "PROCESSING...";
     return "STANDBY";
-  }, [isRecording, isProcessing]);
+  }, [isListening, isProcessing]);
 
   return (
     <div className="w-full space-y-6">
@@ -170,7 +169,7 @@ export function ClientRevenueDashboard({
         </span>
         <span
           className={`text-[10px] tracking-[0.2em] uppercase font-bold transition-all duration-300 ease-in-out ${
-            isRecording || isProcessing
+            isListening || isProcessing
               ? "text-[#00e5ff] drop-shadow-[0_0_8px_rgba(0,229,255,0.4)]"
               : "text-white/60"
           }`}

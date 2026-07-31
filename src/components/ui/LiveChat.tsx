@@ -5,6 +5,33 @@ import { createClient } from '@/lib/supabase/client';
 import { MessageSquare, Send, Minus, ChevronUp, RefreshCw } from 'lucide-react';
 import { formatMessageContent } from '@/utils/format-chat-message';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function resolveTenantIdentifier(identifier: string, supabase: ReturnType<typeof createClient>): Promise<string> {
+  const trimmed = identifier.trim();
+  if (!trimmed) return identifier;
+
+  if (UUID_REGEX.test(trimmed)) {
+    const { data } = await supabase
+      .from('tenants')
+      .select('id, tenant_id')
+      .or(`id.eq.${trimmed},tenant_id.eq.${trimmed}`)
+      .maybeSingle();
+
+    if (data?.id) return data.id;
+  } else {
+    const { data } = await supabase
+      .from('tenants')
+      .select('id')
+      .eq('tenant_id', trimmed)
+      .maybeSingle();
+
+    if (data?.id) return data.id;
+  }
+
+  return identifier;
+}
+
 interface ChatMessage {
   id: string;
   tenant_id: string;
@@ -108,8 +135,9 @@ export function LiveChat({ tenantId, accessToken, conversationId }: LiveChatProp
     let active = true;
 
     const subscribeToChatMessages = async (): Promise<void> => {
-      const channelName = `chat_messages:${tenantId}`;
-      const expectedTopic = `realtime:chat_messages:${tenantId}`;
+      const resolvedTenantId = await resolveTenantIdentifier(tenantId, supabase);
+      const channelName = `chat_messages:${resolvedTenantId}`;
+      const expectedTopic = `realtime:chat_messages:${resolvedTenantId}`;
       const existingChannels = (supabase as { realtime?: { channels?: Array<{ topic?: string }> } }).realtime?.channels ?? [];
       if (channelRef.current) {
         try {
@@ -137,7 +165,7 @@ export function LiveChat({ tenantId, accessToken, conversationId }: LiveChatProp
             event: 'INSERT',
             schema: 'public',
             table: 'chat_messages',
-            filter: `tenant_id=eq.${tenantId}`,
+            filter: `tenant_id=eq.${resolvedTenantId}`,
           },
           (payload) => {
             const row = payload.new as ChatMessage;
@@ -235,10 +263,11 @@ export function LiveChat({ tenantId, accessToken, conversationId }: LiveChatProp
       setLoading(true);
       setError(null);
       try {
+        const resolvedTenantId = await resolveTenantIdentifier(tenantId, supabase);
         let query = supabase
           .from('chat_messages')
           .select('*')
-          .eq('tenant_id', tenantId)
+          .eq('tenant_id', resolvedTenantId)
           .order('created_at', { ascending: true });
         if (selectedConversationId) {
           query = query.eq('conversation_id', selectedConversationId);

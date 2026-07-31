@@ -41,7 +41,7 @@ export function SignalConsole({
   tenants,
   resellerSlug,
 }: SignalConsoleProps) {
-  const { isRecording, isProcessing, transcript } = useHannah();
+  const { isListening, isProcessing, transcript } = useHannah();
   const [signals, setSignals] = useState<SignalRow[]>([]);
   const [tenantNames, setTenantNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -64,9 +64,9 @@ export function SignalConsole({
   const statusText = useMemo(() => {
     if (isTickerPaused) return "TICKER PAUSED";
     if (isProcessing) return "INTERPOLATING STREAM ARRAYS...";
-    if (isRecording) return "LISTENING...";
+    if (isListening) return "LISTENING...";
     return "STANDBY";
-  }, [isRecording, isProcessing, isTickerPaused]);
+  }, [isListening, isProcessing, isTickerPaused]);
 
   const parseSignalCommand = useCallback((text: string): string | null => {
     const lower = text.toLowerCase();
@@ -236,7 +236,7 @@ export function SignalConsole({
             Signal Telemetry
           </h1>
           <span className={`text-[10px] tracking-[0.2em] uppercase font-bold transition-all duration-300 ease-in-out ${
-            isRecording || isProcessing || isTickerPaused
+            isListening || isProcessing || isTickerPaused
               ? "text-[#00e5ff] drop-shadow-[0_0_8px_rgba(0,229,255,0.4)]"
               : "text-white/60"
           }`}>

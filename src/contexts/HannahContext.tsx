@@ -4,7 +4,7 @@ import { createContext, useContext, useState, useCallback, useRef, type ReactNod
 import type { CommandCapability } from '@/core/ai/system-capabilities';
 import type { CommandIntent } from '@/lib/hooks/useCommandListener';
 import { usePathname } from 'next/navigation';
-import { useVoiceCommand, type TenantContext } from '@/hooks/use-voice-command';
+import { useZeederVoice } from '@/hooks/useZeederVoice';
 
 /**
  * HannahContext — Global AI Assistant State Provider
@@ -57,13 +57,11 @@ export interface HannahContextValue {
 
   /** ── Global PTT State ─────────────────────────────────────────── */
   /** True while the mic is actively capturing audio (global). */
-  isRecording: boolean;
+  isListening: boolean;
   /** True while the STT → AI → TTS pipeline is processing (global). */
   isProcessing: boolean;
   /** True while the TTS AudioContext is actively playing back audio (global). */
   isSpeaking: boolean;
-  /** Live volume meter (0–1). Only updated while recording is active. */
-  volumeLevel: number;
   /** Latest transcript from STT (global). */
   transcript: string;
   /** Latest error message, if any. */
@@ -71,7 +69,7 @@ export interface HannahContextValue {
   /** Current active route path (e.g., /revenue, /ai-engine). */
   activeRoute: string;
   /** Strict PTT: Begin audio capture. */
-  startListening: () => Promise<void>;
+  startListening: () => void;
   /** Strict PTT: Finalize audio and trigger pipeline. */
   stopListeningAndProcess: () => void;
   /** Strict PTT: Abort capture. */
@@ -84,7 +82,7 @@ export interface HannahContextValue {
 const HannahContext = createContext<HannahContextValue | undefined>(undefined);
 
 // ── Provider Component ─────────────────────────────────────────────────
-export function HannahProvider({ children, resellerSlug, tenantContext }: { children: ReactNode; resellerSlug?: string; tenantContext?: TenantContext }) {
+export function HannahProvider({ children, resellerSlug, tenantContext }: { children: ReactNode; resellerSlug?: string; tenantContext?: { tenantId?: string; category?: string } }) {
   const [isHannahAwake, setIsHannahAwakeState] = useState(true);
   const [currentBriefing, setCurrentBriefing] = useState<string | null>(null);
   const [hasGreeted, setHasGreetedState] = useState(false);
@@ -124,7 +122,6 @@ export function HannahProvider({ children, resellerSlug, tenantContext }: { chil
   const actionDispatchersRef = useRef<Record<string, (action: Record<string, unknown>) => void>>({});
 
   const pathname = usePathname();
-  // Extract route scope (e.g., /revenue, /ai-engine, /signal) from pathname
   const activeRoute = pathname.split('/').filter(Boolean).slice(1).join('/') || 'dashboard';
 
   const registerActionDispatcher = useCallback((route: string, dispatcher: (action: Record<string, unknown>) => void) => {
@@ -140,10 +137,10 @@ export function HannahProvider({ children, resellerSlug, tenantContext }: { chil
     }
   }, [activeRoute]);
 
-  const voice = useVoiceCommand({ resellerId: resellerSlug, tenantContext });
+  const voice = useZeederVoice({ tenantId: tenantContext?.tenantId, resellerSlug });
 
   const startListening = voice.startListening;
-  const stopListeningAndProcess = voice.stopListeningAndProcess;
+  const stopListeningAndProcess = voice.stopListening;
   const abortRecording = voice.abortRecording;
   const resetState = voice.resetState;
 
@@ -165,10 +162,9 @@ export function HannahProvider({ children, resellerSlug, tenantContext }: { chil
     clearConversationHistory,
     registerActionDispatcher,
     dispatchAction,
-    isRecording: voice.isRecording,
+    isListening: voice.isListening,
     isProcessing: voice.isProcessing,
     isSpeaking: voice.isSpeaking,
-    volumeLevel: voice.volumeLevel,
     transcript: voice.transcript,
     error: voice.error,
     activeRoute,

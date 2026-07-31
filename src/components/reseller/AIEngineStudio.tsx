@@ -120,7 +120,7 @@ export function AIEngineStudio({
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── AI Cognition Integration ──────────────────────────────────────
-  const { isRecording, isProcessing, transcript } = useHannah();
+  const { isListening, isProcessing, transcript } = useHannah();
 
   const parseAICommand = useCallback((text: string): string | null => {
     const lower = text.toLowerCase();
@@ -160,9 +160,9 @@ export function AIEngineStudio({
   // Derive status text from voice telemetry
   const derivedStatus = useMemo(() => {
     if (isProcessing) return "COMPILING AI ARRAYS...";
-    if (isRecording) return "LISTENING...";
+    if (isListening) return "LISTENING...";
     return "STANDBY";
-  }, [isProcessing, isRecording]);
+  }, [isProcessing, isListening]);
 
   // Process transcript for AI commands
   useEffect(() => {
@@ -306,7 +306,7 @@ export function AIEngineStudio({
           </h1>
           <span
             className={`text-[10px] tracking-[0.2em] uppercase font-bold transition-all duration-300 ease-in-out ${
-              isRecording || isProcessing
+              isListening || isProcessing
                 ? "text-[#00e5ff] drop-shadow-[0_0_8px_rgba(0,229,255,0.4)]"
                 : "text-white/60"
             }`}

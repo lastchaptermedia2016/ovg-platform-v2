@@ -206,49 +206,24 @@ export async function dispatchUpdateStudioConfig(
   const raw = supabase ?? createAuthClient();
   const client = raw instanceof Promise ? await raw : raw;
 
-  // Dual-path resolution: accept either the PK `id` or the `tenant_id`
-  // column value. This eliminates PostgREST single-row coercion errors
-  // when callers pass a UUID that belongs to the `tenant_id` column.
-  let currentTenant: { id: string; widget_config: unknown } | null = null;
-  let resolutionError: string | null = null;
+  // Multi-column tenant resolution: when a UUID is passed, match either `id`
+  // or `tenant_id` in a single query. For non-UUID identifiers, match
+  // `tenant_id` only.
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ctx.tenantId.trim());
 
-  try {
-    const { data, error } = await client
-      .from('tenants')
-      .select('id, widget_config')
-      .eq('id', ctx.tenantId)
-      .maybeSingle();
+  const tenantQuery = client.from('tenants').select('id, widget_config');
 
-    if (error) {
-      resolutionError = error.message;
-    } else {
-      currentTenant = data;
-    }
-  } catch (err) {
-    resolutionError = err instanceof Error ? err.message : String(err);
+  if (isUuid) {
+    tenantQuery.or(`id.eq.${ctx.tenantId.trim()},tenant_id.eq.${ctx.tenantId.trim()}`);
+  } else {
+    tenantQuery.eq('tenant_id', ctx.tenantId.trim());
   }
 
-  if (!currentTenant) {
-    try {
-      const { data, error } = await client
-        .from('tenants')
-        .select('id, widget_config')
-        .eq('tenant_id', ctx.tenantId)
-        .maybeSingle();
+  const { data: currentTenant, error: tenantError } = await tenantQuery.maybeSingle();
 
-      if (error) {
-        resolutionError = error.message;
-      } else {
-        currentTenant = data;
-      }
-    } catch (err) {
-      resolutionError = err instanceof Error ? err.message : String(err);
-    }
-  }
-
-  if (!currentTenant) {
+  if (tenantError || !currentTenant) {
     throw new Error(
-      `Tenant not found for identifier "${ctx.tenantId}"${resolutionError ? `: ${resolutionError}` : ''}`
+      `Tenant not found for identifier "${ctx.tenantId}"${tenantError?.message ? `: ${tenantError.message}` : ''}`
     );
   }
 

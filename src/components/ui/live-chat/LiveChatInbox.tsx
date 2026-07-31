@@ -18,6 +18,33 @@ import type { ChatMessage, ConversationSummary, LiveChatInboxProps } from './typ
 
 const STORAGE_KEY = 'ovg_livechat_expanded';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function resolveTenantIdentifier(identifier: string, supabase: ReturnType<typeof createClient>): Promise<string> {
+  const trimmed = identifier.trim();
+  if (!trimmed) return identifier;
+
+  if (UUID_REGEX.test(trimmed)) {
+    const { data } = await supabase
+      .from('tenants')
+      .select('id, tenant_id')
+      .or(`id.eq.${trimmed},tenant_id.eq.${trimmed}`)
+      .maybeSingle();
+
+    if (data?.id) return data.id;
+  } else {
+    const { data } = await supabase
+      .from('tenants')
+      .select('id')
+      .eq('tenant_id', trimmed)
+      .maybeSingle();
+
+    if (data?.id) return data.id;
+  }
+
+  return identifier;
+}
+
 function getRelativeTime(dateStr: string | null): string {
   if (!dateStr) return '';
   const date = new Date(dateStr);
@@ -301,7 +328,8 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
     const subscribeToChatMessages = async (): Promise<void> => {
       await loadConversations();
 
-      const channelName = `chat_messages:${tenantId}:${Math.random().toString(36).slice(2, 9)}`;
+      const resolvedTenantId = await resolveTenantIdentifier(tenantId, supabase);
+      const channelName = `chat_messages:${resolvedTenantId}:${Math.random().toString(36).slice(2, 9)}`;
       if (channelRef.current) {
         try {
           await supabase.removeChannel(channelRef.current);
@@ -318,7 +346,7 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
             event: 'INSERT',
             schema: 'public',
             table: 'chat_messages',
-            filter: `tenant_id=eq.${tenantId}`,
+            filter: `tenant_id=eq.${resolvedTenantId}`,
           },
           (payload) => {
             const row = payload.new as ChatMessage;

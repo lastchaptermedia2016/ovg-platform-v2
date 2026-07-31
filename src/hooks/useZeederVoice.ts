@@ -72,6 +72,8 @@ interface ZeederVoiceState {
 const ACTION_TYPE_TO_ZEEDER_ID: Record<string, ZeederActionId | null> = {
   SYSTEM_UPDATE_BRANDING: 'updateBranding',
   SYSTEM_TELEMETRY: 'fetchTelemetry',
+  SYSTEM_TOGGLE_AGENT: 'toggleAgent',
+  SYSTEM_NAVIGATE: 'navigate',
 };
 
 /** Hard ceiling on a single push-to-talk capture (15s). */
@@ -118,13 +120,19 @@ async function pollForProfile(
  * - `src/hooks/use-voice-command`
  * - `src/lib/reseller/*`
  */
-export function useZeederVoice(): {
+export function useZeederVoice({ tenantId, resellerSlug }: { tenantId?: string; resellerSlug?: string } = {}): {
   /** Send a transcript to the ZEEDER process-command pipeline. */
   handleVoiceCommand: (text: string) => Promise<void>;
   /** Begin a push-to-talk recording (MediaRecorder → /api/client/stt). */
   startListening: () => void;
   /** Stop the active recording and dispatch the captured transcript. */
   stopListening: () => void;
+  /** Abort active recording/capture without dispatching. */
+  abortRecording: () => void;
+  /** Reset voice/processing state back to idle. */
+  resetState: () => void;
+  /** Alias for isListening kept for backward compatibility with existing consumers. */
+  isRecording: boolean;
   /** True while the mic is actively capturing audio. */
   isListening: boolean;
   /** Live/captured transcript (surface it in the UI for the spoken-text effect). */
@@ -458,6 +466,8 @@ export function useZeederVoice(): {
           body: JSON.stringify({
             text,
             currentPath: pathname,
+            tenantId,
+            resellerSlug,
             context: {
               clientProfileId: clientProfile?.id,
               activeView: 'client-dashboard',
@@ -535,16 +545,30 @@ export function useZeederVoice(): {
         // redirected to the Branding Studio where the user configures visually.
         // If branding IS present in the payload (future extraction), fall through
         // to the normal dispatch/apply path.
+        //
+        // Empty payload drop prevention: when SYSTEM_UPDATE_BRANDING has no
+        // branding key but DOES have aiPersona.personaMode, apply the persona
+        // mode change before navigating so the user lands on the correct tab
+        // with the persona already staged in StudioDraft.
         if (data.actionType === 'SYSTEM_UPDATE_BRANDING') {
           const hasBranding = Boolean(
             (data.payload as { branding?: unknown } | undefined)?.branding,
           );
+          const rawPersonaMode =
+            (data.payload as { aiPersona?: { personaMode?: unknown } } | undefined)
+              ?.aiPersona?.personaMode;
+          const personaMode =
+            rawPersonaMode === 'sales' || rawPersonaMode === 'concierge'
+              ? rawPersonaMode
+              : null;
+
           if (!hasBranding) {
-            // The Studio uses route-based tabs (Branding vs Persona are distinct
-            // routes). A `tab`/`view` payload tells us which viewport to open;
-            // default to Branding when omitted. This lets a voice command like
-            // "take me to the persona page" auto-switch the active view rather
-            // than asking the user to click the tab manually.
+            // Apply any valid persona mode from the payload before navigating,
+            // so the StudioDraft is already staged when the user arrives.
+            if (personaMode) {
+              dispatchStudioAction({ type: 'UPDATE_PERSONA', mode: personaMode });
+            }
+
             const tab = (data.payload as { tab?: unknown; view?: unknown } | undefined)?.tab
               ?? (data.payload as { tab?: unknown; view?: unknown } | undefined)?.view;
             const targetPath =
@@ -552,12 +576,7 @@ export function useZeederVoice(): {
                 ? '/client/dashboard/studio/persona'
                 : '/client/dashboard/studio/branding';
 
-            // Mark this as a voice-initiated navigation so the destination
-            // VoiceProvider suppresses its generic welcome greeting; our own
-            // confirmation below is the only spoken output (no channel overlap).
             markVoiceNavigation();
-            // Prefer the endpoint's tailored summary (e.g. a screen-aware
-            // persona-mode clarification); fall back to the generic greeting.
             await speakSummary(
               data.summary ?? 'Welcome to your branding page, how can I help?',
             );
@@ -566,6 +585,37 @@ export function useZeederVoice(): {
             console.log(`[ZEEDER-VOICE] Routed SYSTEM_UPDATE_BRANDING → ${targetPath}`);
             return;
           }
+        }
+
+        // ── SYSTEM_TOGGLE_AGENT: toggle AI agent on/off ──────────
+        if (data.actionType === 'SYSTEM_TOGGLE_AGENT') {
+          const agentId = (data.payload as { agentId?: string } | undefined)?.agentId;
+          const enabled = (data.payload as { enabled?: boolean } | undefined)?.enabled;
+          if (agentId) {
+            const result = await dispatch('toggleAgent', { agentId, enabled });
+            if (!result.success) {
+              await speakSummary(result.error ?? 'Failed to toggle agent.');
+            } else {
+              await speakSummary(result.greeting ?? data.summary ?? 'Agent toggled.');
+            }
+          } else {
+            await speakSummary(data.summary ?? 'Which agent would you like to toggle?');
+          }
+          setState(prev => ({ ...prev, isProcessing: false }));
+          return;
+        }
+
+        // ── SYSTEM_NAVIGATE: voice-driven tab navigation ──────────
+        if (data.actionType === 'SYSTEM_NAVIGATE') {
+          const tab = (data.payload as { tab?: string } | undefined)?.tab;
+          const href = (data.payload as { href?: string } | undefined)?.href;
+          const targetPath = href ?? (tab ? `/client/dashboard/studio/${tab}` : '/client/dashboard/studio/branding');
+          markVoiceNavigation();
+          await speakSummary(data.summary ?? `Navigating to ${targetPath}.`);
+          router.push(targetPath);
+          setState(prev => ({ ...prev, isProcessing: false }));
+          console.log(`[ZEEDER-VOICE] Routed SYSTEM_NAVIGATE → ${targetPath}`);
+          return;
         }
 
         if (!mappedActionId) {
@@ -659,6 +709,8 @@ export function useZeederVoice(): {
       clientProfile,
       router,
       pathname,
+      tenantId,
+      resellerSlug,
     ],
   );
 
@@ -687,10 +739,28 @@ export function useZeederVoice(): {
     setHelpModalOpen(false);
   }, []);
 
+  const abortRecording = useCallback(() => {
+    teardownRecording();
+    setIsListening(false);
+    setState(prev => ({ ...prev, isProcessing: false, error: null }));
+  }, [teardownRecording]);
+
+  const resetState = useCallback(() => {
+    teardownRecording();
+    setIsListening(false);
+    setTranscript('');
+    transcriptRef.current = '';
+    setSttFallback(false);
+    setState(prev => ({ ...prev, isProcessing: false, error: null }));
+  }, [teardownRecording]);
+
   return {
     handleVoiceCommand,
     startListening,
     stopListening,
+    abortRecording,
+    resetState,
+    isRecording: isListening,
     isListening,
     transcript,
     isProcessing: state.isProcessing,

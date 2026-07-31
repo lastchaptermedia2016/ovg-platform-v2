@@ -18,7 +18,7 @@ const CLIENT_FACING_TIMEOUT = 'The configuration service is temporarily unavaila
  */
 
 const ClientUpdateRequestSchema = z.object({
-  tenantId: z.string().uuid('Invalid tenant ID'),
+  tenantId: z.string().min(1, 'Invalid tenant ID'),
   studioConfig: z.record(z.unknown()).optional(),
   source: z.enum(['manual', 'hannah']).optional().default('manual'),
 });

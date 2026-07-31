@@ -10,14 +10,16 @@ function triggerHapticFeedback(): void {
 }
 
 export function HannahMicAnchor() {
-  const { isRecording, isProcessing, startListening, stopListeningAndProcess, abortRecording } =
+  const { isListening, isProcessing, startListening, stopListeningAndProcess, abortRecording } =
     useHannah();
 
   const handleMouseDown = useCallback(() => {
-    startListening().catch((err) => {
+    try {
+      startListening();
+    } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[HannahMicAnchor] startListening failed:', msg);
-    });
+    }
   }, [startListening]);
 
   const handleMouseUp = useCallback(() => {
@@ -49,7 +51,7 @@ export function HannahMicAnchor() {
     [abortRecording],
   );
 
-  const isActive = isRecording || isProcessing;
+  const isActive = isListening || isProcessing;
 
   return (
     <button
@@ -66,7 +68,7 @@ export function HannahMicAnchor() {
           : "border-[#00e5ff]/30 shadow-[0_0_15px_rgba(0,229,255,0.15)]"
       }`}
     >
-      {isRecording && (
+      {isListening && (
         <span className="absolute inset-0 rounded-full bg-[#00e5ff]/20 animate-ping" />
       )}
       <svg

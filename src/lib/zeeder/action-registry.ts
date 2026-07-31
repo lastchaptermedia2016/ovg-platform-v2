@@ -26,7 +26,8 @@
 export type ZeederActionId =
   | 'updateBranding'
   | 'toggleAgent'
-  | 'fetchTelemetry';
+  | 'fetchTelemetry'
+  | 'navigate';
 
 /**
  * The shape returned by every ZEEDER action handler.
@@ -106,6 +107,35 @@ export const zeederActionRegistry = new Map<ZeederActionId, ZeederActionEntry>([
       description: 'Update the client branding configuration (colors, logo, etc.).',
       handler: async (payload: Record<string, unknown>): Promise<ZeederActionResult> => {
         const clientName = getClientName(payload);
+
+        // ── Guard: reject empty or semantically empty payloads early ──
+        const knownBrandingKeys = [
+          'branding',
+          'colors',
+          'primaryColor',
+          'accentColor',
+          'logoUrl',
+          'logo',
+          'font',
+          'style',
+          'theme',
+          'header',
+          'footer',
+          'widgetBody',
+        ] as const;
+
+        const hasBrandingSignal = knownBrandingKeys.some((key) => {
+          const value = payload[key];
+          return value !== undefined && value !== null && value !== '';
+        });
+
+        if (!hasBrandingSignal) {
+          return {
+            success: true,
+            awaitingInput: true,
+            greeting: `Sure, ${clientName}! Which branding property would you like to update — colors, logo, or style?`,
+          };
+        }
 
         // ── Wire to real BrandingStudio logic via update-studio-config API ──
         const { resolveTenantId } = await import('@/lib/resolveTenantId');
@@ -237,6 +267,35 @@ export const zeederActionRegistry = new Map<ZeederActionId, ZeederActionEntry>([
           success: true,
           data: mockData,
           greeting: `${clientName}, here are your ${metric} metrics.`,
+        };
+      },
+    },
+  ],
+  [
+    'navigate',
+    {
+      id: 'navigate',
+      description: 'Navigate to a specific tab or page in the client dashboard.',
+      handler: async (payload: Record<string, unknown>): Promise<ZeederActionResult> => {
+        const allowedTabs = ['branding', 'persona', 'knowledge', 'integrations', 'analytics'] as const;
+        const rawTab = payload.targetTab ?? payload.tab;
+        const tab = typeof rawTab === 'string' && allowedTabs.includes(rawTab as typeof allowedTabs[number])
+          ? (rawTab as typeof allowedTabs[number])
+          : undefined;
+        const href = payload.href as string | undefined;
+        const targetPath = href ?? (tab ? `/client/dashboard/studio/${tab}` : '/client/dashboard/studio/branding');
+
+        // Client-side navigation using browser location.
+        if (typeof window !== 'undefined') {
+          window.location.href = targetPath;
+        }
+
+        console.log(`[ZEEDER:navigate] Navigating to ${targetPath}`);
+
+        return {
+          success: true,
+          data: { targetPath, tab, href },
+          greeting: `Navigating to ${targetPath}.`,
         };
       },
     },

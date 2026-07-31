@@ -4,7 +4,7 @@ import { useEffect } from 'react';
 import { useHannah } from '@/contexts/HannahContext';
 
 export function GlobalPTTListener() {
-  const { isRecording, isProcessing, isSpeaking, startListening, stopListeningAndProcess, abortRecording } = useHannah();
+  const { isListening, isProcessing, isSpeaking, startListening, stopListeningAndProcess, abortRecording } = useHannah();
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -16,13 +16,13 @@ export function GlobalPTTListener() {
       // Global PTT: Space bar triggers recording
       if (event.code === 'Space' && !event.repeat) {
         event.preventDefault();
-        if (!isRecording && !isProcessing && !isSpeaking) {
+        if (!isListening && !isProcessing && !isSpeaking) {
           startListening();
         }
       }
 
       // Escape aborts any active operation
-      if (event.key === 'Escape' && (isRecording || isProcessing || isSpeaking)) {
+      if (event.key === 'Escape' && (isListening || isProcessing || isSpeaking)) {
         event.preventDefault();
         abortRecording();
       }
@@ -37,7 +37,7 @@ export function GlobalPTTListener() {
       // Global PTT: Space bar release stops recording
       if (event.code === 'Space' && !event.repeat) {
         event.preventDefault();
-        if (isRecording) {
+        if (isListening) {
           stopListeningAndProcess();
         }
       }
@@ -50,7 +50,7 @@ export function GlobalPTTListener() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [isRecording, isProcessing, isSpeaking, startListening, stopListeningAndProcess, abortRecording]);
+  }, [isListening, isProcessing, isSpeaking, startListening, stopListeningAndProcess, abortRecording]);
 
   return null;
 }

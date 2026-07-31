@@ -125,12 +125,13 @@ interface PreviewDraft {
  * Inverse map: ZEEDER action id → client-surface SYSTEM_* action type.
  *
  * `useZeederVoice` reads `data.actionType` and reverses this map to dispatch
- * through `ZeederContext`. Only the two client-safe intents are exposed;
- * `toggleAgent` has no SYSTEM_* counterpart and falls through to CLIENT_NOP.
+ * through `ZeederContext`. Only the client-safe intents are exposed.
  */
 const ACTION_ID_TO_SYSTEM_TYPE: Record<string, string> = {
   updateBranding: 'SYSTEM_UPDATE_BRANDING',
   fetchTelemetry: 'SYSTEM_TELEMETRY',
+  toggleAgent: 'SYSTEM_TOGGLE_AGENT',
+  navigate: 'SYSTEM_NAVIGATE',
 };
 
 /**
@@ -355,6 +356,8 @@ function allowedActions(isAnon: boolean): Set<string> {
         'CLIENT_NOP',
         'SYSTEM_UPDATE_BRANDING',
         'SYSTEM_TELEMETRY',
+        'SYSTEM_TOGGLE_AGENT',
+        'SYSTEM_NAVIGATE',
         'SYSTEM_HELP',
         'SYSTEM_BOOKING_CAPTURE',
       ]);
@@ -387,6 +390,15 @@ function parseIntent(text: string): ZeederActionId | null {
   // ── fetchTelemetry ───────────────────────────────────────────────────
   if (/(telemetry|metrics|health|status|performance|stats|signal)/i.test(lower)) {
     return 'fetchTelemetry';
+  }
+
+  // ── navigate ─────────────────────────────────────────
+  // Matches explicit navigation intents to client dashboard tabs.
+  if (
+    /(go to|navigate to|open|show|take me to|jump to|switch to|move to|visit)\b.*\b(branding|persona|knowledge|integrations|analytics|studio)/i.test(lower) ||
+    /^(go to|navigate to|open|show|take me to|jump to|switch to|move to|visit)\s+(branding|persona|knowledge|integrations|analytics|studio)/i.test(lower)
+  ) {
+    return 'navigate';
   }
 
   // ── Persona mode directive ──────────────────────────────────────────

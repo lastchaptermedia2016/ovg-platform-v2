@@ -51,14 +51,22 @@ function readCanExecute(widgetConfig: Record<string, unknown>, tenantId: string)
   return false;
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function checkTenantAiExecutePermission(tenantId: string): Promise<boolean> {
   const supabase = await createAuthClient();
+  const trimmed = tenantId.trim();
+  const isUuid = UUID_REGEX.test(trimmed);
 
-  const { data, error } = await supabase
-    .from('tenants')
-    .select('widget_config')
-    .eq('id', tenantId)
-    .single();
+  const query = supabase.from('tenants').select('widget_config');
+
+  if (isUuid) {
+    query.or(`id.eq.${trimmed},tenant_id.eq.${trimmed}`);
+  } else {
+    query.eq('tenant_id', trimmed);
+  }
+
+  const { data, error } = await query.maybeSingle();
 
   if (error || !data?.widget_config) {
     console.warn('[checkTenantAiExecutePermission] No widget_config found for tenant:', tenantId, error?.message);
