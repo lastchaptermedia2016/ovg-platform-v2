@@ -1,13 +1,11 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
-import { createClient as createSupabaseClient } from '@/lib/supabase/client';
-import { resolveTenantId } from '@/lib/resolveTenantId';
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useStudioDraft, toCanonicalBranding } from '@/contexts/StudioDraftContext';
 import type { LayerDraft } from '@/contexts/StudioDraftContext';
 import { LayerControls } from '@/components/client/studio/LayerControls';
 import { SuggestedActionsEditor } from '@/components/admin/SuggestedActionsEditor';
-import type { CanonicalBranding, SuggestedAction } from '@/lib/schemas/tenant-config.canonical';
+import type { CanonicalBranding } from '@/lib/schemas/tenant-config.canonical';
 
 interface BrandingConfig {
   primaryColor: string;
@@ -25,37 +23,8 @@ interface Feedback {
 }
 
 export function BrandingStudio({ onSave }: BrandingStudioProps) {
-  const [tenantId, setTenantId] = useState<string | null>(null);
-  const [tenantIdError, setTenantIdError] = useState<string | null>(null);
-  const [suggestedActions, setSuggestedActions] = useState<SuggestedAction[]>([]);
-
-  useEffect(() => {
-    const supabase = createSupabaseClient();
-    supabase.auth.getSession().then(async ({ data }) => {
-      const session = data.session;
-      if (session?.user) {
-        const { data: tenantIdResult, error } = await resolveTenantId(session.user.id);
-        if (error) {
-          setTenantIdError(error.message);
-          console.error('[BrandingStudio] Failed to resolve tenantId:', error.message);
-        } else {
-          setTenantId(tenantIdResult);
-          console.log('[BrandingStudio] Resolved tenantId:', tenantIdResult);
-          const { data: cfgRow } = await createSupabaseClient()
-            .from('tenants')
-            .select('widget_config')
-            .eq('id', tenantIdResult)
-            .maybeSingle();
-          const cfg = (cfgRow?.widget_config as Record<string, unknown> | null | undefined) ?? null;
-          if (cfg && Array.isArray(cfg.suggestedActions)) {
-            setSuggestedActions(cfg.suggestedActions as SuggestedAction[]);
-          }
-        }
-      }
-    });
-  }, []);
-
-  const { draft: draftConfig, setDraft: setDraftConfig } = useStudioDraft();
+  const { draft: draftConfig, setDraft: setDraftConfig, tenantId, tenantIdError } = useStudioDraft();
+  const suggestedActions = useMemo(() => draftConfig.suggestedActions ?? [], [draftConfig.suggestedActions]);
 
   const [isLoading, setIsLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -455,7 +424,7 @@ export function BrandingStudio({ onSave }: BrandingStudioProps) {
         <SuggestedActionsEditor
           value={suggestedActions}
           onChange={(next) => {
-            setSuggestedActions(next);
+            setDraftConfig((prev) => ({ ...prev, suggestedActions: next }));
             clearFeedback();
           }}
         />

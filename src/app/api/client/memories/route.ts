@@ -15,7 +15,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { getAuthenticatedUser, createAuthClient } from "@/lib/auth/server";
+import { createAuthClient } from "@/lib/auth/server";
 import { resolveTenantId } from "@/lib/resolveTenantId";
 import { getClientMemories } from "@/lib/ai/memory-service";
 
@@ -28,16 +28,18 @@ export const dynamic = "force-dynamic";
  *   a boolean `hasMemory` flag the UI can branch on.
  */
 export async function GET() {
-  const { userId, error: authError } = await getAuthenticatedUser();
-  if (authError || !userId) {
+  const supabase = await createAuthClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) {
     return NextResponse.json(
       { error: authError ?? "Unauthorized", memories: {}, hasMemory: false },
       { status: 401 },
     );
   }
 
+  const userId = user.id;
+
   try {
-    const supabase = await createAuthClient();
     const { data: tenantId, error: tenantError } = await resolveTenantId(userId, supabase);
     if (tenantError || !tenantId) {
       return NextResponse.json({ memories: {}, hasMemory: false });

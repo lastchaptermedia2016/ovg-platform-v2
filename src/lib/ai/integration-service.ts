@@ -30,22 +30,14 @@ export async function getIntegrationsForUser(
   supabase = createAuthClient()
 ): Promise<IntegrationsReadResult> {
   const client = await (supabase instanceof Promise ? supabase : Promise.resolve(supabase));
-  const { data: tenantId, error: tenantErr } = await resolveTenantId(userId, client);
+  const { data: tenantId, error: tenantErr, widget_config } = await resolveTenantId(userId, client);
   if (tenantErr || !tenantId) {
     return { integrations: {} };
   }
 
-  const { data, error } = await client
-    .from('tenants')
-    .select('widget_config')
-    .eq('id', tenantId)
-    .maybeSingle();
+  const config = widget_config as Record<string, unknown> | null;
+  if (!config) return { integrations: {} };
 
-  if (error || !data?.widget_config) {
-    return { integrations: {} };
-  }
-
-  const config = data.widget_config as Record<string, unknown>;
   const raw = config[INTEGRATIONS_KEY] as Record<string, unknown> | undefined;
   if (!raw) return { integrations: {} };
 
@@ -66,21 +58,12 @@ export async function saveIntegrationForUser(
   config: ClientIntegrationConfig
 ): Promise<IntegrationsWriteResult> {
   const client = await createAuthClient();
-  const { data: tenantId, error: tenantErr } = await resolveTenantId(userId, client);
+  const { data: tenantId, error: tenantErr, widget_config } = await resolveTenantId(userId, client);
   if (tenantErr || !tenantId) {
     throw new Error(tenantErr?.message ?? 'No tenant association found');
   }
 
-  // Load current config to merge against (so we don't lose other integrations).
-  const { data: current, error: readErr } = await client
-    .from('tenants')
-    .select('widget_config')
-    .eq('id', tenantId)
-    .maybeSingle();
-
-  if (readErr) throw new Error(readErr.message);
-
-  const currentConfig = (current?.widget_config as Record<string, unknown> | null) ?? {};
+  const currentConfig = (widget_config as Record<string, unknown> | null) ?? {};
   const currentIntegrations = (currentConfig[INTEGRATIONS_KEY] as Record<string, unknown> | undefined) ?? {};
 
   const encryptedConfig = encryptSensitiveIntegrationFields(config as Record<string, unknown>);

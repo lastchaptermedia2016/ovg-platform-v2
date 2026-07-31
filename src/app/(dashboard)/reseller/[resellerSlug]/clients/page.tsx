@@ -158,7 +158,7 @@ export default function ClientsPage() {
   }, [handleCommandSubmit]);
 
   // Resilient 4-phase Voice Integration — must be above handleTranscript
-  const { isPlaying: isVoicePlaying, isSilentMode, captions, playVoice: speakVoice } = useResilientVoice();
+  const { isPlaying: isVoicePlaying, isSilentMode, captions, playVoice: speakVoice } = useResilientVoice({ voice: 'hannah' });
   const speakVoiceRef = useRef(speakVoice);
   const isVoicePlayingRef = useRef(false);
   useEffect(() => { speakVoiceRef.current = speakVoice; }, [speakVoice]);

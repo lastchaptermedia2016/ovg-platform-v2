@@ -141,6 +141,7 @@ export default function ClientBrandingPage() {
             aiInsightBadge?: boolean;
             aiDesignMirror?: boolean;
             customCss?: boolean;
+            voiceFeaturesEnabled?: boolean;
           } | undefined,
           suggestedActions: suggestedActionsRaw as SuggestedAction[],
           greeting: greetingRaw,

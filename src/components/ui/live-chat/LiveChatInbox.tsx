@@ -66,6 +66,7 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
   const flashTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const selectedRef = useRef(selectedConversationId);
   const isUnmountingRef = useRef(false);
+  const isFetchingRef = useRef(false);
 
   const supabase = useMemo(() => createClient(), []);
 
@@ -99,8 +100,12 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
 
   const loadConversations = useCallback(async () => {
     if (!tenantId) return;
-    setConversationsLoading(true);
+    if (document.hidden) return;
+    if (isFetchingRef.current) return;
+
     try {
+      isFetchingRef.current = true;
+      setConversationsLoading(true);
       const res = await fetch(`/api/chat/conversations?tenantId=${encodeURIComponent(tenantId)}`);
       if (!res.ok) return;
       const data = await res.json();
@@ -113,15 +118,20 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
     } catch {
       // non-fatal
     } finally {
+      isFetchingRef.current = false;
       setConversationsLoading(false);
     }
   }, [tenantId]);
 
   const loadMessages = useCallback(async (convId: string) => {
     if (!tenantId) return;
-    setLoadingMessages(true);
-    setError(null);
+    if (document.hidden) return;
+    if (isFetchingRef.current) return;
+
     try {
+      isFetchingRef.current = true;
+      setLoadingMessages(true);
+      setError(null);
       const { data: { user: _user } } = await supabase.auth.getUser();
       const token = accessToken || (await supabase.auth.getSession()).data.session?.access_token;
       const headers: Record<string, string> = {};
@@ -140,6 +150,7 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load messages');
     } finally {
+      isFetchingRef.current = false;
       setLoadingMessages(false);
     }
   }, [tenantId, accessToken, supabase]);

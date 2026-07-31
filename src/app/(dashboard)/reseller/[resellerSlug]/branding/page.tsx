@@ -199,6 +199,8 @@ export default function ResellerBrandingPage() {
           features: features || {},
           suggestedActions: (widgetConfig.suggestedActions as Record<string, unknown>[] | undefined) ?? [],
           greeting: (widgetConfig.greeting as string) || '',
+          ai_settings: widgetConfig.ai_settings as Record<string, unknown> | undefined,
+          aiPersona: widgetConfig.aiPersona as Record<string, unknown> | undefined,
         });
 
         setHydratedPlanTier(tenant.pricing_tier_key || 'standard');
@@ -290,7 +292,7 @@ export default function ResellerBrandingPage() {
                 resellerSlug={resellerSlug}
                 clients={clients}
                 onClientChange={handleClientChange}
-                initialConfig={hydratedConfig as { branding?: Partial<BrandingConfig>; features?: { aiInsightBadge?: boolean; aiDesignMirror?: boolean; customCss?: boolean } }}
+                initialConfig={hydratedConfig as { branding?: Partial<BrandingConfig>; features?: { aiInsightBadge?: boolean; aiDesignMirror?: boolean; customCss?: boolean; voiceFeaturesEnabled?: boolean } }}
                 planTier={hydratedPlanTier}
               />
             ) : (

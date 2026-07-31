@@ -43,7 +43,30 @@ interface UseVoiceCommandReturn {
 
 import { ADMIN_MIN_RECORDING_MS } from './use-voice-constants';
 
-interface TenantContext {
+async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 2): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await fetch(url, options);
+      if (response.ok) return response;
+      if (options.signal && (options.signal as AbortSignal).aborted) throw new DOMException('Aborted', 'AbortError');
+      lastError = new Error(`HTTP ${response.status}: ${response.statusText}`);
+    } catch (err) {
+      lastError = err;
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
+      if (err instanceof TypeError && attempt < maxRetries) {
+        const delay = 500 * 2 ** attempt;
+        console.warn(`[VoiceCommand] 🔄 STT fetch failed (attempt ${attempt + 1}/${maxRetries + 1}): ${err.message}. Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+    }
+    break;
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+export interface TenantContext {
   tenantId?: string;
   category?: string;
 }
@@ -466,6 +489,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     const { signal } = abortControllerRef.current;
 
     const currentResellerId = resellerIdRef.current;
+    const currentContext = tenantContextRef.current || {};
     if (!currentResellerId || isInvalidSlug(currentResellerId)) {
       console.warn('[VoiceCommand] 🚫 Blocking pipeline — resellerId not yet resolved:', currentResellerId);
       isProcessingRef.current = false;
@@ -480,9 +504,13 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
 
       const sttFormData = new FormData();
       sttFormData.append('file', audioFile);
+      sttFormData.append('tenantId', currentContext.tenantId || '');
+      sttFormData.append('resellerSlug', currentResellerId.trim());
+      const brandName = (_currentConfig?.brandName as string | undefined) || '';
+      if (brandName) sttFormData.append('brandName', brandName);
       console.log('[VoiceCommand] 📡 STT request initiated — POST /api/ai/stt');
 
-      const sttResponse = await fetch('/api/ai/stt', {
+      const sttResponse = await fetchWithRetry('/api/ai/stt', {
         method: 'POST',
         body: sttFormData,
         signal,
@@ -520,7 +548,6 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
 
       if (skipAIPipeline) return;
 
-      const currentContext = tenantContextRef.current || {};
       const processResponse = await fetch('/api/ai/process-command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -595,14 +622,17 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
         }
       }
 
+      const configuredVoice = (_currentConfig?.defaultTtsVoice as string | undefined) || 'hannah';
       const ttsResponse = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: aiText.trim(),
-          voice: 'hannah',
+          voice: configuredVoice,
           model: 'canopylabs/orpheus-v1-english',
-          metadata: { resellerSlug: currentResellerId.trim(), tenantId: currentTtsContext.tenantId, category: currentTtsContext.category },
+          tenantId: currentTtsContext.tenantId,
+          resellerSlug: currentResellerId.trim(),
+          provider: 'groq',
         }),
         signal,
       });

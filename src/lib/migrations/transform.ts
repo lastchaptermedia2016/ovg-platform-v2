@@ -152,6 +152,13 @@ export function migrateLegacyConfig(raw: unknown): CanonicalWidgetConfig {
     migrated.ai_settings = deepMerge(existingAiSettings, aiSettings);
   }
 
+  const aiPersona = (migrated.aiPersona || {}) as Record<string, unknown>;
+  const mergedAiSettings = (migrated.ai_settings || {}) as Record<string, unknown>;
+  if (aiPersona.voiceId && !mergedAiSettings.voiceId) {
+    mergedAiSettings.voiceId = aiPersona.voiceId;
+    migrated.ai_settings = mergedAiSettings;
+  }
+
   return migrated as CanonicalWidgetConfig;
 }
 

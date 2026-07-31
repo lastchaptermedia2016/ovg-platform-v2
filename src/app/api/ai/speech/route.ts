@@ -1,4 +1,6 @@
 import Groq from "groq-sdk";
+import { resolveVoiceConfig } from '@/lib/ai/voice-config-resolver';
+import { getTtsCache, getTtsCacheKey, setTtsCache } from '@/lib/ai/tts-cache';
 
 export const dynamic = "force-dynamic"; // Prevents build-time API key errors
 
@@ -21,6 +23,7 @@ function corsResponse(body: unknown, status = 200): Response {
 }
 
 const DEFAULT_VOICE = "hannah";
+const DEFAULT_PROVIDER = "groq";
 const TTS_MODEL = "canopylabs/orpheus-v1-english";
 
 /**
@@ -65,6 +68,8 @@ interface SpeechInput {
   voice?: string;
   model?: string;
   resellerSlug?: string;
+  tenantId?: string;
+  provider?: string;
   metadata?: { resellerSlug?: string; [key: string]: unknown };
 }
 
@@ -86,14 +91,16 @@ async function generateSpeech(input: SpeechInput): Promise<Response> {
     });
   }
 
-  const voice = input.voice || DEFAULT_VOICE;
   const model = normalizeModel(input.model);
-  const apiKey = process.env.GROQ_API_KEY;
+  const resolved = await resolveVoiceConfig({
+    tenantId: input.tenantId,
+    resellerSlug: input.resellerSlug ?? input.metadata?.resellerSlug,
+  });
 
-  // Bridge dual frontend patterns: top-level resellerSlug (ClientBrandingStudio)
-  // takes precedence; fall back to nested metadata (UniversalCommandModal) for
-  // backward compatibility.
-  const _activeResellerSlug = input.resellerSlug ?? input.metadata?.resellerSlug;
+  const voice = input.voice || resolved.voiceId || DEFAULT_VOICE;
+  const apiKey = resolved.apiKey || process.env.GROQ_API_KEY;
+  const provider = resolved.provider || input.provider || DEFAULT_PROVIDER;
+  const activeResellerSlug = input.resellerSlug ?? input.metadata?.resellerSlug;
 
   if (!apiKey) {
     console.error("[API] Speech generation failed: GROQ_API_KEY is not configured.");
@@ -102,8 +109,20 @@ async function generateSpeech(input: SpeechInput): Promise<Response> {
     });
   }
 
+  const cacheKey = getTtsCacheKey(text, voice, provider, activeResellerSlug);
+  const cached = getTtsCache(cacheKey);
+  if (cached) {
+    return new Response(cached as unknown as BodyInit, {
+      headers: {
+        "Content-Type": "audio/wav",
+        "Content-Length": cached.length.toString(),
+        "Cache-Control": "public, max-age=3600",
+        "X-TTS-Cache": "HIT",
+      },
+    });
+  }
+
   try {
-    // Lazy instantiation inside the handler to protect the build
     const groq = new Groq({ apiKey });
 
     const wav = await groq.audio.speech.create({
@@ -114,18 +133,17 @@ async function generateSpeech(input: SpeechInput): Promise<Response> {
     });
 
     const buffer = Buffer.from(await wav.arrayBuffer());
+    setTtsCache(cacheKey, buffer);
 
-    // Return the buffer directly to the browser
-    return new Response(buffer, {
+    return new Response(buffer as unknown as BodyInit, {
       headers: {
         "Content-Type": "audio/wav",
         "Content-Length": buffer.length.toString(),
         "Cache-Control": "public, max-age=3600",
+        "X-TTS-Cache": "MISS",
       },
     });
   } catch (error) {
-    // Surface the exact upstream Groq error for diagnostics without leaking
-    // the API key or any auth tokens. Map to the closest standard HTTP status.
     const status =
       typeof (error as { status?: number })?.status === "number"
         ? (error as { status: number }).status
@@ -168,6 +186,7 @@ export async function GET(req: Request) {
     voice: url.searchParams.get("voice") ?? undefined,
     model: url.searchParams.get("model") ?? undefined,
     resellerSlug: url.searchParams.get("resellerSlug") ?? undefined,
+    tenantId: url.searchParams.get("tenantId") ?? undefined,
   };
   const response = await generateSpeech(input);
   const headers = new Headers(response.headers);

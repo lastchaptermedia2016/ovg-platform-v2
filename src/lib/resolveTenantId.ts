@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/client';
 
 export interface ResolveTenantIdResult {
   data: string | null;
+  widget_config: Record<string, unknown> | null;
   error: PostgrestError | Error | null;
 }
 
@@ -27,7 +28,7 @@ export async function resolveTenantId(
   const trimmed = userId.trim();
 
   if (!trimmed) {
-    return { data: null, error: new Error('Empty userId passed to resolveTenantId') };
+    return { data: null, widget_config: null, error: new Error('Empty userId passed to resolveTenantId') };
   }
 
   const client = supabase ?? createClient();
@@ -40,11 +41,11 @@ export async function resolveTenantId(
     .maybeSingle();
 
   if (userResellerError) {
-    return { data: null, error: userResellerError };
+    return { data: null, widget_config: null, error: userResellerError };
   }
 
   if (!userResellerData?.reseller_id) {
-    return { data: null, error: new Error('No reseller association found for user') };
+    return { data: null, widget_config: null, error: new Error('No reseller association found for user') };
   }
 
   const resellerId = userResellerData.reseller_id as string;
@@ -52,15 +53,15 @@ export async function resolveTenantId(
   // Step 2: Get tenants belonging to this reseller
   const { data: tenantsData, error: tenantsError } = await client
     .from('tenants')
-    .select('id')
+    .select('id, widget_config')
     .eq('reseller_id', resellerId);
 
   if (tenantsError) {
-    return { data: null, error: tenantsError };
+    return { data: null, widget_config: null, error: tenantsError };
   }
 
   if (!tenantsData || tenantsData.length === 0) {
-    return { data: null, error: new Error('No tenants found for this reseller') };
+    return { data: null, widget_config: null, error: new Error('No tenants found for this reseller') };
   }
 
   if (tenantsData.length > 1) {
@@ -71,5 +72,9 @@ export async function resolveTenantId(
   }
 
   // Return the first tenant's UUID (id column, NOT tenant_id slug)
-  return { data: tenantsData[0].id as string, error: null };
+  return { 
+    data: tenantsData[0].id as string, 
+    widget_config: (tenantsData[0].widget_config as Record<string, unknown> | null | undefined) ?? null,
+    error: null 
+  };
 }

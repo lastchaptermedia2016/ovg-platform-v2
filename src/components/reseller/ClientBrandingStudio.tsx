@@ -1203,6 +1203,7 @@ export function ClientBrandingStudio({
       const footerConfig = (branding.footerConfig as Record<string, unknown> | undefined) || {};
       const features = (widgetConfig.features || {}) as { aiInsightBadge?: boolean; aiDesignMirror?: boolean; customCss?: boolean; voiceFeaturesEnabled?: boolean; localFallbackAlert?: boolean };
       const aiSettings = (widgetConfig.ai_settings || {}) as { voiceId?: string };
+      const aiPersona = (widgetConfig.aiPersona || {}) as { voiceId?: string };
       const theme = (widgetConfig.theme || {}) as Record<string, unknown>;
 
       const flattenHeaderType = (type: unknown) => ((type as string) === 'gradient' || (type as string) === 'solid' || (type as string) === 'image') ? type as 'solid' | 'gradient' | 'image' : 'solid';
@@ -1228,7 +1229,7 @@ export function ClientBrandingStudio({
         customCss: (features.customCss ?? prev.customCss) as boolean,
         voiceFeaturesEnabled: (features.voiceFeaturesEnabled ?? prev.voiceFeaturesEnabled) as boolean,
         localFallbackAlert: (features.localFallbackAlert ?? prev.localFallbackAlert) as boolean,
-        defaultTtsVoice: (aiSettings.voiceId || prev.defaultTtsVoice) as string,
+          defaultTtsVoice: ((aiPersona.voiceId || aiSettings.voiceId || prev.defaultTtsVoice) as string),
         widgetBodyOpacity: (branding.widgetBodyOpacity as number | undefined) ?? prev.widgetBodyOpacity,
         widgetBodyBackground: (branding.widgetBodyBackground as string) || prev.widgetBodyBackground,
       }));
@@ -1286,6 +1287,8 @@ export function ClientBrandingStudio({
             const footerConfig = (branding.footerConfig as Record<string, unknown> | undefined) || {};
             const features = (widgetConfig.features || {}) as Record<string, unknown>;
             const theme = (widgetConfig.theme || {}) as Record<string, unknown>;
+            const aiSettings = (widgetConfig.ai_settings || {}) as { voiceId?: string };
+            const aiPersona = (widgetConfig.aiPersona || {}) as { voiceId?: string };
 
             setConfig(prev => {
               // If user has unsaved changes (dirty state), show notification
@@ -1307,6 +1310,7 @@ export function ClientBrandingStudio({
                   aiDesignMirror: (features.aiDesignMirror as boolean | undefined) ?? prev.aiDesignMirror,
                   customCss: (features.customCss as boolean | undefined) ?? prev.customCss,
                   voiceFeaturesEnabled: (features.voiceFeaturesEnabled as boolean | undefined) ?? prev.voiceFeaturesEnabled,
+                  defaultTtsVoice: ((aiPersona.voiceId || aiSettings.voiceId || prev.defaultTtsVoice) as string),
                 };
               }
 
@@ -1333,8 +1337,9 @@ export function ClientBrandingStudio({
                 aiDesignMirror: (features.aiDesignMirror as boolean | undefined) ?? prev.aiDesignMirror,
                 customCss: (features.customCss as boolean | undefined) ?? prev.customCss,
                 voiceFeaturesEnabled: (features.voiceFeaturesEnabled as boolean | undefined) ?? prev.voiceFeaturesEnabled,
-                localFallbackAlert: (features.localFallbackAlert as boolean | undefined) ?? prev.localFallbackAlert,
-                widgetBodyOpacity: (branding.widgetBodyOpacity as number | undefined) ?? prev.widgetBodyOpacity,
+                 localFallbackAlert: (features.localFallbackAlert as boolean | undefined) ?? prev.localFallbackAlert,
+                 defaultTtsVoice: ((aiPersona.voiceId || aiSettings.voiceId || prev.defaultTtsVoice) as string),
+                 widgetBodyOpacity: (branding.widgetBodyOpacity as number | undefined) ?? prev.widgetBodyOpacity,
                 widgetBodyBackground: (branding.widgetBodyBackground as string) || prev.widgetBodyBackground,
               };
             });
@@ -1477,6 +1482,7 @@ export function ClientBrandingStudio({
         const footerConfig = (branding.footerConfig as Record<string, unknown> | undefined) || {};
         const features = (widgetConfig.features || {}) as { aiInsightBadge?: boolean; aiDesignMirror?: boolean; customCss?: boolean; voiceFeaturesEnabled?: boolean; localFallbackAlert?: boolean };
         const aiSettings = (widgetConfig.ai_settings || {}) as { voiceId?: string };
+        const aiPersona = (widgetConfig.aiPersona || {}) as { voiceId?: string };
         const theme = (widgetConfig.theme || {}) as Record<string, unknown>;
 
         const flattenHeaderType = (type: unknown) => ((type as string) === 'gradient' || (type as string) === 'solid' || (type as string) === 'image') ? type as 'solid' | 'gradient' | 'image' : 'solid';
@@ -1502,7 +1508,7 @@ export function ClientBrandingStudio({
           customCss: (features.customCss ?? prev.customCss) as boolean,
           voiceFeaturesEnabled: (features.voiceFeaturesEnabled ?? prev.voiceFeaturesEnabled) as boolean,
           localFallbackAlert: (features.localFallbackAlert ?? prev.localFallbackAlert) as boolean,
-          defaultTtsVoice: (aiSettings.voiceId || prev.defaultTtsVoice) as string,
+        defaultTtsVoice: ((aiPersona.voiceId || aiSettings.voiceId || prev.defaultTtsVoice) as string),
           widgetBodyOpacity: (branding.widgetBodyOpacity as number | undefined) ?? prev.widgetBodyOpacity,
           widgetBodyBackground: (branding.widgetBodyBackground as string) || prev.widgetBodyBackground,
         }));

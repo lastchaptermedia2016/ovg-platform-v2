@@ -48,7 +48,8 @@ export async function GET(request: NextRequest) {
       .eq('tenant_id', tenant.id)
       .not('conversation_id', 'is', null)
       .gte('created_at', cutoff)
-      .order('created_at', { ascending: true });
+      .order('created_at', { ascending: false })
+      .limit(500);
 
     if (convError) {
       console.error('[API_CHAT_CONVERSATIONS_ERROR]:', convError);
@@ -60,7 +61,9 @@ export async function GET(request: NextRequest) {
       messages: Array<{ created_at: string; message: string; role: string; sender_id: string | null }>;
     }>();
 
-    for (const row of conversations ?? []) {
+    const orderedMessages = (conversations ?? []).reverse();
+
+    for (const row of orderedMessages) {
       if (!isUuid(row.conversation_id)) continue;
       const current = convMap.get(row.conversation_id);
       const target = current ?? { id: row.conversation_id, messages: [] as Array<{ created_at: string; message: string; role: string; sender_id: string | null }> };
@@ -115,7 +118,8 @@ export async function GET(request: NextRequest) {
       .from('tenant_appointments')
       .select('client_name, client_phone, start_time')
       .eq('tenant_id', tenant.id)
-      .order('start_time', { ascending: false });
+      .order('start_time', { ascending: false })
+      .limit(100);
 
     const phoneToApptName = new Map<string, string>();
     for (const appt of appointments ?? []) {

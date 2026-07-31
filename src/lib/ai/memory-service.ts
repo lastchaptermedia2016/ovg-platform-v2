@@ -120,7 +120,8 @@ export async function getClientMemories(
       .from('client_memories')
       .select('memory_key, memory_value')
       .eq('tenant_id', tenantId)
-      .eq('client_id', clientId);
+      .eq('client_id', clientId)
+      .limit(50);
 
     if (error || !data) return {};
 

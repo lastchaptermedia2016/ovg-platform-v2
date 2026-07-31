@@ -223,6 +223,8 @@ export function toCanonicalAIPersona(draft: StudioDraft): Partial<CanonicalAIPer
 interface StudioDraftContextType {
   draft: StudioDraft;
   setDraft: React.Dispatch<React.SetStateAction<StudioDraft>>;
+  tenantId: string | null;
+  tenantIdError: string | null;
   /**
    * Atomic, voice-friendly bridge for persona changes. The legacy voice path
    * (useZeederVoice) routes an UPDATE_PERSONA intent through this single
@@ -281,13 +283,18 @@ function canonicalConfigToDraft(
     temperature: persona?.temperature ?? 0.3,
     voiceId: persona?.voiceId ?? '',
     greeting: (config.greeting as string | undefined) ?? '',
-    features: config.features as StudioDraft['features'],
+    features: {
+      ...defaultDraft.features,
+      ...(config?.features ?? {}),
+    },
     suggestedActions: (config.suggestedActions as SuggestedAction[] | undefined) ?? [],
   };
 }
 
 export function StudioDraftProvider({ children }: { children: ReactNode }) {
   const [draft, setDraft] = useState<StudioDraft>(defaultDraft);
+  const [tenantId, setTenantId] = useState<string | null>(null);
+  const [tenantIdError, setTenantIdError] = useState<string | null>(null);
 
   const dispatchStudioAction = useCallback(
     (action: { type: 'UPDATE_PERSONA'; mode: 'sales' | 'concierge' }) => {
@@ -334,19 +341,22 @@ export function StudioDraftProvider({ children }: { children: ReactNode }) {
       .then(async ({ data }) => {
         const session = data.session;
         if (!session?.user) return;
-        const { data: tenantResult, error: tenantErr } = await resolveTenantId(session.user.id);
-        if (tenantErr || !tenantResult) {
-          console.warn('[StudioDraft] Hydration skipped — tenant unresolved:', tenantErr?.message);
+        const { data: tenantResult, error: tenantErr, widget_config } = await resolveTenantId(session.user.id);
+        if (tenantErr) {
+          console.warn('[StudioDraft] Hydration skipped — tenant unresolved:', tenantErr.message);
+          if (!cancelled) setTenantIdError(tenantErr.message);
           return;
         }
-        const { data: tenant, error: fetchErr } = await supabase
-          .from('tenants')
-          .select('widget_config')
-          .eq('id', tenantResult)
-          .maybeSingle();
-        if (fetchErr || !tenant?.widget_config) return;
-        if (cancelled) return;
-        setDraft(canonicalConfigToDraft(tenant.widget_config as Partial<CanonicalWidgetConfig>));
+        if (!tenantResult) {
+          console.warn('[StudioDraft] Hydration skipped — no tenant found');
+          if (!cancelled) setTenantIdError('No tenant found for this user');
+          return;
+        }
+        if (!cancelled) setTenantId(tenantResult);
+        if (widget_config) {
+          if (cancelled) return;
+          setDraft(canonicalConfigToDraft(widget_config as Partial<CanonicalWidgetConfig>));
+        }
       })
       .catch((err) => {
         console.warn('[StudioDraft] Hydration failed:', err);
@@ -357,7 +367,7 @@ export function StudioDraftProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-      <StudioDraftContext.Provider value={{ draft, setDraft, dispatchStudioAction, applyBrandingTheme, requestBrandingSave }}>
+      <StudioDraftContext.Provider value={{ draft, setDraft, tenantId, tenantIdError, dispatchStudioAction, applyBrandingTheme, requestBrandingSave }}>
       {children}
     </StudioDraftContext.Provider>
   );

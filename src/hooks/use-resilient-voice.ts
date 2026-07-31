@@ -2,6 +2,10 @@
 
 import { useState, useCallback, useRef } from 'react';
 
+interface UseResilientVoiceOptions {
+  voice?: string;
+}
+
 interface UseResilientVoiceReturn {
   isPlaying: boolean;
   isSilentMode: boolean;
@@ -15,12 +19,12 @@ interface TtsError extends Error {
   status?: number;
 }
 
-// Phase 1: Groq Orpheus-v1 TTS – hardcode Hannah profile
-const playGroqTTS = async (text: string): Promise<ArrayBuffer> => {
+// Phase 1: Groq Orpheus-v1 TTS
+const playGroqTTS = async (text: string, voice = 'hannah'): Promise<ArrayBuffer> => {
   const response = await fetch('/api/ai/speech', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, voice: 'hannah', model: 'orpheus-v1', provider: 'groq' }),
+    body: JSON.stringify({ text, voice, model: 'orpheus-v1', provider: 'groq' }),
   });
 
   if (!response.ok) {
@@ -89,7 +93,8 @@ const typewriterEffect = (
   return () => { cancelled = true; };
 };
 
-export function useResilientVoice(): UseResilientVoiceReturn {
+export function useResilientVoice(options: UseResilientVoiceOptions = {}): UseResilientVoiceReturn {
+  const { voice = 'hannah' } = options;
   const [isPlaying, setIsPlaying] = useState(false);
   const [isSilentMode, setIsSilentMode] = useState(false);
   const [captions, setCaptions] = useState('');
@@ -129,7 +134,7 @@ export function useResilientVoice(): UseResilientVoiceReturn {
 
     // Phase 1: Groq
     try {
-      const audioBuffer = await playGroqTTS(text);
+      const audioBuffer = await playGroqTTS(text, voice);
       if (isCancelledRef.current) return;
       
       const audioBlob = new Blob([audioBuffer], { type: 'audio/wav' });
@@ -168,7 +173,7 @@ export function useResilientVoice(): UseResilientVoiceReturn {
       setCaptions(typedText);
     }, 40);
 
-  }, [clearCaptions]);
+  }, [voice, clearCaptions]);
 
   return {
     isPlaying,

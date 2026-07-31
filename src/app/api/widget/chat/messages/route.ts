@@ -42,7 +42,8 @@ export async function GET(request: NextRequest) {
       .select('id, sender_id, message, role, created_at')
       .eq('tenant_id', tenant.id)
       .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: true });
+      .order('created_at', { ascending: true })
+      .limit(50);
 
     if (msgError) {
       console.error('[API_WIDGET_CHAT_MESSAGES_ERROR]:', msgError);

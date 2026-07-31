@@ -121,6 +121,7 @@ beforeEach(() => {
   } as unknown as Awaited<ReturnType<typeof createAuthClient>>);
   mockResolveTenantId.mockResolvedValue({
     data: 'tenant-uuid-123',
+    widget_config: null,
     error: null,
   });
   mockGetClientMemories.mockResolvedValue({});
@@ -840,7 +841,7 @@ describe('POST /api/client/process-command - System Prompt Hydration', () => {
       email: 'client@example.com',
       error: null,
     });
-    mockResolveTenantId.mockResolvedValue({ data: 'tenant-uuid-123', error: null });
+    mockResolveTenantId.mockResolvedValue({ data: 'tenant-uuid-123', widget_config: null, error: null });
   });
 
   it('should inject a dynamically built system prompt carrying the host business identity', async () => {

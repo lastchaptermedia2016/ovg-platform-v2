@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import {
   CalendarCheck,
   Boxes,
@@ -151,35 +151,45 @@ export function IntegrationsManager({ targetClientId, role }: IntegrationsManage
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [status, setStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const isFetchingRef = useRef(false);
 
   const apiBase =
     role === 'reseller' ? '/api/reseller/manage-client-integrations' : '/api/client/integrations';
 
   const active = INTEGRATIONS.find((i) => i.id === activeId) ?? null;
 
+  const fetchIntegrations = useCallback(async () => {
+    if (document.hidden || isFetchingRef.current) return;
+
+    isFetchingRef.current = true;
+    try {
+      const url =
+        role === 'reseller' && targetClientId
+          ? `${apiBase}?targetClientId=${encodeURIComponent(targetClientId)}`
+          : apiBase;
+      const res = await fetch(url, { method: 'GET' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const incoming = (data.integrations ?? {}) as Record<string, IntegrationConfigState>;
+      setConfigs((prev) => {
+        const merged: Record<string, IntegrationConfigState> = { ...prev };
+        for (const item of INTEGRATIONS) {
+          merged[item.id] = { ...BLANK_CONFIG, ...(incoming[item.id] ?? {}) };
+        }
+        return merged;
+      });
+    } catch {
+      // Non-fatal: fall back to blank forms.
+    } finally {
+      isFetchingRef.current = false;
+    }
+  }, [apiBase, role, targetClientId]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const url =
-          role === 'reseller' && targetClientId
-            ? `${apiBase}?targetClientId=${encodeURIComponent(targetClientId)}`
-            : apiBase;
-        const res = await fetch(url, { method: 'GET' });
-        if (!res.ok) return;
-        const data = await res.json();
-        const incoming = (data.integrations ?? {}) as Record<string, IntegrationConfigState>;
-        if (!cancelled) {
-          setConfigs((prev) => {
-            const merged: Record<string, IntegrationConfigState> = { ...prev };
-            for (const item of INTEGRATIONS) {
-              merged[item.id] = { ...BLANK_CONFIG, ...(incoming[item.id] ?? {}) };
-            }
-            return merged;
-          });
-        }
-      } catch {
-        // Non-fatal: fall back to blank forms.
+        await fetchIntegrations();
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -187,7 +197,7 @@ export function IntegrationsManager({ targetClientId, role }: IntegrationsManage
     return () => {
       cancelled = true;
     };
-  }, [apiBase, role, targetClientId]);
+  }, [fetchIntegrations]);
 
   const updateField = (integrationId: string, key: string, value: unknown) => {
     setConfigs((prev) => ({

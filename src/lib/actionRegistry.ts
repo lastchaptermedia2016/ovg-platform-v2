@@ -269,6 +269,11 @@ export async function dispatchUpdateStudioConfig(
   if (params.aiPersona !== undefined) {
     const currentPersona = (currentConfig.aiPersona as Record<string, unknown> | undefined) ?? {};
     nextConfig.aiPersona = deepMerge(currentPersona, params.aiPersona as Record<string, unknown>);
+    const incomingVoiceId = (params.aiPersona as Record<string, unknown>)?.voiceId;
+    if (typeof incomingVoiceId === 'string' && incomingVoiceId.length > 0) {
+      const currentAiSettings = (currentConfig.ai_settings as Record<string, unknown> | undefined) ?? {};
+      nextConfig.ai_settings = deepMerge(currentAiSettings, { voiceId: incomingVoiceId });
+    }
   }
 
   // Project the `features` block (AI add-ons, Design Mirror, Custom CSS) so the

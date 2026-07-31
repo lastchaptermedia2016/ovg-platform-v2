@@ -46,6 +46,8 @@ interface UniversalCommandModalProps {
   onClientCreated?: () => void;
   modalTitle?: string;
   voiceEntryLabel?: string;
+  voice?: string;
+  tenantId?: string;
 }
 
 // ─── Atomic Form State ─────────────────────────────────────────────
@@ -99,7 +101,7 @@ interface ReviewData {
   vibe: string;
 }
 
-export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, modalTitle = 'Universal Command', voiceEntryLabel = 'UNIVERSAL' }: UniversalCommandModalProps) {
+export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, modalTitle = 'Universal Command', voiceEntryLabel = 'UNIVERSAL', voice = 'hannah', tenantId }: UniversalCommandModalProps) {
   const getErrorMessage = (err: unknown): string => {
     if (err instanceof Error) return err.message;
     if (typeof err === 'string') return err;
@@ -385,7 +387,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
       const response = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice: 'hannah', model: 'orpheus-v1', metadata: ttsMetadata }),
+        body: JSON.stringify({ text, voice: voice || 'hannah', model: 'orpheus-v1', resellerSlug, tenantId, metadata: ttsMetadata }),
       });
 
       if (!response.ok) throw new Error('TTS failed');
@@ -411,7 +413,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
     } finally {
       setIsSpeaking(false);
     }
-  }, [resellerSlug]);
+  }, [resellerSlug, voice, tenantId]);
 
   // ─── Microphone ──────────────────────────────────────────────────
   const startListening = useCallback(async () => {
@@ -488,6 +490,8 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
       setIsProcessing(true);
       const formData = new FormData();
       formData.append('file', new File([audioBlob], 'command.webm', { type: 'audio/webm' }));
+      if (tenantId) formData.append('tenantId', tenantId);
+      if (resellerSlug) formData.append('resellerSlug', resellerSlug);
 
       const response = await fetch('/api/ai/stt', {
         method: 'POST',
@@ -503,7 +507,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
     } finally {
       setIsProcessing(false);
     }
-  }, []);
+  }, [resellerSlug, tenantId]);
 
   // ─── Multi-Step Voice Entry ──────────────────────────────────────
   const completeVoiceEntry = useCallback(async () => {

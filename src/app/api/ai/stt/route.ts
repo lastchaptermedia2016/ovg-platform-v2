@@ -1,4 +1,5 @@
 import Groq, { toFile } from "groq-sdk";
+import { resolveVoiceConfig } from '@/lib/ai/voice-config-resolver';
 
 export const dynamic = 'force-dynamic';
 
@@ -111,6 +112,24 @@ export async function POST(req: Request) {
     );
   }
 
+  const rawResellerSlug = formData.get("resellerSlug");
+  const resellerSlug = typeof rawResellerSlug === "string" && rawResellerSlug.length > 0 ? rawResellerSlug : null;
+
+  const resolved = await resolveVoiceConfig({
+    tenantId: tenantId || undefined,
+    resellerSlug: resellerSlug || undefined,
+  });
+
+  const groqApiKey = resolved.apiKey || process.env.GROQ_API_KEY;
+
+  if (!groqApiKey) {
+    console.error('[STT] ❌ GROQ_API_KEY is not configured');
+    return jsonResponse(
+      { error: 'STT service is not configured: missing GROQ_API_KEY' },
+      500
+    );
+  }
+
   try {
     const arrayBuffer = await file.arrayBuffer();
 
@@ -122,7 +141,7 @@ export async function POST(req: Request) {
       { type: file.type }
     );
 
-    const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+    const groq = new Groq({ apiKey: groqApiKey });
 
     const staticAnchors = [
       "OVG",

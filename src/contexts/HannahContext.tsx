@@ -4,7 +4,7 @@ import { createContext, useContext, useState, useCallback, useRef, type ReactNod
 import type { CommandCapability } from '@/core/ai/system-capabilities';
 import type { CommandIntent } from '@/lib/hooks/useCommandListener';
 import { usePathname } from 'next/navigation';
-import { useVoiceCommand } from '@/hooks/use-voice-command';
+import { useVoiceCommand, type TenantContext } from '@/hooks/use-voice-command';
 
 /**
  * HannahContext — Global AI Assistant State Provider
@@ -84,7 +84,7 @@ export interface HannahContextValue {
 const HannahContext = createContext<HannahContextValue | undefined>(undefined);
 
 // ── Provider Component ─────────────────────────────────────────────────
-export function HannahProvider({ children, resellerSlug }: { children: ReactNode; resellerSlug?: string }) {
+export function HannahProvider({ children, resellerSlug, tenantContext }: { children: ReactNode; resellerSlug?: string; tenantContext?: TenantContext }) {
   const [isHannahAwake, setIsHannahAwakeState] = useState(true);
   const [currentBriefing, setCurrentBriefing] = useState<string | null>(null);
   const [hasGreeted, setHasGreetedState] = useState(false);
@@ -140,7 +140,7 @@ export function HannahProvider({ children, resellerSlug }: { children: ReactNode
     }
   }, [activeRoute]);
 
-  const voice = useVoiceCommand({ resellerId: resellerSlug });
+  const voice = useVoiceCommand({ resellerId: resellerSlug, tenantContext });
 
   const startListening = voice.startListening;
   const stopListeningAndProcess = voice.stopListeningAndProcess;

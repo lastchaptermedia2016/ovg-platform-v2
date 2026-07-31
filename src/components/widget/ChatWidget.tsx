@@ -172,6 +172,7 @@ const ChatWidget = ({
   const isSendingRef = useRef(false);
   const lastSubmitRef = useRef<{ text: string; time: number } | null>(null);
   const optimisticIdsRef = useRef<Set<string>>(new Set());
+  const fetchedRef = useRef(false);
 
   // ── Cognitive Memory (relational recognition) state ─────────────
   // Fetched from the client-safe /api/client/memories endpoint so the widget
@@ -907,6 +908,8 @@ const ChatWidget = ({
   // Studio preview (no real session) and silent on any failure.
   useEffect(() => {
     if (preview) return;
+    if (fetchedRef.current) return;
+    fetchedRef.current = true;
     let cancelled = false;
     (async () => {
       try {
@@ -1073,9 +1076,16 @@ const ChatWidget = ({
       }
     };
 
-    void poll();
+    const initialTimer = setTimeout(() => {
+      if (!fetchedRef.current) {
+        fetchedRef.current = true;
+        void poll();
+      }
+    }, 0);
+
     pollIntervalRef.current = setInterval(poll, 5000);
     return () => {
+      clearTimeout(initialTimer);
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
