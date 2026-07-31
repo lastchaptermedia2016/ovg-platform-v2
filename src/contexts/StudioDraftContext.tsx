@@ -366,6 +366,77 @@ export function StudioDraftProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // ── Realtime Branding Sync ─────────────────────────────────────────────
+  // Subscribes to postgres_changes on the tenants table so the client preview
+  // reflects reseller-saved branding updates instantly without a manual refresh.
+  // Also listens on a BroadcastChannel for instant cross-tab preview updates
+  // emitted by the reseller branding studio on save.
+  useEffect(() => {
+    if (!tenantId) return;
+
+    const supabase = createSupabaseClient();
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+
+    const applyRemoteConfig = (widgetConfig: Partial<CanonicalWidgetConfig> | null | undefined) => {
+      if (!widgetConfig) return;
+      setDraft((prev) => {
+        const remote = canonicalConfigToDraft(widgetConfig);
+        // Merge remote branding into local draft, preserving unsaved local edits
+        // for fields the user is actively editing (persona/systemPrompt).
+        return {
+          ...prev,
+          primaryColor: remote.primaryColor,
+          logoUrl: remote.logoUrl,
+          brandName: remote.brandName,
+          widgetPosition: remote.widgetPosition,
+          header: remote.header,
+          footer: remote.footer,
+          widgetBody: remote.widgetBody,
+          greeting: remote.greeting,
+          features: remote.features,
+          suggestedActions: remote.suggestedActions,
+        };
+      });
+    };
+
+    // BroadcastChannel for instant cross-tab preview updates
+    let broadcastChannel: BroadcastChannel | null = null;
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      broadcastChannel = new BroadcastChannel('branding-sync');
+      broadcastChannel.onmessage = (event: MessageEvent) => {
+        const payload = event.data as { type?: string; tenantId?: string; widgetConfig?: Partial<CanonicalWidgetConfig> } | null;
+        if (!payload || payload.type !== 'BRANDING_UPDATED') return;
+        if (payload.tenantId && payload.tenantId !== tenantId) return;
+        applyRemoteConfig(payload.widgetConfig);
+      };
+    }
+
+    // Supabase postgres_changes listener for cross-device sync
+    channel = supabase
+      .channel(`tenant-config:${tenantId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'tenants',
+          filter: `id=eq.${tenantId}`,
+        },
+        (payload) => {
+          const row = payload.new as { widget_config?: Partial<CanonicalWidgetConfig> | null };
+          applyRemoteConfig(row.widget_config);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      if (channel) {
+        void supabase.removeChannel(channel);
+      }
+      broadcastChannel?.close();
+    };
+  }, [tenantId, setDraft]);
+
   return (
       <StudioDraftContext.Provider value={{ draft, setDraft, tenantId, tenantIdError, dispatchStudioAction, applyBrandingTheme, requestBrandingSave }}>
       {children}

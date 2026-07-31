@@ -7,6 +7,12 @@ import ChatWidget from "./ChatWidgetClient";
 import { migrateLegacyBranding } from "@/lib/schemas/tenant-config.canonical";
 import type { CanonicalBranding } from "@/lib/schemas/tenant-config.canonical";
 
+// Force dynamic rendering so branding updates are always fresh on embedded sites.
+// Without this, Next.js may cache the page at the edge, causing stale branding
+// to persist for visitors after a reseller saves changes.
+export const revalidate = 0;
+export const dynamic = "force-dynamic";
+
 export default async function WidgetPage({
   params,
 }: {

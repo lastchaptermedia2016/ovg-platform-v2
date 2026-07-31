@@ -113,6 +113,29 @@ export const TTS_VOICE_OPTIONS: ReadonlyArray<{ value: string; label: string }> 
   { value: 'calm_female', label: 'Calm Female' },
 ];
 
+/**
+ * Emit a branding-update event to every open tab listening on the
+ * `branding-sync` BroadcastChannel. The client-facing StudioDraftContext
+ * subscribes to this channel and merges the payload into its draft so the
+ * Client Preview updates instantly without a manual refresh or Supabase
+ * round-trip latency. Best-effort: silently no-ops when BroadcastChannel
+ * is unavailable or the browser blocks the channel.
+ */
+function emitBrandingUpdated(clientId: string, widgetConfig: {
+  branding?: Partial<CanonicalBranding>;
+  greeting?: string;
+  suggestedActions?: SuggestedAction[];
+}): void {
+  if (typeof window === 'undefined' || !('BroadcastChannel' in window)) return;
+  try {
+    const channel = new BroadcastChannel('branding-sync');
+    channel.postMessage({ type: 'BRANDING_UPDATED', tenantId: clientId, widgetConfig });
+    channel.close();
+  } catch {
+    // best-effort cross-tab sync - never break the save flow on broadcast failure
+  }
+}
+
 const STUDIO_CAPABILITIES = {
   header: {
     description: 'Change the header background color, gradient, image, or opacity.',
@@ -899,6 +922,17 @@ export function ClientBrandingStudio({
       setSaveMessage('✨ Perfect! Both the visual design and greeting have been saved.');
       tts('Excellent! Your complete branding setup is now live.');
       setShowGreetingPreview(false);
+      emitBrandingUpdated(clientId, {
+        branding: {
+          primaryColor: config.primaryColor,
+          accentColor: config.footerBackground,
+          logoUrl: config.logoUrl || null,
+          brandName: config.brandName || undefined,
+          widgetPosition: (config.widgetPosition || 'bottom-right') as CanonicalBranding['widgetPosition'],
+        },
+        greeting: generatedGreeting || '',
+        suggestedActions,
+      });
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       setSaveMessage(errorMessage || 'Error saving configuration');
@@ -907,7 +941,7 @@ export function ClientBrandingStudio({
     } finally {
       setIsSaving(false);
     }
-  }, [handleCommit, tts]);
+  }, [handleCommit, clientId, config, generatedGreeting, suggestedActions, tts]);
 
   const dispatchStudioAction = useCallback(async (action: StudioAction): Promise<void> => {
     switch (action.type) {
@@ -1699,6 +1733,17 @@ export function ClientBrandingStudio({
       setSaveMessage('✨ Perfect! Both the visual design and greeting have been saved.');
       tts('Excellent! Your complete branding setup is now live.');
       setShowGreetingPreview(false);
+      emitBrandingUpdated(clientId, {
+        branding: {
+          primaryColor: config.primaryColor,
+          accentColor: config.footerBackground,
+          logoUrl: config.logoUrl || null,
+          brandName: config.brandName || undefined,
+          widgetPosition: (config.widgetPosition || 'bottom-right') as CanonicalBranding['widgetPosition'],
+        },
+        greeting: generatedGreeting || '',
+        suggestedActions,
+      });
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       setSaveMessage(errorMessage || 'Error saving configuration');
@@ -1707,7 +1752,7 @@ export function ClientBrandingStudio({
     } finally {
       setIsSaving(false);
     }
-  }, [handleCommit, clientId, generatedGreeting, tts]);
+  }, [handleCommit, clientId, config, generatedGreeting, suggestedActions, tts]);
 
   // Gated Tenant Switch Announcement
   useEffect(() => {

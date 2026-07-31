@@ -1,0 +1,13 @@
+src/app/api/client/integrations/route.ts
+src/app/api/client/knowledge/route.ts
+src/app/api/client/memories/route.ts
+src/app/api/client/process-command/__tests__/client-process-command.test.ts
+src/app/api/client/process-command/route.ts
+src/app/api/client/stt/__tests__/client-stt.test.ts
+src/app/api/client/stt/route.ts
+src/app/api/client/test-harness/route.ts
+src/app/api/client/test-pipeline/route.ts
+src/app/api/client/update-studio-config/route.ts
+src/app/api/client/upload-asset/route.ts
+src/app/api/client/upload-logo/route.ts
+src/app/api/client/visitor-memories/route.ts
