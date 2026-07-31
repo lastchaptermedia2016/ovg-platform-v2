@@ -71,6 +71,9 @@ interface ZeederVoiceState {
  */
 const ACTION_TYPE_TO_ZEEDER_ID: Record<string, ZeederActionId | null> = {
   SYSTEM_UPDATE_BRANDING: 'updateBranding',
+  SYSTEM_UPDATE_PERSONA: 'ai_update_persona',
+  SYSTEM_MANAGE_MEMORY: 'ai_manage_memory',
+  SYSTEM_PUBLISH_DRAFT: 'ai_publish_studio_draft',
   SYSTEM_TELEMETRY: 'fetchTelemetry',
   SYSTEM_TOGGLE_AGENT: 'toggleAgent',
   SYSTEM_NAVIGATE: 'navigate',

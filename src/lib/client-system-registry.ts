@@ -16,7 +16,7 @@
  * Client-safe: plain data + types only, no server-only imports.
  */
 
-export type ClientSystemCategory = 'general' | 'branding' | 'persona';
+export type ClientSystemCategory = 'general' | 'branding' | 'persona' | 'memory';
 
 export interface ClientSystemNavAction {
   type: 'nav';
@@ -38,7 +38,18 @@ export const CLIENT_SYSTEM_TABS: { id: ClientSystemCategory; label: string }[] =
   { id: 'general', label: 'General' },
   { id: 'branding', label: 'Branding' },
   { id: 'persona', label: 'Persona' },
+  { id: 'memory', label: 'Knowledge' },
 ];
+
+export const PAGE_WELCOME_GREETINGS: Record<string, string> = {
+  '/client': "Welcome to your main dashboard! How can I assist you with your AI agent today?",
+  '/client/dashboard': "Welcome to your main dashboard! How can I assist you with your AI agent today?",
+  '/client/dashboard/studio/branding': "Welcome to your branding page! How can I assist with your styling or widget layout?",
+  '/client/dashboard/studio/persona': "Welcome to your persona studio! Ready to tune your assistant's identity or voice?",
+  '/client/dashboard/memories': "Welcome to your knowledge base! What memories or rules would you like to update?",
+  '/client/dashboard/analytics': "Welcome to your analytics dashboard! Would you like a breakdown of recent chats?",
+  '/client/dashboard/settings': "Welcome to your settings hub! How can I help configure your portal?",
+};
 
 export const CLIENT_SYSTEM_REGISTRY: Record<ClientSystemCategory, ClientSystemItem[]> = {
   general: [
@@ -132,6 +143,11 @@ export const CLIENT_SYSTEM_REGISTRY: Record<ClientSystemCategory, ClientSystemIt
       },
     },
     {
+      id: 'update_persona',
+      label: 'Update persona',
+      description: 'Update AI assistant name, greeting, voice, or system instructions.',
+    },
+    {
       id: 'configure_tone',
       label: 'Configure AI tone',
       description: 'Adjust voice persona settings.',
@@ -160,6 +176,23 @@ export const CLIENT_SYSTEM_REGISTRY: Record<ClientSystemCategory, ClientSystemIt
       id: 'voice_options',
       label: 'Voice options',
       description: 'Available voices and languages.',
+    },
+  ],
+  memory: [
+    {
+      id: 'manage_memory',
+      label: 'Manage knowledge base',
+      description: 'Create, delete, or search knowledge-base memory entries.',
+      action: {
+        type: 'nav',
+        href: '/client/dashboard/studio/knowledge',
+        label: 'Open Knowledge Base',
+      },
+    },
+    {
+      id: 'publish_draft',
+      label: 'Publish studio draft',
+      description: 'Commit the current unsaved studio draft to live configuration.',
     },
   ],
 };

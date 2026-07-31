@@ -25,7 +25,7 @@ import { isAnonRateLimited } from '@/lib/rate-limit/tenant-rate-limit';
 import { buildBookingCapture } from '@/lib/booking/booking-capture';
 import { z } from 'zod';
 import { zeederActionRegistry, isZeederActionId, type ZeederActionId } from '@/lib/zeeder/action-registry';
-import { CLIENT_SYSTEM_REGISTRY, type ClientSystemItem } from '@/lib/client-system-registry';
+import { CLIENT_SYSTEM_REGISTRY, type ClientSystemItem, PAGE_WELCOME_GREETINGS } from '@/lib/client-system-registry';
 import { extractPersonaMode, hasPersonaModeIntent } from '@/lib/ai/extract-persona-mode';
 import { buildSystemPrompt, type KnowledgeEntry } from '@/lib/ai/system-prompt-builder';
 import { getClientMemories, extractAndStoreMemories, type ClientMemoryMap } from '@/lib/ai/memory-service';
@@ -129,6 +129,9 @@ interface PreviewDraft {
  */
 const ACTION_ID_TO_SYSTEM_TYPE: Record<string, string> = {
   updateBranding: 'SYSTEM_UPDATE_BRANDING',
+  ai_update_persona: 'SYSTEM_UPDATE_PERSONA',
+  ai_manage_memory: 'SYSTEM_MANAGE_MEMORY',
+  ai_publish_studio_draft: 'SYSTEM_PUBLISH_DRAFT',
   fetchTelemetry: 'SYSTEM_TELEMETRY',
   toggleAgent: 'SYSTEM_TOGGLE_AGENT',
   navigate: 'SYSTEM_NAVIGATE',
@@ -355,6 +358,9 @@ function allowedActions(isAnon: boolean): Set<string> {
     : new Set([
         'CLIENT_NOP',
         'SYSTEM_UPDATE_BRANDING',
+        'SYSTEM_UPDATE_PERSONA',
+        'SYSTEM_MANAGE_MEMORY',
+        'SYSTEM_PUBLISH_DRAFT',
         'SYSTEM_TELEMETRY',
         'SYSTEM_TOGGLE_AGENT',
         'SYSTEM_NAVIGATE',
@@ -395,10 +401,20 @@ function parseIntent(text: string): ZeederActionId | null {
   // ── navigate ─────────────────────────────────────────
   // Matches explicit navigation intents to client dashboard tabs.
   if (
-    /(go to|navigate to|open|show|take me to|jump to|switch to|move to|visit)\b.*\b(branding|persona|knowledge|integrations|analytics|studio)/i.test(lower) ||
-    /^(go to|navigate to|open|show|take me to|jump to|switch to|move to|visit)\s+(branding|persona|knowledge|integrations|analytics|studio)/i.test(lower)
+    /(go to|navigate to|open|show|take me to|jump to|switch to|move to|visit)\b.*\b(branding|persona|knowledge|integrations|analytics|studio|dashboard|main\s+page|overview|home|main\s+dashboard)\b/i.test(lower) ||
+    /^(go to|navigate to|open|show|take me to|jump to|switch to|move to|visit)\s+(branding|persona|knowledge|integrations|analytics|studio|dashboard|main\s+page|overview|home|main\s+dashboard)/i.test(lower)
   ) {
     return 'navigate';
+  }
+
+  // ── ai_manage_memory ───────────────────────────────────────────────────
+  if (/(remember|add\s+(?:a\s+)?memory|delete\s+(?:a\s+)?memory|search\s+(?:my\s+)?memories|find\s+(?:a\s+)?memory)/i.test(lower)) {
+    return 'ai_manage_memory';
+  }
+
+  // ── ai_publish_studio_draft ────────────────────────────────────────────
+  if (/(publish\s+(?:my\s+)?changes|commit\s+(?:my\s+)?draft|go\s+live|publish)/i.test(lower)) {
+    return 'ai_publish_studio_draft';
   }
 
   // ── Persona mode directive ──────────────────────────────────────────
@@ -853,7 +869,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
   // BLOCK for anonymous visitors: the only Tier-1 system actions are branding
   // mutations and telemetry reads — neither may be triggered by a public embed.
   // Personalize the degradation response with the host business name.
-  if (isAnon && (systemType === 'SYSTEM_UPDATE_BRANDING' || systemType === 'SYSTEM_TELEMETRY')) {
+  if (isAnon && (systemType === 'SYSTEM_UPDATE_BRANDING' || systemType === 'SYSTEM_UPDATE_PERSONA' || systemType === 'SYSTEM_MANAGE_MEMORY' || systemType === 'SYSTEM_PUBLISH_DRAFT' || systemType === 'SYSTEM_TELEMETRY')) {
     const { data: tenantNameRow } = await supabaseAdmin
       .from('tenants')
       .select('name')
@@ -903,12 +919,22 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
     }
   }
 
+  if (resolvedActionId === 'navigate') {
+    const dashboardAlias = /\b(dashboard|main\s+page|overview|home|main\s+dashboard)\b/i.test(text.trim());
+    if (dashboardAlias) {
+      responsePayload = { ...payloadOverrides, href: '/client/dashboard' };
+    }
+  }
+
   const data: ClientCommandResponse = {
     success: true,
     actionType: systemType,
     targetIds: [],
     payload: responsePayload,
-    summary: `Parsed intent: ${systemType}`,
+    summary:
+      systemType === 'SYSTEM_NAVIGATE' && responsePayload.href
+        ? PAGE_WELCOME_GREETINGS[responsePayload.href as string] ?? `Navigating to ${responsePayload.href as string}.`
+        : `Parsed intent: ${systemType}`,
   };
   const response = NextResponse.json(data);
   await tryPersistCommand(data, systemType, responsePayload);
@@ -1234,6 +1260,16 @@ async function runSemanticFallback(
           toolCall: { name: functionCall.name, ok: result.ok, detail: result.detail ?? {} },
         };
       }
+    }
+
+    // Forward LLM payload for structured client voice actions so executors
+    // receive the extracted fields (assistantName, content, confirm, etc.).
+    if (
+      actionType === 'SYSTEM_UPDATE_PERSONA' ||
+      actionType === 'SYSTEM_MANAGE_MEMORY' ||
+      actionType === 'SYSTEM_PUBLISH_DRAFT'
+    ) {
+      responsePayload = { ...(llmParsed.payload as Record<string, unknown> ?? {}) };
     }
 
     const summary =
