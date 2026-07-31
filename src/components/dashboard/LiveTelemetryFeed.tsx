@@ -90,8 +90,9 @@ export default function LiveTelemetryFeed({
       setLastSyncedAt(new Date());
     } catch (err) {
       if (controller.signal.aborted) return;
-      console.error('[LiveTelemetryFeed] poll failed:', err);
-      setError(err instanceof Error ? err.message : 'Failed to load telemetry');
+      const message = err instanceof Error ? err.message : 'Failed to load telemetry';
+      console.error('[LiveTelemetryFeed] poll failed:', message, err);
+      setError(message);
     } finally {
       if (!controller.signal.aborted) setIsLoading(false);
     }

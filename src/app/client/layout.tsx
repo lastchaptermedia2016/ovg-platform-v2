@@ -36,13 +36,12 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
 
         if (error) {
           console.error('[ClientLayout] Failed to resolve client slug:', error.message);
-          throw error;
+          return; // Exit early — clientProfile stays null, UI shows error state
         }
 
         if (!slugResult) {
-          const err = new Error('Reseller slug is missing - cannot initialize client profile');
-          console.error('[ClientLayout]', err.message);
-          throw err;
+          console.error('[ClientLayout] Reseller slug is missing - cannot initialize client profile');
+          return; // Exit early — clientProfile stays null, UI shows error state
         }
 
         const profile = {
@@ -59,17 +58,24 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
         try {
           const { data: userResellerData } = await supabase
             .from('user_resellers')
-            .select('reseller_id')
+            .select('reseller_id, active_tenant_id')
             .eq('user_id', session.user.id)
             .maybeSingle();
-          if (userResellerData?.reseller_id) {
-            const { data: tenantData } = await supabase
+
+          if (userResellerData?.active_tenant_id) {
+            // Multi-tenant: use the explicitly selected active tenant
+            tenantId = userResellerData.active_tenant_id;
+          } else if (userResellerData?.reseller_id) {
+            // Fallback: use the first tenant for this reseller
+            const { data: tenantsData } = await supabase
               .from('tenants')
               .select('id')
               .eq('reseller_id', userResellerData.reseller_id)
-              .limit(1)
-              .maybeSingle();
-            tenantId = tenantData?.id ?? '';
+              .order('created_at', { ascending: true });
+
+            if (tenantsData && tenantsData.length > 0) {
+              tenantId = tenantsData[0].id;
+            }
           }
         } catch {
           tenantId = '';

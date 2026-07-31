@@ -4,7 +4,7 @@ import { createContext, useContext, useState, useCallback, useRef, type ReactNod
 import type { CommandCapability } from '@/core/ai/system-capabilities';
 import type { CommandIntent } from '@/lib/hooks/useCommandListener';
 import { usePathname } from 'next/navigation';
-import { useZeederVoice } from '@/hooks/useZeederVoice';
+import { useVoiceCommand } from '@/hooks/use-voice-command';
 
 /**
  * HannahContext — Global AI Assistant State Provider
@@ -137,10 +137,10 @@ export function HannahProvider({ children, resellerSlug, tenantContext }: { chil
     }
   }, [activeRoute]);
 
-  const voice = useZeederVoice({ tenantId: tenantContext?.tenantId, resellerSlug });
+  const voice = useVoiceCommand({ resellerId: resellerSlug, tenantContext });
 
   const startListening = voice.startListening;
-  const stopListeningAndProcess = voice.stopListening;
+  const stopListeningAndProcess = voice.stopListeningAndProcess;
   const abortRecording = voice.abortRecording;
   const resetState = voice.resetState;
 
@@ -162,7 +162,7 @@ export function HannahProvider({ children, resellerSlug, tenantContext }: { chil
     clearConversationHistory,
     registerActionDispatcher,
     dispatchAction,
-    isListening: voice.isListening,
+    isListening: voice.isRecording,
     isProcessing: voice.isProcessing,
     isSpeaking: voice.isSpeaking,
     transcript: voice.transcript,

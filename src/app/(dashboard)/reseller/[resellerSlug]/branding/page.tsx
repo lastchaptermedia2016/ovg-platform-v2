@@ -10,6 +10,7 @@ import type { BookingProviderType } from '@/interfaces/booking-provider.interfac
 import type { Client } from '@/types';
 import { useHannah } from '@/contexts/HannahContext';
 import type { CommandCapability } from '@/core/ai/system-capabilities';
+import { createClient } from '@/lib/supabase/client';
 
 interface TenantRecord {
   id: string;
@@ -238,6 +239,26 @@ export default function ResellerBrandingPage() {
     router.push(`/reseller/${resellerSlug}/branding?client=${clientId}`);
     console.log("OVG-PLATFORM-V2: Client switched to", clientId);
   }, [resellerSlug, router]);
+
+  // Persist active tenant selection for multi-tenant scoping
+  useEffect(() => {
+    if (!selectedClientId) return;
+
+    const supabase = createClient();
+    const persistActiveTenant = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      await supabase
+        .from('user_resellers')
+        .update({ active_tenant_id: selectedClientId })
+        .eq('user_id', user.id);
+    };
+
+    persistActiveTenant().catch((err) => {
+      console.warn('[ResellerBrandingPage] Failed to persist active_tenant_id:', err);
+    });
+  }, [selectedClientId]);
 
   if (isLoading) {
     return (
