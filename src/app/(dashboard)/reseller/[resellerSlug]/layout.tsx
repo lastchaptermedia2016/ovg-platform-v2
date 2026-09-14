@@ -3,10 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { BrandingFooter } from "@/components/reseller/BrandingFooter";
-import { HannahProvider } from "@/contexts/HannahContext";
-import { CommandDeckProvider } from "@/contexts/CommandDeckContext";
-import { CommandDeckPortal } from "@/components/hannah/CommandDeckPortal";
-import { GlobalPTTListener } from "@/components/reseller/GlobalPTTListener";
+import { ResellerLayoutClient } from "./layout-client";
 
 // Production Excellence: Critical Security - Server-side Authorization Check
 async function verifyResellerAccess(resellerSlug: string) {
@@ -170,26 +167,22 @@ export default async function ResellerLayout({
         }}
       />
 
-{/* Dashboard Spine */}
-       <div className="w-full flex flex-col items-center overflow-x-hidden relative min-h-screen">
-          <div className="relative z-10 flex flex-col w-full">
-            {/* Main Content - Page handles its own header */}
-            <main className="w-full">
-              <CommandDeckProvider>
-                <HannahProvider resellerSlug={resellerSlug}>
-                  <GlobalPTTListener />
-                  <CommandDeckPortal />
-                  {children}
-                </HannahProvider>
-              </CommandDeckProvider>
-            </main>
+      {/* Dashboard Spine */}
+      <div className="w-full flex flex-col items-center overflow-x-hidden relative min-h-screen">
+        <div className="relative z-10 flex flex-col w-full">
+          {/* Main Content - Delegated to client boundary */}
+          <main className="w-full">
+            <ResellerLayoutClient resellerSlug={resellerSlug}>
+              {children}
+            </ResellerLayoutClient>
+          </main>
 
-            {/* Footer */}
-            <div className="w-full flex justify-center">
-              <BrandingFooter />
-            </div>
+          {/* Footer */}
+          <div className="w-full flex justify-center">
+            <BrandingFooter />
           </div>
         </div>
+      </div>
     </>
   );
 }
