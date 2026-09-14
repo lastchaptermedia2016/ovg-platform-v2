@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { classifyAuthError } from "@/lib/auth/auth-errors";
 import Link from "next/link";
 
 type AuthMode = 'signin' | 'signup';
@@ -103,8 +104,8 @@ export default function ClientAuthCard() {
 
         router.replace("/client/dashboard");
         router.refresh();
-      } catch {
-        setError("An unexpected error occurred. Please try again.");
+      } catch (err) {
+        setError(classifyAuthError(err).message);
         setIsSubmitting(false);
       }
     },

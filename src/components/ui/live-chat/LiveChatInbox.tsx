@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { formatMessageContent } from '@/utils/format-chat-message';
 import type { ChatMessage, ConversationSummary, LiveChatInboxProps } from './types';
+import { computeReconnectDelay } from '@/lib/chat/reconnect';
 
 const STORAGE_KEY = 'ovg_livechat_expanded';
 
@@ -93,6 +94,7 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
   const flashTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const selectedRef = useRef(selectedConversationId);
   const isUnmountingRef = useRef(false);
+  const isSubscribedRef = useRef(false);
   const isFetchingRef = useRef(false);
 
   const supabase = useMemo(() => createClient(), []);
@@ -307,16 +309,26 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
     const attemptReconnect = () => {
       if (reconnectAttemptRef.current >= RECONNECT_MAX_ATTEMPTS) {
         isReconnectingRef.current = false;
+        setError('Live chat connection lost. Retrying…');
         console.warn('[LiveChat] reconnect exhausted');
         return;
       }
       isReconnectingRef.current = true;
       const attempt = reconnectAttemptRef.current;
-      const delay = Math.min(RECONNECT_BASE_DELAY * 2 ** attempt, RECONNECT_MAX_DELAY);
+      const delay = computeReconnectDelay(
+        attempt,
+        RECONNECT_BASE_DELAY,
+        RECONNECT_MAX_DELAY,
+      );
       console.info(`[LiveChat] reconnect attempt ${attempt + 1} in ${delay}ms`);
       reconnectTimerRef.current = setTimeout(async () => {
         reconnectAttemptRef.current += 1;
         try {
+          // A heartbeat timeout means the underlying Realtime (Phoenix) socket
+          // is dead — re-subscribing a new channel onto it won't recover.
+          // Force the socket to reset first; the new channel subscription will
+          // trigger a fresh connect.
+          supabase.realtime.disconnect();
           await subscribeToChatMessages();
           isReconnectingRef.current = false;
         } catch {
@@ -440,16 +452,35 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
             }
           },
         );
-      channel.subscribe((status, err) => {
+       channel.subscribe((status, err) => {
           if (status === 'SUBSCRIBED') {
             reconnectAttemptRef.current = 0;
+            isSubscribedRef.current = true;
+            setError(null);
             console.info(`[LiveChat] subscription active: ${channelName}`);
           } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            isSubscribedRef.current = false;
+
+            // Safely check for normal teardown signals
+            const errMessage = err instanceof Error ? err.message : String(err || '');
+            const isExpectedTeardown =
+              isUnmountingRef.current ||
+              errMessage.includes('1005') ||
+              errMessage.includes('socket closed') ||
+              errMessage.includes('transport failure');
+
+            // Skip logging and reconnects for normal closures/unmounts
+            if (isExpectedTeardown) {
+              return;
+            }
+
             console.error('[LiveChat] subscription error:', status, err);
-            if (!isReconnectingRef.current && !isUnmountingRef.current) {
+
+            if (!isReconnectingRef.current) {
               attemptReconnect();
             }
           } else if (status === 'CLOSED') {
+            isSubscribedRef.current = false;
             console.warn('[LiveChat] subscription closed:', channelName);
             if (!isReconnectingRef.current && !isUnmountingRef.current) {
               attemptReconnect();
@@ -478,6 +509,22 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
 
     init();
 
+    // Re-establish the realtime subscription when the tab regains focus. While
+    // backgrounded the network may recover (e.g. after a sleep) but the
+    // reconnect loop may have exhausted its attempt budget — only act when the
+    // channel is actually down to avoid reconnecting a healthy connection.
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (isSubscribedRef.current || isUnmountingRef.current) return;
+      if (reconnectAttemptRef.current >= RECONNECT_MAX_ATTEMPTS) {
+        reconnectAttemptRef.current = 0;
+      }
+      if (!isReconnectingRef.current) {
+        attemptReconnect();
+      }
+    };
+    window.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
       loadedRef.current = false;
       isUnmountingRef.current = true;
@@ -486,11 +533,13 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
       }
+      window.removeEventListener('visibilitychange', handleVisibilityChange);
       if (channelRef.current) {
         try { channelRef.current.unsubscribe(); } catch {}
         try { supabase.removeChannel(channelRef.current); } catch {}
         channelRef.current = null;
       }
+      isSubscribedRef.current = false;
     };
   }, [tenantId, accessToken, supabase]);
 
