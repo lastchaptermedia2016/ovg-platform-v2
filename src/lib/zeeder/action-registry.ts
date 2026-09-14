@@ -25,6 +25,10 @@
  */
 export type ZeederActionId =
   | 'updateBranding'
+  | 'ai_update_branding'
+  | 'ai_update_persona'
+  | 'ai_manage_memory'
+  | 'ai_publish_studio_draft'
   | 'toggleAgent'
   | 'fetchTelemetry'
   | 'navigate';
@@ -193,6 +197,13 @@ export const zeederActionRegistry = new Map<ZeederActionId, ZeederActionEntry>([
             };
           }
 
+          try {
+            const { emitBrandingSync } = await import('@/lib/ai/tools/client-tool-executors');
+            emitBrandingSync(tenantId, studioConfig);
+          } catch {
+            // Non-fatal — postgres_changes listener will catch up
+          }
+
           return {
             success: true,
             data: { applied: result.success },
@@ -204,6 +215,112 @@ export const zeederActionRegistry = new Map<ZeederActionId, ZeederActionEntry>([
             success: false,
             error: msg,
           };
+        }
+      },
+    },
+  ],
+  [
+    'ai_update_branding',
+    {
+      id: 'ai_update_branding',
+      description: 'Update widget branding via structured AI tool (mirrors BrandingStudio save).',
+      handler: async (_payload: Record<string, unknown>): Promise<ZeederActionResult> => {
+        try {
+          const { executeAiUpdateBranding } = await import('@/lib/ai/tools/client-tool-executors');
+          const result = await executeAiUpdateBranding({
+            primaryColor: _payload.primaryColor as string | undefined,
+            accentColor: _payload.accentColor as string | undefined,
+            brandName: _payload.brandName as string | undefined,
+            widgetPosition: _payload.widgetPosition as 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left' | undefined,
+            mode: _payload.mode as 'sales' | 'concierge' | undefined,
+          });
+          return {
+            success: result.success,
+            greeting: result.message,
+            data: result.data,
+            error: result.error,
+          };
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'Failed to update branding via voice tool.';
+          return { success: false, error: msg };
+        }
+      },
+    },
+  ],
+  [
+    'ai_update_persona',
+    {
+      id: 'ai_update_persona',
+      description: 'Update AI persona configuration via structured AI tool (mirrors Persona page save).',
+      handler: async (_payload: Record<string, unknown>): Promise<ZeederActionResult> => {
+        try {
+          const { executeAiUpdatePersona } = await import('@/lib/ai/tools/client-tool-executors');
+          const result = await executeAiUpdatePersona({
+            assistantName: _payload.assistantName as string | undefined,
+            greetingMessage: _payload.greetingMessage as string | undefined,
+            voiceId: _payload.voiceId as string | undefined,
+            systemInstructions: _payload.systemInstructions as string | undefined,
+          });
+          return {
+            success: result.success,
+            greeting: result.message,
+            data: result.data,
+            error: result.error,
+          };
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'Failed to update persona via voice tool.';
+          return { success: false, error: msg };
+        }
+      },
+    },
+  ],
+  [
+    'ai_manage_memory',
+    {
+      id: 'ai_manage_memory',
+      description: 'Manage knowledge-base memory entries via structured AI tool (create, delete, search).',
+      handler: async (_payload: Record<string, unknown>): Promise<ZeederActionResult> => {
+        try {
+          const { executeAiManageMemory } = await import('@/lib/ai/tools/client-tool-executors');
+          const result = await executeAiManageMemory({
+            action: (_payload.action as 'create' | 'delete' | 'search' | undefined) ?? 'search',
+            content: _payload.content as string | undefined,
+            memoryId: _payload.memoryId as string | undefined,
+            category: _payload.category as string | undefined,
+          });
+          return {
+            success: result.success,
+            greeting: result.message,
+            data: result.data,
+            error: result.error,
+          };
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'Failed to manage memory via voice tool.';
+          return { success: false, error: msg };
+        }
+      },
+    },
+  ],
+  [
+    'ai_publish_studio_draft',
+    {
+      id: 'ai_publish_studio_draft',
+      description: 'Commit the current studio draft to the live tenant configuration.',
+      handler: async (_payload: Record<string, unknown>): Promise<ZeederActionResult> => {
+        try {
+          const { executeAiPublishStudioDraft } = await import('@/lib/ai/tools/client-tool-executors');
+          const result = await executeAiPublishStudioDraft({
+            confirm: (_payload.confirm as boolean | undefined) ?? false,
+          });
+          return {
+            success: result.success,
+            greeting: result.message,
+            data: result.data,
+            error: result.error,
+          };
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : 'Failed to publish studio draft via voice tool.';
+          return { success: false, error: msg };
         }
       },
     },
