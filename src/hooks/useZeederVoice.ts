@@ -82,6 +82,15 @@ const ACTION_TYPE_TO_ZEEDER_ID: Record<string, ZeederActionId | null> = {
 /** Hard ceiling on a single push-to-talk capture (15s). */
 const MAX_RECORDING_MS = 15_000;
 
+/**
+ * Minimum valid audio blob size (1 KB).
+ *
+ * WebM container headers alone occupy ~100-200 bytes without any audio frames.
+ * Blobs smaller than this threshold indicate an accidental tap or noise burst
+ * and are skipped to prevent unnecessary transcoding failures.
+ */
+const MIN_AUDIO_BLOB_BYTES = 1024;
+
 // ──────────────────────────── Helpers ────────────────────────────────────
 
 /**
@@ -196,6 +205,7 @@ export function useZeederVoice({ tenantId, resellerSlug }: { tenantId?: string; 
   const recognitionRef = useRef<ReturnType<typeof getSpeechRecognition> extends null ? never : InstanceType<NonNullable<ReturnType<typeof getSpeechRecognition>>> | null>(null);
   const maxDurationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const transcriptRef = useRef('');
+  const recordingStartTimeRef = useRef<number | null>(null);
 
   // ── Cleanup on unmount ───────────────────────────────────────────
   useEffect(() => {
@@ -305,6 +315,7 @@ export function useZeederVoice({ tenantId, resellerSlug }: { tenantId?: string; 
     transcriptRef.current = '';
     setSttFallback(false);
     chunksRef.current = [];
+    recordingStartTimeRef.current = Date.now();
 
     const startCapture = async () => {
       let stream: MediaStream;
@@ -332,21 +343,87 @@ export function useZeederVoice({ tenantId, resellerSlug }: { tenantId?: string; 
       };
 
       recorder.onstop = async () => {
-        teardownRecording();
         setIsListening(false);
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' });
-        if (blob.size === 0) {
-          console.warn('[ZEEDER-VOICE] Empty recording, skipping.');
+        
+        // Guard 1: empty blob
+        if (!blob || blob.size === 0) {
+          console.warn('[ZEEDER-VOICE] Skipping transcode: recorded blob is empty.');
+          teardownRecording();
           return;
         }
+        
+        // Guard 2: combined duration + blob size check (prevents accidental taps)
+        const durationMs = recordingStartTimeRef.current ? Date.now() - recordingStartTimeRef.current : 0;
+        const MIN_DURATION_MS = 400; // Ignore holds under 400ms
+        
+        if (durationMs < MIN_DURATION_MS || blob.size < MIN_AUDIO_BLOB_BYTES) {
+          console.warn(
+            `[ZEEDER-VOICE] Ignoring short audio clip (${durationMs}ms, ${blob.size} bytes). ` +
+            `Minimum: ${MIN_DURATION_MS}ms duration and ${MIN_AUDIO_BLOB_BYTES} bytes. ` +
+            'Likely an accidental tap or noise burst. Hold the button longer for a valid command.'
+          );
+          teardownRecording();
+          return;
+        }
+        
+        console.log('[ZEEDER-VOICE] Recording completed:', {
+          durationMs,
+          chunks: chunksRef.current.length,
+          totalSize: blob.size,
+          mimeType: recorder.mimeType,
+          blobType: blob.type,
+        });
+        
         try {
+          console.log('[ZEEDER-VOICE] Transcoding blob', { size: blob.size, type: blob.type });
           const text = await transcribeBlob(blob);
           transcriptRef.current = text;
           setTranscript(text);
           if (text) handleVoiceCommandRef.current(text);
         } catch (err) {
-          console.warn('[ZEEDER-VOICE] Whisper STT failed — falling back to Web Speech.', err);
+          // Safely extract error details from any error type
+          let errorInfo: Record<string, unknown> = {};
+          
+          if (err instanceof Error) {
+            errorInfo = {
+              errorType: err.name,
+              errorMessage: err.message,
+              errorStack: err.stack?.split('\n').slice(0, 2).join(' '),
+            };
+          } else if (typeof err === 'object' && err !== null) {
+            const errObj = err as Record<string, unknown>;
+            const objMessage = errObj.message ?? errObj.toString?.() ?? 'Unknown';
+            errorInfo = {
+              errorType: errObj.constructor?.name ?? 'Unknown',
+              errorMessage: objMessage,
+              errorName: errObj.name,
+            };
+          } else if (typeof err === 'string') {
+            errorInfo = {
+              errorType: 'string',
+              errorMessage: err,
+            };
+          } else {
+            errorInfo = {
+              errorType: typeof err,
+              errorMessage: String(err),
+            };
+          }
+          
+          console.error('[ZEEDER-VOICE] Whisper STT failed — falling back to Web Speech.', {
+            ...errorInfo,
+            blobSize: blob.size,
+            blobType: blob.type,
+            mimeType: recorder.mimeType,
+          });
+          
+          // Clear any partial transcript before fallback
+          setTranscript('');
+          transcriptRef.current = '';
           runWebSpeechFallback();
+        } finally {
+          teardownRecording();
         }
       };
 
@@ -724,7 +801,15 @@ export function useZeederVoice({ tenantId, resellerSlug }: { tenantId?: string; 
 
   const { isListening: globalIsListening } = useVoiceState();
 
+  // Only sync global isListening to local if we're not in an active recording.
+  // This allows button-based PTT to work independently while still supporting
+  // keyboard shortcuts for starting (when idle).
   useEffect(() => {
+    // If we're already locally listening (button hold), don't let global state override it
+    if (isListening) {
+      return;
+    }
+
     if (globalIsListening) {
       console.log('[AudioEngine] Global isListening is TRUE. Initializing media pipeline capture...');
       startListening();
@@ -732,7 +817,7 @@ export function useZeederVoice({ tenantId, resellerSlug }: { tenantId?: string; 
       console.log('[AudioEngine] Global isListening is FALSE. Tearing down audio channels...');
       stopListening();
     }
-  }, [globalIsListening, startListening, stopListening]);
+  }, [globalIsListening, startListening, stopListening, isListening]);
 
   const clearError = useCallback(() => {
     setState(prev => ({ ...prev, error: null }));

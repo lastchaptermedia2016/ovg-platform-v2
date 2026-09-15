@@ -24,16 +24,37 @@ const WAV_HEADER_BYTES = 44;
 const BYTES_PER_SAMPLE = 2; // 16-bit
 
 /**
+ * Minimum valid audio blob size (1 KB).
+ * WebM container headers alone occupy ~100-200 bytes. Blobs smaller than
+ * this threshold indicate an accidental tap and should not be transcoded.
+ */
+const MIN_AUDIO_BLOB_BYTES = 1024;
+
+/**
  * Decode any audio container the browser supports (webm, mp4, ogg, …)
  * into an AudioBuffer using the native decoder.
+ *
+ * @throws Error if the audio format is not supported or the data is corrupted
  */
 export async function decodeAudioBlob(
   blob: Blob,
   audioContext: AudioContext,
 ): Promise<AudioBuffer> {
-  const arrayBuffer = await blob.arrayBuffer();
-  // decodeAudioData mutates the ArrayBuffer in some engines — clone to be safe.
-  return audioContext.decodeAudioData(arrayBuffer.slice(0));
+  if (blob.size === 0) {
+    throw new Error('Cannot decode empty audio blob');
+  }
+
+  try {
+    const arrayBuffer = await blob.arrayBuffer();
+    // decodeAudioData mutates the ArrayBuffer in some engines — clone to be safe.
+    return await audioContext.decodeAudioData(arrayBuffer.slice(0));
+  } catch (err) {
+    // Enhance error message with blob metadata for debugging
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Failed to decode audio (${blob.type || 'unknown'}, ${blob.size} bytes): ${errorMsg}`
+    );
+  }
 }
 
 /**
@@ -125,21 +146,95 @@ export function encodeAsWav(audioBuffer: AudioBuffer): Blob {
  * Creates a transient AudioContext for the decode step and disposes
  * it cleanly afterwards. Use this when the caller doesn't already
  * hold an AudioContext reference.
+ *
+ * @throws Error if audio decoding fails (e.g., unsupported codec, corrupted data)
+ */
+/**
+ * Safely serialize error information for logging, handling all error types.
+ * Converts DOMException, Error, and other objects to loggable format.
+ */
+function serializeError(err: unknown): Record<string, unknown> {
+  if (err instanceof Error) {
+    return {
+      message: err.message,
+      name: err.name,
+      stack: err.stack?.split('\n').slice(0, 3).join('\n'), // First 3 stack frames
+    };
+  }
+  
+  // Handle DOMException and other objects with name/message properties
+  if (typeof err === 'object' && err !== null) {
+    const obj = err as Record<string, unknown>;
+    return {
+      type: obj.constructor?.name ?? 'Unknown',
+      message: obj.message ?? obj.toString?.(),
+      name: obj.name,
+      code: (obj as { code?: unknown }).code,
+      details: Object.keys(obj)
+        .filter(k => !['message', 'name', 'stack', 'constructor'].includes(k))
+        .slice(0, 3) // Limit keys to avoid spam
+        .reduce((acc, k) => {
+          acc[k] = obj[k];
+          return acc;
+        }, {} as Record<string, unknown>),
+    };
+  }
+  
+  return {
+    type: typeof err,
+    value: String(err),
+  };
+}
+
+/**
+ * One-shot helper: decode → resample → encode in a single call.
+ * Creates a transient AudioContext for the decode step and disposes
+ * it cleanly afterwards. Use this when the caller doesn't already
+ * hold an AudioContext reference.
+ *
+ * @throws Error if audio decoding fails (e.g., unsupported codec, corrupted data)
  */
 export async function transcodeBlobToWav(blob: Blob): Promise<Blob> {
   // Use a short-lived AudioContext. We can't reuse the TTS one because
   // it's likely in 'running' state and we want a clean decode pipeline.
   const decodeCtx = new AudioContext();
   try {
+    // Guard: minimum blob size (prevent header-only WebM containers from being decoded)
+    if (!blob || blob.size < MIN_AUDIO_BLOB_BYTES) {
+      throw new Error(
+        `Audio blob too small to contain valid audio frames (${blob?.size || 0} bytes < ${MIN_AUDIO_BLOB_BYTES} bytes)`
+      );
+    }
+
     const decoded = await decodeAudioBlob(blob, decodeCtx);
+    
+    // Validate decoded audio has content
+    if (!decoded || decoded.duration === 0) {
+      throw new Error('Decoded audio has zero duration');
+    }
+
     const resampled = await resampleToWhisperFormat(decoded);
     return encodeAsWav(resampled);
+  } catch (err) {
+    // Provide detailed error info for debugging transcoding failures
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error('[TranscodeToWav] Transcoding failed:', {
+      blobSize: blob.size,
+      blobType: blob.type,
+      error: errorMessage,
+      errorDetails: serializeError(err),
+    });
+    throw err;
   } finally {
     // Close the transient context to release hardware resources.
     // Per .clinerules: Lifecycle Cleanup is separate from Hardware Cleanup,
     // and an AudioContext is a lifecycle resource we own for this op.
     if (decodeCtx.state !== 'closed') {
-      await decodeCtx.close();
+      try {
+        await decodeCtx.close();
+      } catch {
+        // Closing can fail in some edge cases, but we still want to continue
+      }
     }
   }
 }

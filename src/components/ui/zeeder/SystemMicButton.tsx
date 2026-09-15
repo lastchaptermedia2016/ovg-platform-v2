@@ -119,13 +119,43 @@ export default function SystemMicButton({ onTranscriptChange, onRecordingStateCh
 
   const iconColor = isListening ? 'text-black' : 'text-[color:var(--w-accent,#FFD700)]';
 
+  const handlePointerDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    (e.currentTarget as HTMLButtonElement).setPointerCapture(e.pointerId);
+    startListening();
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    try {
+      if ((e.currentTarget as HTMLButtonElement).hasPointerCapture(e.pointerId)) {
+        (e.currentTarget as HTMLButtonElement).releasePointerCapture(e.pointerId);
+      }
+    } catch {
+      // Some browsers may throw if pointer was already released
+    }
+    stopListening();
+  };
+
+  const handlePointerCancel = (e: React.PointerEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    try {
+      if ((e.currentTarget as HTMLButtonElement).hasPointerCapture(e.pointerId)) {
+        (e.currentTarget as HTMLButtonElement).releasePointerCapture(e.pointerId);
+      }
+    } catch {
+      // Noop
+    }
+    stopListening();
+  };
+
   return (
     <div className="relative flex flex-col items-center">
       <button
         type="button"
-        onMouseDown={startListening}
-        onMouseUp={stopListening}
-        onMouseLeave={stopListening}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerCancel}
         onTouchStart={startListening}
         onTouchEnd={stopListening}
         disabled={isExecuting}
@@ -151,7 +181,7 @@ export default function SystemMicButton({ onTranscriptChange, onRecordingStateCh
           cursor-pointer select-none
           font-agrandir
         `}
-        style={isListening ? { backgroundColor: 'var(--w-accent, #FFD700)' } : undefined}
+        style={{ touchAction: 'none', ...(isListening ? { backgroundColor: 'var(--w-accent, #FFD700)' } : {}) }}
       >
         {/* ── Mic Icon ─────────────────────────────────────────────── */}
         <svg
