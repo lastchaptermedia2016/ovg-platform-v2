@@ -478,6 +478,11 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
     parsed = CommandRequestSchema.parse(raw);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Invalid request parameters.';
+    console.error('[CLIENT_PROCESS_COMMAND] Schema validation failed:', {
+      message,
+      rawBody: JSON.stringify(raw).substring(0, 200),
+      error: err,
+    });
     return corsJson(
       {
         success: false,
@@ -1168,6 +1173,7 @@ async function runSemanticFallback(
             seen.add(key);
             return true;
           });
+        console.log('[KB-RAG-TRACE] KB entries after dedup:', knowledgeEntries.map(e => ({ title: e.title, contentLen: e.content.length, category: e.category })));
       }
     }
 
@@ -1182,6 +1188,19 @@ async function runSemanticFallback(
       isAnon ? 'public' : 'client',
       knowledgeEntries,
     );
+
+    // ── Log system prompt for debugging ─────────────────────────────────
+    console.log('[KB-RAG-TRACE] System prompt length:', hydratedSystemPrompt.length, 'KB entries:', knowledgeEntries.length);
+    
+    // Check if KB section is actually in the prompt
+    const kbSectionFound = hydratedSystemPrompt.includes('=== CUSTOM PRODUCT & SERVICE CATALOG ===');
+    console.log('[KB-RAG-TRACE] KB section in prompt?', kbSectionFound);
+    if (kbSectionFound) {
+      const kbStart = hydratedSystemPrompt.indexOf('=== CUSTOM PRODUCT & SERVICE CATALOG ===');
+      const kbEnd = hydratedSystemPrompt.indexOf('===', kbStart + 50);
+      const kbSection = hydratedSystemPrompt.substring(kbStart, kbEnd > 0 ? Math.min(kbEnd, kbStart + 600) : kbStart + 600);
+      console.log('[KB-RAG-TRACE] KB section content:', kbSection);
+    }
 
     // ── Dynamic integration tool injection ──────────────────────────
     // Read the client's saved `widget_config.integrations` and expose only the
@@ -1213,7 +1232,7 @@ async function runSemanticFallback(
       : `${hydratedSystemPrompt}${JSON_RESPONSE_DIRECTIVE}`;
 
     const completion = await groq.chat.completions.create({
-      model: 'llama-3.1-70b-versatile',
+      model: 'openai/gpt-oss-120b',
       temperature: 0.7,
       max_tokens: 300,
       response_format: { type: 'json_object' },
@@ -1224,6 +1243,9 @@ async function runSemanticFallback(
     });
 
     const content = completion.choices[0]?.message?.content;
+    console.log('[KB-RAG-TRACE] Groq call completed. Response status:', completion.usage?.prompt_tokens, 'output tokens:', completion.usage?.completion_tokens);
+    console.log('[KB-RAG-TRACE] LLM raw response:', content?.substring(0, 300));
+    console.log('[KB-RAG-TRACE] Query was:', text, '| KB entries available:', knowledgeEntries.map(e => e.title).join(', '));
     let llmParsed: { actionType?: string; summary?: string; payload?: unknown } = {};
     if (content) {
       try {
@@ -1245,6 +1267,8 @@ async function runSemanticFallback(
       : allowedActions(isAnon).has(rawAction)
         ? rawAction
         : 'CLIENT_NOP';
+
+    console.log('[KB-RAG-TRACE] LLM parsed actionType:', llmParsed.actionType, '| Final actionType:', actionType, '| Summary:', llmParsed.summary?.substring(0, 100));
 
     const detectedPersonaMode = extractPersonaMode(text);
     let responsePayload = capabilityPayload;

@@ -691,6 +691,7 @@ const ChatWidget = ({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             text: userInputText,
+            tenantId,
             testMode: true,
             draftBrandName: liveDraft?.brandName,
             draftVibe: liveDraft?.systemPrompt,
@@ -703,7 +704,21 @@ const ChatWidget = ({
           }),
         });
 
-        if (!response.ok) throw new Error(`Process failed: ${response.status}`);
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => null);
+          console.error('[ChatWidget-Preview] Request failed:', {
+            status: response.status,
+            statusText: response.statusText,
+            errorData,
+            requestBody: { 
+              text: userInputText, 
+              tenantId,
+              testMode: true,
+              context: { surface: 'chat-widget-embed', clientMemories },
+            },
+          });
+          throw new Error(`Process failed: ${response.status}`);
+        }
 
         const data = await response.json();
         const aiText = data.response || data.summary || "I'm here to help.";
@@ -743,7 +758,16 @@ const ChatWidget = ({
         }),
       });
 
-      if (!response.ok) throw new Error(`Process failed: ${response.status}`);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        console.error('[ChatWidget-Main] Request failed:', {
+          status: response.status,
+          statusText: response.statusText,
+          errorData,
+          requestBody: { text: userInputText, tenantId, conversationId, surface: 'chat-widget-embed' },
+        });
+        throw new Error(`Process failed: ${response.status}`);
+      }
 
       const data = await response.json();
       const aiText = data.response || data.summary || "I'm here to help.";

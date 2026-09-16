@@ -101,15 +101,36 @@ export const PLATFORM_DEFINITIONS: DefinitionEntry[] = [
 ];
 
 /**
+ * Topic bypass guard: queries asking about business-specific topics should
+ * bypass static definitions and route to Knowledge Base (RAG) for accurate,
+ * tenant-specific information.
+ *
+ * Matches: "products", "services", "pricing", "plans", "features", "specs",
+ *          "cost", "buy", "support", "contact"
+ */
+const TOPIC_BYPASS_REGEX = /\b(products?|services?|pricing|plans?|features?|specs?|cost|buy|support|contact)\b/i;
+
+/**
  * Lookup a definition by query text. Returns the best-matching definition
  * entry or null if no match found. Matching is case-insensitive, strips
  * trailing punctuation, and prioritizes longer, more specific keywords to
  * avoid false positives (e.g., "widget body" matches before just "widget").
  *
+ * **Topic Bypass:** Queries mentioning business topics (products, pricing,
+ * services, etc.) return null to bypass Tier 1 definitions and route to
+ * Knowledge Base (RAG) retrieval for tenant-specific information.
+ *
  * @param queryText - The user's natural-language definition query
  * @returns The matching DefinitionEntry or null
  */
 export function lookupDefinition(queryText: string): DefinitionEntry | null {
+  // ─── Topic Bypass Guard ─────────────────────────────────────────────────
+  // If the query mentions business topics, bypass static definitions to allow
+  // Knowledge Base (RAG) retrieval with tenant-specific information.
+  if (TOPIC_BYPASS_REGEX.test(queryText)) {
+    return null;
+  }
+
   // Normalize: lowercase, strip punctuation, trim whitespace
   const normalized = queryText
     .toLowerCase()
