@@ -4,9 +4,10 @@ import type { ResellerRecord } from '@/types/database'
 
 export { ResellerRecord }
 
-function StatusBadge({ isActive }: { isActive: boolean }) {
-  const color = isActive ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'
-  return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${color}`}>{isActive ? 'Active' : 'Inactive'}</span>
+function StatusBadge({ isActive }: { isActive: boolean | null }) {
+  const active = isActive ?? true // Default to active if null
+  const color = active ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'
+  return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${color}`}>{active ? 'Active' : 'Inactive'}</span>
 }
 
 export default async function TenantRegistryTable() {
@@ -14,7 +15,7 @@ export default async function TenantRegistryTable() {
 
   const { data: resellers, error } = await supabase
     .from('resellers')
-    .select('id, tenant_id, name, owner_email, is_active, created_at, updated_at, branding_colors, branding_assets')
+    .select('id, tenant_id, name, slug, owner_email, is_active, created_at, updated_at, branding_colors, branding_assets')
     .order('created_at', { ascending: false })
 
   if (error) {
@@ -52,7 +53,7 @@ export default async function TenantRegistryTable() {
             {records.map((r) => (
               <tr key={r.id} className="hover:bg-gray-800/40">
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-white">{r.name}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300 font-mono">{r.tenant_id}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300 font-mono">{r.slug}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">{r.owner_email}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300"><StatusBadge isActive={r.is_active} /></td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">{r.stripe_account_id ? 'Connected' : 'Not connected'}</td>

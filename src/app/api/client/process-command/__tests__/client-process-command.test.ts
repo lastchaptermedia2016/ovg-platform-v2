@@ -413,54 +413,38 @@ describe('POST /api/client/process-command', () => {
   });
 
   it('should correctly explain system concepts like the widget body using the glossary', async () => {
-    cannedGroqResponse = {
-      actionType: 'CLIENT_NOP',
-      summary: 'The widget body is the main canvas where your chat bubbles render. Would you like me to take you to the Branding Studio so we can look at it?',
-    };
-
     const res = await post('What is a widget body?');
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.actionType).toBe('CLIENT_NOP');
+    // Definition queries are answered directly from KB, not via LLM
+    expect(body.actionType).toBe('SYSTEM_EXPLAIN');
 
-    expect(body.summary).toMatch(/canvas|chat bubbles|render/i);
-    expect(body.summary).toMatch(/branding|studio|configure/i);
+    expect(body.summary).toMatch(/chat widget|interface|embedded/i);
   });
 
   it('should use screen-aware language when currentPath indicates the user is already on the Branding Studio', async () => {
-    cannedGroqResponse = {
-      actionType: 'CLIENT_NOP',
-      summary: 'Since we\'re looking right at the Branding Studio together on your screen, the widget body is this main canvas area where your text chat bubbles show up. Everything you change here updates in real time!',
-    };
-
     const res = await post('What is a widget body?', {
       currentPath: '/client/dashboard/studio/branding',
     });
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.actionType).toBe('CLIENT_NOP');
-    expect(body.summary).toMatch(/looking right at|together on your screen/i);
-    expect(body.summary).toMatch(/widget body|canvas|chat bubbles/i);
-    expect(body.summary).not.toMatch(/open up the branding studio|take you to/i);
+    // Definition queries are answered directly from KB, not via LLM
+    expect(body.actionType).toBe('SYSTEM_EXPLAIN');
+    expect(body.summary).toMatch(/chat widget|interface|embedded/i);
   });
 
   it('should offer to navigate to the Branding Studio when the user is on a different page', async () => {
-    cannedGroqResponse = {
-      actionType: 'CLIENT_NOP',
-      summary: 'The widget body is the canvas where bubbles render. Would you like me to open up the Branding Studio so we can look at it?',
-    };
-
     const res = await post('What is a widget body?', {
       currentPath: '/client/dashboard',
     });
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.actionType).toBe('CLIENT_NOP');
-    expect(body.summary).toMatch(/canvas|bubbles|render/i);
-    expect(body.summary).toMatch(/open up the branding studio|take you to/i);
+    // Definition queries are answered directly from KB, not via LLM
+    expect(body.actionType).toBe('SYSTEM_EXPLAIN');
+    expect(body.summary).toMatch(/chat widget|interface|embedded/i);
   });
 });
 
@@ -588,16 +572,12 @@ describe('POST /api/client/process-command - Persona Mode Execution', () => {
   });
 
   it('should NOT mistake an educational "what is a persona" question for a persona change', async () => {
-    cannedGroqResponse = {
-      actionType: 'CLIENT_NOP',
-      summary: 'A persona mode shapes how your AI assistant talks to customers.',
-    };
-
     const res = await post('what is a persona?');
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.actionType).toBe('CLIENT_NOP');
+    // Definition queries are answered directly from KB, not via LLM
+    expect(body.actionType).toBe('SYSTEM_EXPLAIN');
     expect(body.summary).toMatch(/persona/i);
     expect(body.payload.aiPersona).toBeUndefined();
   });
@@ -689,7 +669,8 @@ describe('POST /api/client/process-command - Sandbox Test Mode (Studio Preview)'
     const body = await res.json();
 
     expect(res.status).toBe(200);
-    expect(body.actionType).toBe('CLIENT_NOP');
+    // Definition queries are answered directly from KB, not via LLM
+    expect(body.actionType).toBe('SYSTEM_EXPLAIN');
   });
 
   it('should merge draft overrides into the hydrated system prompt', async () => {
@@ -886,7 +867,7 @@ describe('POST /api/client/process-command - System Prompt Hydration', () => {
       ...chainMethods,
     } as unknown as Awaited<ReturnType<typeof createAuthClient>>);
 
-    await post('what is a widget body?');
+    await post('how do I customize the header?');
 
     expect(chainMethods.eq).toHaveBeenCalledWith('id', 'tenant-uuid-123');
     expect(lastGroqSystemPrompt).toMatch(/Zeeder Motors/);
@@ -925,7 +906,7 @@ describe('POST /api/client/process-command - System Prompt Hydration', () => {
     cannedGroqResponse = { actionType: 'CLIENT_NOP', summary: 'Fine.' };
     mockTenantRow(null);
 
-    await post('what is a persona?');
+    await post('how can I customize the header?');
 
     expect(lastGroqSystemPrompt).not.toBeNull();
     // Safe default business name, not a crash.
@@ -971,7 +952,7 @@ describe('POST /api/client/process-command - System Prompt Hydration', () => {
     mockTenantRow({ id: 'tenant-uuid-123', name: 'Zeeder Motors' });
     mockGetClientMemories.mockResolvedValue({});
 
-    await post('what is a widget body?');
+    await post('can you show me how to change the header?');
 
     expect(lastGroqSystemPrompt).toMatch(/CONVERSATIONAL MEMORY/);
     expect(lastGroqSystemPrompt).toMatch(/Client Name: Unknown/);

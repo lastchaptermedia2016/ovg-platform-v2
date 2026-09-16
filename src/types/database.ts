@@ -37,22 +37,37 @@ export const TenantSchema = z.object({
 
 export type Tenant = z.infer<typeof TenantSchema>;
 
+/**
+ * ResellerRecord — Centralized type for reseller records from live database schema.
+ * ⚠️ Aligned with live DB schema per PROJECT_STATUS.md audit (2026-07-20).
+ * 
+ * Live schema uses JSONB for branding state:
+ * - branding_colors: { primary, secondary }
+ * - branding: { primary, logo_url, secondary }
+ * - branding_assets: flexible object (typically { header_url, footer_url })
+ * - settings, metadata, pricing_tiers: flexible JSON containers
+ * 
+ * Note: Legacy scalar columns (branding_color, accent_color, branding_bag, version_stamp)
+ * are ABSENT in live DB and should NOT be referenced.
+ */
 export interface ResellerRecord {
-  id: string;
-  tenant_id: string;
-  name: string;
-  owner_email: string;
-  is_active: boolean;
-  logo_url?: string | null;
-  branding_colors: {
-    primary: string;
-    secondary: string;
-  };
-  branding_assets: {
-    header_url: string | null;
-    footer_url: string | null;
-  };
-  created_at?: string;
-  updated_at?: string;
-  stripe_account_id?: string | null;
+  id: string; // UUID PK
+  tenant_id: string; // UUID, default gen_random_uuid()
+  name: string; // TEXT NOT NULL
+  slug: string; // TEXT NOT NULL UNIQUE (lowercase alphanumeric)
+  owner_email: string; // TEXT UNIQUE (standardized per 20240618 migration)
+  is_active: boolean | null; // BOOLEAN NULL, default true
+  status?: string | null; // TEXT NULL, default 'active'
+  logo_url?: string | null; // TEXT NULL
+  branding_colors?: Record<string, unknown> | null; // JSONB NULL: { primary?, secondary? }
+  branding?: Record<string, unknown> | null; // JSONB NULL: { primary?, logo_url?, secondary? }
+  branding_assets?: Record<string, unknown> | null; // JSONB NULL: flexible structure
+  settings?: Record<string, unknown> | null; // JSONB NULL: flexible structure
+  metadata?: Record<string, unknown> | null; // JSONB NULL: flexible structure
+  pricing_tiers?: Record<string, unknown> | null; // JSONB NULL: flexible structure
+  stripe_account_id?: string | null; // TEXT NULL
+  stripe_connect_id?: string | null; // TEXT NULL
+  stripe_onboarding_complete?: boolean | null; // BOOLEAN NULL, default false
+  created_at?: string | null; // TIMESTAMPTZ NULL
+  updated_at?: string | null; // TIMESTAMPTZ NULL
 }

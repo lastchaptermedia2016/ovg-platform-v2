@@ -39,6 +39,7 @@ import {
   type ToolDefinition,
 } from '@/lib/ai/tools/integration-tools';
 import { executeIntegrationTool } from '@/lib/ai/tools/integration-executors';
+import { lookupDefinition, buildDefinitionResponse } from '@/lib/ai/definition-knowledge-base';
 
 // ──────────────────────────── CORS ─────────────────────────────────────────
 // Public, unauthenticated widget endpoint called from arbitrary third-party
@@ -149,6 +150,18 @@ const ACTION_ID_TO_SYSTEM_TYPE: Record<string, string> = {
  */
 const CLIENT_HELP_INTENT_REGEX =
   /^(what can you do|help|list commands|list capabilities|what are my options|capabilities|commands|what commands|show commands|show help|show capabilities|what can i do|how does this work|what are the commands|what should i say|what can i say)/i;
+
+/**
+ * Definition / terminology queries ("what is Zeeder", "explain a signal",
+ * "what are the platform features", "what is a widget body"). These are
+ * definitional/FAQ-style, NOT how-to guidance. Routed to semantic fallback
+ * with definitionQuery=true to enable knowledge-base lookup before the LLM
+ * round-trip (caching FAQ answers). Normalized matching strips punctuation.
+ * Narrow pattern to avoid matching educational "what is the color picker"
+ * (which is a how-to, not a definition).
+ */
+const CLIENT_DEFINITION_INTENT_REGEX =
+  /^(what is|what are|explain|define|tell me|can you explain|can you tell me)\s+(?:the\s+)?(a\s+)?(zeeder|signal|feature|capability|integration|widget|widget\s+body|platform|system|branding|persona|ai|assistant)/i;
 
 /**
  * Informational / how-to queries ("how do I upload my logo", "where is the
@@ -354,7 +367,7 @@ const CLIENT_BOOKING_INTENT_REGEX =
  */
 function allowedActions(isAnon: boolean): Set<string> {
   return isAnon
-    ? new Set(['CLIENT_NOP', 'SYSTEM_HELP', 'SYSTEM_BOOKING_CAPTURE'])
+    ? new Set(['CLIENT_NOP', 'SYSTEM_HELP', 'SYSTEM_BOOKING_CAPTURE', 'SYSTEM_EXPLAIN'])
     : new Set([
         'CLIENT_NOP',
         'SYSTEM_UPDATE_BRANDING',
@@ -366,6 +379,7 @@ function allowedActions(isAnon: boolean): Set<string> {
         'SYSTEM_NAVIGATE',
         'SYSTEM_HELP',
         'SYSTEM_BOOKING_CAPTURE',
+        'SYSTEM_EXPLAIN',
       ]);
 }
 
@@ -616,45 +630,6 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
     }
   }
 
-  // ── Pre-LLM help short-circuit (isolated client capabilities) ───────
-  if (CLIENT_HELP_INTENT_REGEX.test(text.trim())) {
-    // Anonymous visitors get a personalized, visitor-facing line hydrated with
-    // the host business name. We do NOT surface the Studio capability list /
-    // brandingCapabilities — those are internal platform detail not meant for
-    // a public embed. Authenticated clients keep the full capability listing.
-    if (isAnon) {
-      const { data: tenantNameRow } = await supabaseAdmin
-        .from('tenants')
-        .select('name')
-        .eq('id', tenantId)
-        .maybeSingle();
-      const businessName = tenantNameRow?.name?.trim() || 'our';
-      return corsJson({
-        success: true,
-        actionType: 'SYSTEM_HELP',
-        targetIds: [],
-        payload: {},
-        summary: `I'm ${businessName}'s AI assistant. I can help you book appointments or answer questions about our services. What would you like to know?`,
-      });
-    }
-    const availableCommands = buildClientCapabilities();
-    const data: ClientCommandResponse = {
-      success: true,
-      actionType: 'SYSTEM_HELP',
-      targetIds: [],
-      payload: {
-        availableCommands,
-        brandingCapabilities: {},
-      },
-      summary:
-        'Here are the things you can ask me to do in your client portal. ' +
-        'Try saying: "' + (HELP_VOICE_EXAMPLES[0] ?? availableCommands[0] ?? 'List capabilities') + '".',
-    };
-    const response = NextResponse.json(data);
-    await tryPersistCommand(data, 'SYSTEM_HELP', {});
-    return response;
-  }
-
   // ── Resolve actionId ────────────────────────────────────────────────
   let resolvedActionId: ZeederActionId | null = null;
 
@@ -817,12 +792,45 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
     });
   }
 
+  // ── Definition / terminology queries → deterministic knowledge base lookup ──
+  // Queries like "what is Zeeder", "explain signals", "what are integrations"
+  // are definitional/FAQ-style and can be answered from a cached knowledge base
+  // without an LLM round-trip. Returns immediately if matched, otherwise falls
+  // through to the semantic fallback.
+  if (CLIENT_DEFINITION_INTENT_REGEX.test(text.trim())) {
+    const matched = lookupDefinition(text);
+    if (matched) {
+      const data: ClientCommandResponse = {
+        success: true,
+        actionType: 'SYSTEM_EXPLAIN',
+        targetIds: [],
+        payload: { term: matched.title },
+        summary: buildDefinitionResponse(matched),
+      };
+      const response = corsJson(data);
+      await tryPersistCommand(data, 'SYSTEM_EXPLAIN', data.payload);
+      return response;
+    }
+    // No definition matched; fall through to semantic fallback for LLM answer
+    return runSemanticFallback(text, currentPath, previewDraft, {
+      supabase,
+      tenantId,
+      userId,
+      testMode,
+      isAnon,
+      bookingIntent: false,
+      definitionQuery: true,
+      clientMemories: parsed.context?.clientMemories,
+    });
+  }
+
   // ── Informational / how-to queries → LLM (never the canned HELP block) ──
-  // Questions like "how do I upload my logo" are educational, not capability
-  // listings. Route them to the semantic fallback (runSemanticFallback) so
-  // the agent returns a page-aware, step-by-step UI guide instead of the static
-  // SYSTEM_HELP response. This must run after the identity check so "what is
-  // your name" still resolves to the deterministic ZEEDER identity reply.
+  // Questions like "how do I upload my logo" or "Tell me about your products"
+  // are educational/topic-specific, not capability listings. Route them to the
+  // semantic fallback (runSemanticFallback) so the agent returns a page-aware,
+  // step-by-step UI guide or KB-informed response instead of the static
+  // SYSTEM_HELP response. This must run BEFORE the help check so topic-specific
+  // queries are never hijacked by the help regex.
   if (CLIENT_INFORMATIONAL_INTENT_REGEX.test(text.trim())) {
     return runSemanticFallback(text, currentPath, previewDraft, {
       supabase,
@@ -833,6 +841,48 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
       bookingIntent: false,
       clientMemories: parsed.context?.clientMemories,
     });
+  }
+
+  // ── Pre-LLM help short-circuit (isolated client capabilities) ───────
+  // Pure capability/help questions that resolve to a canned `SYSTEM_HELP` block.
+  // Runs AFTER definition and informational checks so specific product/service
+  // queries ("Tell me about your products") don't get hijacked by help regex.
+  if (CLIENT_HELP_INTENT_REGEX.test(text.trim())) {
+    // Anonymous visitors get a personalized, visitor-facing line hydrated with
+    // the host business name. We do NOT surface the Studio capability list /
+    // brandingCapabilities — those are internal platform detail not meant for
+    // a public embed. Authenticated clients keep the full capability listing.
+    if (isAnon) {
+      const { data: tenantNameRow } = await supabaseAdmin
+        .from('tenants')
+        .select('name')
+        .eq('id', tenantId)
+        .maybeSingle();
+      const businessName = tenantNameRow?.name?.trim() || 'our';
+      return corsJson({
+        success: true,
+        actionType: 'SYSTEM_HELP',
+        targetIds: [],
+        payload: {},
+        summary: `I'm ${businessName}'s AI assistant. I can help you book appointments or answer questions about our services. What would you like to know?`,
+      });
+    }
+    const availableCommands = buildClientCapabilities();
+    const data: ClientCommandResponse = {
+      success: true,
+      actionType: 'SYSTEM_HELP',
+      targetIds: [],
+      payload: {
+        availableCommands,
+        brandingCapabilities: {},
+      },
+      summary:
+        'Here are the things you can ask me to do in your client portal. ' +
+        'Try saying: "' + (HELP_VOICE_EXAMPLES[0] ?? availableCommands[0] ?? 'List capabilities') + '".',
+    };
+    const response = NextResponse.json(data);
+    await tryPersistCommand(data, 'SYSTEM_HELP', {});
+    return response;
   }
 
   // ── Tier 1 miss → Tier 2 Semantic Fallback (Conversational Border) ──
@@ -988,6 +1038,7 @@ interface PersistContext {
   testMode: boolean;
   isAnon: boolean;
   bookingIntent?: boolean;
+  definitionQuery?: boolean;
 }
 
 async function runSemanticFallback(
@@ -998,6 +1049,7 @@ async function runSemanticFallback(
 ): Promise<NextResponse<ClientCommandResponse>> {
   const isAnon = persistCtx?.isAnon ?? false;
   const bookingIntent = persistCtx?.bookingIntent ?? false;
+  const _definitionQuery = persistCtx?.definitionQuery ?? false;
   const availableCommands = buildClientCapabilities();
   const capabilityPayload: Record<string, unknown> = { availableCommands, brandingCapabilities: {} };
 
@@ -1161,7 +1213,7 @@ async function runSemanticFallback(
       : `${hydratedSystemPrompt}${JSON_RESPONSE_DIRECTIVE}`;
 
     const completion = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
+      model: 'llama-3.1-70b-versatile',
       temperature: 0.7,
       max_tokens: 300,
       response_format: { type: 'json_object' },

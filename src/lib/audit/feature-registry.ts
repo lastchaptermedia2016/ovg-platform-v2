@@ -92,7 +92,7 @@ export const FEATURE_REGISTRY: Record<SYSTEM_COMMAND, FeatureRegistryEntry> = {
     actionType: 'SYSTEM_EXPLAIN',
     scope: 'client',
     requiresAuth: false,
-    description: 'Explain a capability, command, or system behavior',
+    description: 'Explain a platform term, feature, or system concept',
   },
   SYSTEM_TELEMETRY: {
     actionType: 'SYSTEM_TELEMETRY',

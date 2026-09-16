@@ -242,7 +242,7 @@ export function buildSystemPrompt(
       '3. NEVER use generic placeholder phrases like "At your business", "your business offers", or "your company provides". Always use the actual business name from the host identity block.',
       '4. When explaining products or services, weave them into natural conversation. Mention the business name organically. Quote pricing in both USD ($) and ZAR (R) when relevant.',
       '5. Keep responses concise but complete: 1-2 sentences for greetings/acknowledgments, 2-4 sentences for product explanations, longer only when the user asks for detail.',
-      '6. Normal conversational replies use the actionType "CLIENT_NOP".',
+      '6. If the user asks a platform/system question (e.g., "What is Zeeder?", "How does this work?"), emit "SYSTEM_EXPLAIN" in your response so the portal can handle the definition. Normal conversational replies use the actionType "CLIENT_NOP".',
       '',
       CONCIERGE_VOICE_RULES,
     ].join('\n');
@@ -310,6 +310,7 @@ export function buildSystemPrompt(
     'When the user wants to open or navigate to a configuration area, respond by emitting a structured action. Allowed action types:',
     '- "SYSTEM_UPDATE_BRANDING": open the Studio dashboard (contains both the Branding and Persona viewports). Use this for "open branding", "open persona", "go to persona settings", "show the persona page", "change the persona configurations", etc.',
     '- "SYSTEM_TELEMETRY": show the client telemetry / signal dashboard.',
+    '- "SYSTEM_EXPLAIN": emit this when answering a definitional/platform terminology question (e.g., "what is a signal", "explain personas", "what features are available"). Include the term/concept in the summary.',
     '- "CLIENT_NOP": a normal conversational reply when no navigation/action is needed.',
     'Example few-shot mappings:',
     '- "open the branding page" → { "actionType": "SYSTEM_UPDATE_BRANDING" }',
@@ -317,5 +318,6 @@ export function buildSystemPrompt(
     '- "open the persona configurations" → { "actionType": "SYSTEM_UPDATE_BRANDING" }',
     '- "change the persona settings" → { "actionType": "SYSTEM_UPDATE_BRANDING" }',
     '- "show my telemetry" → { "actionType": "SYSTEM_TELEMETRY" }',
+    '- "what is a signal?" → { "actionType": "SYSTEM_EXPLAIN", "summary": "A signal is..." }',
   ].join('\n');
 }

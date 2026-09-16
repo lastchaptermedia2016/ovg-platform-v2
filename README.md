@@ -87,9 +87,95 @@ The **OVG Platform** is now a fully-functional enterprise solution with advanced
 - **Mute Controls** — `POST /api/chat/mute` toggles AI mute for the active conversation. The response/fallback path in `loadMessages` treats a missing `scheduled_reenable_at` as an explicit “null” payload via the `mute-state` helper, which stores rows with `scheduled_reenable_at = NULL` instead of omitting the field.
 - **Optimistic Sends** — `POST /api/chat/send` accepts `conversationId`, message body, and `tenantId`. Optimistic temp IDs are swapped to real row IDs when the WebSocket payload arrives, preventing duplicate rendered messages.
 
-### 🎯 Key Capabilities
+### 🎵 **Push-To-Talk (PTT) Voice Engine — Production Ready**
 
-#### Voice Commands
+#### PTT Protocol Specifications
+The client PTT system enforces a robust audio validation pipeline to distinguish intentional voice commands from accidental taps:
+
+**Hold Duration Guard:**
+- ✅ **Minimum Hold Duration:** ≥ 400ms required before triggering STT
+- ✅ **Rationale:** Accidental quick-tap detection (taps < 400ms are ignored cleanly)
+
+**Blob Size Guard:**
+- ✅ **Minimum Blob Size:** ≥ 1,024 bytes required for transcoding
+- ✅ **Rationale:** WebM container headers alone occupy 100–200 bytes without audio frames; sub-1KB blobs indicate noise bursts or silence, not valid speech
+
+**Combined Guard Logic:**
+```typescript
+if (durationMs < MIN_DURATION_MS || blob.size < MIN_AUDIO_BLOB_BYTES) {
+  console.warn(`[ZEEDER-VOICE] Ignoring short audio clip (${durationMs}ms, ${blob.size} bytes)`);
+  teardownRecording();
+  return; // Do NOT transcribe; clean up resource channels
+}
+```
+
+#### Pointer Event Handling
+The SystemMicButton stabilizes pointer capture across touch and desktop viewports via:
+
+- ✅ **`touch-action: none`** — Prevents browser from hijacking pointer holds for system gestures
+- ✅ **`setPointerCapture(e.pointerId)`** — Routes all pointer events to the button during hold, even if the pointer moves outside the element
+- ✅ **`onPointerCancel`** — Gracefully handles browser-initiated cancellations (e.g., system UI, call notifications)
+- ✅ **`e.preventDefault()`** — Blocks synthetic `onMouseDown`/`onClick` events that could interfere with the audio pipeline
+
+#### User Interaction Flow
+1. **Press & Hold**: User presses the mic button (`onPointerDown`)
+   - Pointer is captured; `startListening()` initializes MediaRecorder
+   - Audio stream opens; chunks begin buffering
+   - Button visual state: gold background + "Listening..." label
+
+2. **Hold Duration**: User holds button for ≥ 400ms
+   - `recordingStartTimeRef` tracks elapsed time
+   - Audio chunks accumulate in `chunksRef.current`
+   - Global voice state (keyboard shortcuts) does NOT interrupt local recording
+
+3. **Release**: User releases the button (`onPointerUp`)
+   - Pointer is released; `stopListening()` triggers `recorder.stop()`
+   - `recorder.onstop` fires: blob is created from accumulated chunks
+   - Duration + blob size guards execute; if either fails, recording is abandoned with an inline warning
+   - If both guards pass: blob is transcoded to WAV, sent to Whisper STT
+
+4. **STT Processing**: Whisper returns transcript
+   - Transcript flows to `/api/client/process-command` for semantic routing
+   - On success: response is spoken via TTS ("Hannah")
+   - On failure: fallback to Web Speech API (local-only, no server round-trip)
+
+5. **Cleanup**: Resources are torn down
+   - MediaStream tracks are stopped
+   - Chunks are cleared
+   - Timers are cancelled
+
+#### Accidental Tap Handling
+When a user taps the button for < 400ms or records < 1KB of audio:
+
+- ✅ **Inline Warning** → `[ZEEDER-VOICE] Ignoring short audio clip (${durationMs}ms, ${blob.size} bytes). Hold longer for a valid command.`
+- ✅ **No API Call** → Recording is discarded; no unnecessary Whisper requests
+- ✅ **Clean Teardown** → MediaStream channels closed; no resource leaks
+- ✅ **User Feedback** → Console log visible in browser DevTools; no silent failures
+
+#### Global Voice State Isolation
+The hook now prevents the global `isListening` state (from keyboard shortcuts like spacebar) from interfering with an active button-based recording:
+
+```typescript
+useEffect(() => {
+  // If we're already locally listening (button hold), skip global state sync
+  if (isListening) {
+    return;
+  }
+
+  // Only sync global state if NOT in a local recording
+  if (globalIsListening) {
+    startListening();
+  } else {
+    stopListening();
+  }
+}, [globalIsListening, startListening, stopListening, isListening]);
+```
+
+**Result:** Button-based PTT works independently; keyboard shortcuts for starting (when idle) still work; no race conditions.
+
+---
+
+### 🎵 **Voice Engine Architecture**
 ```bash
 # Natural Commands
 "Do your thing, Hannah"     # Full design pass
