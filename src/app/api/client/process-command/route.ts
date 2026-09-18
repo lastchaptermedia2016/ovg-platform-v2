@@ -1221,6 +1221,7 @@ async function runSemanticFallback(
       '',
       '=== RESPONSE FORMAT (STRICT) ===',
       'You MUST respond with a SINGLE valid JSON object and nothing else — no markdown, no code fences, no prose outside the JSON.',
+      'The response MUST be valid JSON format.',
       `Allowed "actionType" values: ${[...allowedActions(isAnon)].join(' | ')} (use "CLIENT_NOP" for normal conversational replies).`,
       '  - "summary": the plain-text reply shown to the user.',
       '  - "payload": for bookings, include { "firstName": string|null, "phone": string|null, "treatment": string|null, "preferredDate": string|null, "preferredTime": string|null, "notes": string|null }.',
@@ -1231,12 +1232,12 @@ async function runSemanticFallback(
       ? `${hydratedSystemPrompt}\n${toolsPrompt}${JSON_RESPONSE_DIRECTIVE}`
       : `${hydratedSystemPrompt}${JSON_RESPONSE_DIRECTIVE}`;
 
-    const completion = await groq.chat.completions.create({
-      model: 'openai/gpt-oss-120b',
+const completion = await groq.chat.completions.create({
+      model: 'openai/gpt-oss-20b',
       temperature: 0.7,
-      max_tokens: 300,
+      max_tokens: 800,
       response_format: { type: 'json_object' },
-        messages: [
+      messages: [
           { role: 'system', content: enrichedSystemPrompt },
           { role: 'user', content: text },
         ],

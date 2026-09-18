@@ -53,15 +53,6 @@ function extractGroqError(rawMessage: string): { message: string; type: string |
   return { message: rawMessage, type: null };
 }
 
-function sanitizeBrandName(raw: unknown): string | null {
-  if (typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) return null;
-  const capped = trimmed.slice(0, 64);
-  const safe = capped.replace(/[\x00-\x1F\x7F\n\r]+/g, ' ').replace(/[^\p{L}\p{N}\s\-'.]/gu, '').trim();
-  return safe.length > 0 ? safe : null;
-}
-
 export async function POST(req: Request) {
   if (!process.env.GROQ_API_KEY) {
     console.error('[STT] ❌ GROQ_API_KEY is not configured');
@@ -83,8 +74,6 @@ export async function POST(req: Request) {
   const file = formData.get("file") as File;
   const rawTenantId = formData.get("tenantId");
   const tenantId = typeof rawTenantId === "string" && rawTenantId.length > 0 ? rawTenantId : null;
-  const rawBrandName = formData.get("brandName");
-  const brandName = sanitizeBrandName(rawBrandName);
 
   console.log('[STT] Received file:', {
     name: file?.name,
@@ -143,31 +132,12 @@ export async function POST(req: Request) {
 
     const groq = new Groq({ apiKey: groqApiKey });
 
-    const staticAnchors = [
-      "OVG",
-      "Last Chapter Media",
-      "BellaCorp",
-      "WhiteChapter",
-      "Xneelio",
-      "Xneelo",
-      "Zeeder",
-      "Xnelia is a misspelling of the brand Xneelio.",
-      "Zeta, Cedar, or Zita in a client-name context refers to the brand Zeeder.",
-      "OVG platform: tenants, clients, resellers, dashboard, branding studio.",
-    ];
-    const dynamicBrand = brandName ? [`Tenant brand: ${brandName}`] : [];
-    const vocabularyBoost = [...dynamicBrand, ...staticAnchors].join(", ");
-
-    if (process.env.DEBUG_STT === 'true') {
-      console.log("[STT] Vocabulary boost:", { hasBrand: Boolean(brandName), hasTenant: Boolean(tenantId) });
-    }
-
     const transcription = await groq.audio.transcriptions.create({
       file: uploadable,
       model: "whisper-large-v3-turbo",
+      prompt: 'LCM, LCM Test, Last Chapter Media, OVG, OVG platform, client name, industry, email, website',
       response_format: "json",
       temperature: 0,
-      prompt: vocabularyBoost,
     });
 
     return jsonResponse(

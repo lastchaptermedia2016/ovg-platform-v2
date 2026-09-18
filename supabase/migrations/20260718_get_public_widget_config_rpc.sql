@@ -17,17 +17,16 @@
 --   allowlist. Notably this keeps integration secrets (crmApiKey,
 --   twilioAuthToken, webhooks.headers) and AI system prompts out of the public
 --   payload.
-
+--
 --   features is included because voiceFeaturesEnabled controls the mic button
 --   in the public embed, and customCss controls client-side styling — both are
 --   UI-affecting with no sensitive data. aiPersona is deliberately excluded
 --   because it may contain system prompts.
 --
--- KEYS ON tenant_id (TEXT) — the supported public URL identifier. The slug
---   route (/widget/<slug>) is intentionally NOT supported. NOTE: tenants.tenant_id
---   is TEXT (verified live), so the comparison is text=text. Do NOT cast
---   p_tenant_id::uuid — that would force a column-side TEXT->UUID cast, defeat
---   the idx_tenants_tenant_id index, and error on non-UUID-format values.
+-- LOOKUP STRATEGY:
+--   Supports BOTH UUID (id column) and slug (tenant_id column) for flexibility.
+--   UUID format detection via regex avoids column-side casting and preserves
+--   index usage on both idx_tenants_id_pkey (PK) and idx_tenants_tenant_id.
 
 CREATE OR REPLACE FUNCTION get_public_widget_config(p_tenant_id TEXT)
 RETURNS TABLE ( widget_config JSONB )
@@ -43,7 +42,12 @@ AS $$
       'features',         COALESCE(widget_config->'features', '{}'::jsonb)
     ) AS widget_config
   FROM tenants
-  WHERE tenant_id = p_tenant_id;
+  WHERE
+    -- Check UUID format first to use PK index
+    (p_tenant_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' AND id = p_tenant_id::uuid)
+    OR
+    -- Fallback to tenant_id (slug) for non-UUID identifiers
+    (p_tenant_id !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' AND tenant_id = p_tenant_id);
 $$;
 
 -- Anon + authenticated may execute the public loader; it returns only scoped data.

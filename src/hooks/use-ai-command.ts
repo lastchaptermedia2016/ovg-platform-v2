@@ -193,7 +193,7 @@ export function useAICommand(): UseAICommandReturn {
         metadata: data.metadata || {
           processedAt: new Date().toISOString(),
           resellerId,
-          model: 'llama-3.3-70b-versatile',
+          model: 'openai/gpt-oss-20b',
         },
       };
 

@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: `Voice command: "${voiceCommand}"` },
       ],
-      model: 'llama-3.1-8b-instant',
+      model: 'openai/gpt-oss-20b',
       temperature: 0.1,
       max_tokens: 100,
       response_format: { type: 'json_object' },

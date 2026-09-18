@@ -92,6 +92,9 @@ export type IncomingAIAction =
 
 interface SttResponse {
   text: string;
+  error?: string;
+  type?: string;
+  status?: number;
 }
 
 interface VoiceCommandOptions {
@@ -516,6 +519,8 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
         signal,
       });
 
+      console.log('[VoiceCommand] RAW sttResponse status:', sttResponse.status, 'ok:', sttResponse.ok);
+      console.log('[VoiceCommand] RAW sttResponse headers:', sttResponse.headers.get('content-type'));
       if (!sttResponse.ok) {
         const status = sttResponse?.status;
         const statusText = sttResponse?.statusText ?? 'Unknown';
@@ -542,7 +547,37 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       }
 
       console.log('[VoiceCommand] 📡 STT response OK — parsing transcript');
-      const { text } = await sttResponse.json() as SttResponse;
+      let sttData: SttResponse;
+      try {
+        sttData = await sttResponse.json() as SttResponse;
+      } catch (jsonErr) {
+        console.error('[VoiceCommand] ❌ STT JSON parse failed:', jsonErr);
+        setError('Transcription failed — invalid server response');
+        return;
+      }
+
+      // Check for STT-level errors (even with 200 status)
+      if (sttData.error) {
+        console.error('[VoiceCommand] ❌ STT returned error:', {
+          status: sttResponse.status,
+          error: sttData.error,
+          type: sttData.type,
+          raw: sttData,
+        });
+        setError(sttData.error?.includes('too short')
+          ? 'Recording too short — hold the button longer and speak clearly.'
+          : 'Transcription failed — please try again');
+        return;
+      }
+
+      const text = sttData.text?.trim();
+      if (!text) {
+        console.warn('[VoiceCommand] ⚠️ STT returned empty transcript');
+        setError('No speech detected — please hold the button longer and speak clearly');
+        return;
+      }
+
+      console.log(`[VoiceCommand] ✅ STT captured: ${text}`);
       setTranscript(text);
       onTranscript?.(text);
 
@@ -629,7 +664,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
         body: JSON.stringify({
           text: aiText.trim(),
           voice: configuredVoice,
-          model: 'canopylabs/orpheus-v1-english',
+          model: 'orpheus-english',
           tenantId: currentTtsContext.tenantId,
           resellerSlug: currentResellerId.trim(),
           provider: 'groq',

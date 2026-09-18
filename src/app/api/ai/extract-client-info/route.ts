@@ -19,8 +19,7 @@ const ExtractClientInfoResponseSchema = z.object({
   email: z.string().nullable().optional().default(null),
   mobile: z.string().nullable().optional().default(null),
   website: z.string().nullable().optional().default(null),
-  is_override: z.boolean().default(false),
-  confidence: z.number().min(0).max(1).default(0),
+  vibe: z.string().nullable().optional().default(null),
 });
 
 export async function POST(request: Request) {
@@ -63,9 +62,19 @@ Required JSON Structure:
   "email": string | null,
   "mobile": string | null,
   "website": string | null,
-  "is_override": boolean,
-  "confidence": number
+  "vibe": string | null
 }
+
+STEP-GATING ENFORCEMENT (CRITICAL):
+The voice onboarding flows in STRICT STEPS. Required fields for each step CANNOT be skipped or deferred.
+- Step 0 (name + industry): BOTH "name" AND "industry" are REQUIRED. Do NOT advance to Step 1 without BOTH.
+- Step 1 (email): "email" is REQUIRED. Do NOT advance to Step 2 without it.
+- Step 2 (mobile + website): AT LEAST ONE of "mobile" OR "website" is REQUIRED. Do NOT advance to Step 3 without at least one.
+- Step 3 (vibe): "vibe" is REQUIRED. Do NOT advance to Step 4 without it.
+
+If a REQUIRED field for the active step is missing from the transcript, you MUST set it to null in the JSON.
+The calling system will detect the missing required field and RE-PROMPT the user SPECIFICALLY for that field.
+NEVER suggest "we can come back to this later" or "you can skip this" for REQUIRED fields.
 
 SPECIAL INSTRUCTIONS FOR EMAIL:
 - If the user provides an email-like string (e.g., "name dot com", "www dot name dot gmail dot com"),
@@ -75,7 +84,7 @@ SPECIAL INSTRUCTIONS FOR EMAIL:
 - If the normalized value looks like a website URL instead of an email, set email to null.
 
 INDUSTRY ENUM VALUES (exact only, must be UPPERCASE):
-AUTOMOTIVE, RETAIL, HEALTHCARE, INSURANCE, AI AUTOMATION, GENERAL BUSINESS
+AUTOMOTIVE, RETAIL, HEALTHCARE, INSURANCE, AI AUTOMATION, SaaS, GENERAL BUSINESS
 
 CATEGORY MAPPING (use exact enum values):
   AUTOMOTIVE → VIN_DECODE, LOGISTICS, RETAIL_SALES
@@ -83,21 +92,67 @@ CATEGORY MAPPING (use exact enum values):
   HEALTHCARE → CLINICAL, WELLNESS
   INSURANCE → CLAIMS, UNDERWRITING
   AI AUTOMATION → AGENTIC_AI, WORKFLOW_AUTOMATION, CHATBOT
+  SaaS → CUSTOMER_SUPPORT, DEVOPS, ANALYTICS
   GENERAL BUSINESS → GENERAL, CONSULTING, SERVICES
 
 LITERAL EXTRACTION PRIORITY:
-- If the user EXPLICITLY states an industry (e.g., "industry General"), return that exact value — do not override it with semantic classification.
-- is_override = true if the user explicitly stated an industry, false if not mentioned.
-- confidence = 1.0 if user stated industry, 0.0-0.95 if auto-classified from company name.
+- If the user EXPLICITLY states an industry or category, return that exact value — do not override it with semantic classification.
+- If the user EXPLICITLY states a vibe/description, capture it verbatim in the vibe field.
 
 Output ONLY valid JSON — no explanations, no markdown, no extra text.`;
 
-    const response = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      messages: [
-        {
-          role: 'system',
-          content: `You are a precise data extraction assistant. Extract the requested fields from the transcript and return ONLY a valid JSON object. Never include explanations, greetings, or extra text. If a field is not found in the transcript, set its value to null. Never omit any keys.
+    // Simplify the user prompt to be more JSON-friendly
+    const simplifiedPrompt = `Extract these fields from the transcript. Return ONLY valid JSON:
+{
+  "name": "...",
+  "industry": "...",
+  "category": "...",
+  "email": "...",
+  "mobile": "...",
+  "website": "...",
+  "vibe": "..."
+}
+
+Transcript:
+${prompt}`;
+
+    let parsedResponse: Record<string, unknown>;
+    try {
+      const response = await groq.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          {
+            role: 'system',
+            content: `You are a precise data extraction assistant. Extract the requested fields from the transcript and return ONLY a valid JSON object. Never include explanations, greetings, or extra text. If a field is not found in the transcript, set its value to null. Never omit any keys.
+
+STEP-GATING ENFORCEMENT (CRITICAL):
+The voice onboarding flows in STRICT STEPS. Required fields for each step CANNOT be skipped or deferred.
+- Step 0 (name + industry): BOTH "name" AND "industry" are REQUIRED. Do NOT advance to Step 1 without BOTH.
+- Step 1 (email): "email" is REQUIRED. Do NOT advance to Step 2 without it.
+- Step 2 (mobile + website): AT LEAST ONE of "mobile" OR "website" is REQUIRED. Do NOT advance to Step 3 without at least one.
+- Step 3 (vibe): "vibe" is REQUIRED. Do NOT advance to Step 4 without it.
+
+If a REQUIRED field for the active step is missing from the transcript, you MUST set it to null in the JSON.
+The calling system will detect the missing required field and RE-PROMPT the user SPECIFICALLY for that field.
+NEVER suggest "we can come back to this later" or "you can skip this" for REQUIRED fields.
+
+EXTRACTION FIELDS:
+You MUST extract and return ALL of these fields in your JSON response:
+- name: Company/client name (apply phonetic normalization rules below)
+- industry: Industry sector or vertical (e.g., "AI AUTOMATION", "SaaS", "Healthcare")
+- category: Subcategory or use case (e.g., "WORKFLOW_AUTOMATION", "Customer Support")
+- email: Contact email address. If spoken as "donna at zeeder dot ai", convert to "donna@zeeder.ai"
+- mobile: Phone number. Normalize to format like "555-654-4321" or "+1-555-654-4321"
+- website: Company website URL. If spoken as "zeeder dot ai", convert to "https://zeeder.ai"
+- vibe: Brand personality, company description, or tone spoken by the user (e.g., "Young and innovative AI startups")
+
+VOICE TRANSCRIPTION PATTERNS TO LISTEN FOR:
+- "My email is..." / "Contact at..." / "Email is..." → extract email field
+- "Phone..." / "Call me at..." / "Mobile is..." / "Reach me at..." → extract mobile field
+- "Website..." / "Find us at..." / "Visit..." / "Our site is..." → extract website field
+- "We're..." / "We focus on..." / "We help..." / "We specialize..." / "Our vibe is..." → extract vibe field
+- "Industry..." / "We work in..." / "Sector is..." → extract industry field
+- "Category..." / "Use case..." / "Our focus area..." → extract category field
 
 PHONETIC BRAND NAME NORMALIZATION RULES:
 Incoming text is generated via live voice transcription and may contain regional acoustic errors for custom proper nouns or tech brands. The raw acoustic model is prone to warping custom proper nouns toward generic en-US dictionary words. Analyze the extracted corporate names contextually and correct them before emitting JSON:
@@ -106,41 +161,106 @@ Incoming text is generated via live voice transcription and may contain regional
 2. If the text sounds identical to "Zeeder" but is spelled as "Zeta", "Zita", or "Cedar" in the context of a client name, extract the correct brand spelling: "Zeeder".
 3. Maintain this high-fidelity spelling correction for unique brand names ending in localized suffixes (-io, -er, -o).
 4. These normalizations apply ONLY to the \`name\` field. They MUST NOT alter email, mobile, website, industry, or category values.
-5. If the transcript contains a brand spelling that is genuinely ambiguous and the misheard word is also a valid common noun (e.g. "Zeta" could be a Greek letter or our brand), prefer the brand spelling ONLY when the surrounding transcript context refers to a client, tenant, or company name.`
-        },
-        {
-          role: 'user',
-          content: prompt
+5. If the transcript contains a brand spelling that is genuinely ambiguous and the misheard word is also a valid common noun (e.g. "Zeta" could be a Greek letter or our brand), prefer the brand spelling ONLY when the surrounding transcript context refers to a client, tenant, or company name.
+
+OUTPUT FORMAT:
+Return ONLY this JSON structure with no additional text:
+{
+  "name": "...",
+  "industry": "...",
+  "category": "...",
+  "email": "...",
+  "mobile": "...",
+  "website": "...",
+  "vibe": "..."
+}`
+          },
+          {
+            role: 'user',
+            content: simplifiedPrompt
+          }
+        ],
+        temperature: 0.1,
+        max_tokens: 500,
+        response_format: { type: 'json_object' },
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        throw new Error('No response from Groq');
+      }
+
+      parsedResponse = JSON.parse(content);
+    } catch (error) {
+      // If JSON generation fails, return partial extraction with nulls
+      console.warn('JSON generation failed, returning partial:', error instanceof Error ? error.message : String(error));
+      
+      // Check for Groq JSON validation failure (400/json_validate_failed)
+      if (error && typeof error === 'object' && 'status' in error) {
+        const status = (error as { status: number }).status;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (status === 400 && errorMessage.includes('json_validate_failed')) {
+          console.log('[EXTRACT-CLIENT-INFO-TRACE] JSON validation failed, returning fallback:', errorMessage);
         }
-      ],
-      temperature: 0.1,
-      max_tokens: 500,
-      response_format: { type: 'json_object' },
-    });
-
-    const content = response.choices[0]?.message?.content;
-    if (!content) {
-      throw new Error('No response from Groq');
-    }
-
-    // Parse the JSON response
-    let rawData: Record<string, unknown> = {};
-    try {
-      rawData = JSON.parse(content);
-    } catch {
-      console.error('Failed to parse Groq response:', content);
-      // Fallback handled by Zod defaults below — all keys become null
+      }
+      
+      parsedResponse = {
+        name: null,
+        industry: null,
+        category: null,
+        email: null,
+        mobile: null,
+        website: null,
+        vibe: null,
+      };
     }
 
     // Enforce the contract via Zod: guarantee every key exists
-    const validatedPayload = ExtractClientInfoResponseSchema.parse(rawData);
+    const validatedPayload = ExtractClientInfoResponseSchema.parse(parsedResponse);
 
-    console.log('OVG-PLATFORM-V2: Extracted client info:', validatedPayload);
+    const sanitizedPayload: Record<string, unknown> = {};
+    for (const key of Object.keys(validatedPayload) as (keyof typeof validatedPayload)[]) {
+      const val = validatedPayload[key];
+      if (typeof val === 'string') {
+        sanitizedPayload[key] = val.replace(/[.!?]+$/, '').trim();
+      } else {
+        sanitizedPayload[key] = val;
+      }
+    }
 
-    return NextResponse.json(validatedPayload);
+    console.log('OVG-PLATFORM-V2: Extracted client info:', sanitizedPayload);
+
+    return NextResponse.json(sanitizedPayload);
 
   } catch (error) {
     console.error('Error extracting client info:', error);
+
+    // Handle Groq JSON validation failure (400/json_validate_failed) - return fallback with 200
+    if (error && typeof error === 'object' && 'status' in error) {
+      const status = (error as { status: number }).status;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (status === 400 && errorMessage.includes('json_validate_failed')) {
+        console.log('[EXTRACT-CLIENT-INFO-TRACE] JSON validation failed in outer catch, returning fallback:', errorMessage);
+        return NextResponse.json({
+          name: null,
+          industry: null,
+          category: null,
+          email: null,
+          mobile: null,
+          website: null,
+          vibe: null,
+        }, { status: 200 });
+      }
+      
+      // Surface Groq API permission/model access errors (403/404)
+      if (status === 403 || status === 404) {
+        return NextResponse.json(
+          { error: `Groq API error (${status}): ${errorMessage}` },
+          { status: 502 }
+        );
+      }
+    }
+
     return NextResponse.json(
       { error: 'Failed to extract client information' },
       { status: 500 }

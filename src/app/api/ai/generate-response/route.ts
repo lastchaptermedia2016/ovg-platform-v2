@@ -22,7 +22,7 @@ Do not include any explanatory text or formatting - just the response text.`;
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ],
-      model: 'llama-3.1-8b-instant',
+      model: 'openai/gpt-oss-20b',
       temperature: 0.7,
       max_tokens: 100,
     });
@@ -31,8 +31,21 @@ Do not include any explanatory text or formatting - just the response text.`;
 
     return NextResponse.json({ response }, { status: 200 });
   } catch (error) {
+    console.error('❌ [Response Generation Error]:', error);
+
+    // Surface Groq API permission/model access errors (403/404)
+    if (error && typeof error === 'object' && 'status' in error) {
+      const status = (error as { status: number }).status;
+      if (status === 403 || status === 404) {
+        const message = error instanceof Error ? error.message : String(error);
+        return NextResponse.json(
+          { error: `Groq API error (${status}): ${message}` },
+          { status: 502 }
+        );
+      }
+    }
+
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error("❌ [Response Generation Error]:", errorMessage);
     return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }

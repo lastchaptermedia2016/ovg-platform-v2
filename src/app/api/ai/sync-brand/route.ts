@@ -93,7 +93,7 @@ Extract brand colors and suggest widget styling that would match their website a
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: userPrompt },
       ],
-      model: 'llama-3.3-70b-versatile',
+      model: 'openai/gpt-oss-20b',
       temperature: 0.3,
       max_tokens: 500,
       response_format: { type: 'json_object' },
@@ -134,7 +134,7 @@ Extract brand colors and suggest widget styling that would match their website a
         tenantId,
         websiteUrl: tenant.website_url,
         processedAt: new Date().toISOString(),
-        model: 'llama-3.3-70b-versatile',
+        model: 'openai/gpt-oss-20b',
       },
     });
 

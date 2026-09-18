@@ -92,7 +92,7 @@ Remember: A VIN is exactly 17 characters, using 0-9 and A-Z (excluding I, O, Q).
 Common STT issues: "zero" may be spoken as letter O, and "oh" may mean zero.`,
           },
         ],
-        model: 'llama-3.3-70b-versatile',
+        model: 'openai/gpt-oss-20b',
         temperature: 0.1,
         max_tokens: 300,
         response_format: { type: 'json_object' },

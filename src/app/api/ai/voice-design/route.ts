@@ -99,7 +99,7 @@ Rules:
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: `Design command: "${command}"\n\nParse this command and return the structured action.` },
       ],
-      model: 'llama-3.1-8b-instant', // Fast model for quick parsing
+      model: 'openai/gpt-oss-20b', // Fast model for quick parsing
       temperature: 0.1,
       max_tokens: 200,
       response_format: { type: 'json_object' },
@@ -139,7 +139,7 @@ Rules:
       originalText: command,
       metadata: {
         processedAt: new Date().toISOString(),
-        model: 'llama-3.1-8b-instant',
+        model: 'openai/gpt-oss-20b',
       },
     });
 

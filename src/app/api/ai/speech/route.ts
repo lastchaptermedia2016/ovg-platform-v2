@@ -24,7 +24,7 @@ function corsResponse(body: unknown, status = 200): Response {
 
 const DEFAULT_VOICE = "hannah";
 const DEFAULT_PROVIDER = "groq";
-const TTS_MODEL = "canopylabs/orpheus-v1-english";
+const TTS_MODEL = "orpheus-english";
 
 /**
  * Maps legacy / ambiguous caller-supplied model ids to the canonical Groq TTS
@@ -35,7 +35,7 @@ const TTS_MODEL = "canopylabs/orpheus-v1-english";
 const LEGACY_MODEL_ALIASES: Record<string, string> = {
   "orpheus-v1": TTS_MODEL,
   "orpheus": TTS_MODEL,
-  "orpheus-english": TTS_MODEL,
+  "canopylabs/orpheus-v1-english": TTS_MODEL,
 };
 
 /** Canonical Groq TTS models accepted by the upstream API. */
@@ -125,8 +125,10 @@ async function generateSpeech(input: SpeechInput): Promise<Response> {
   try {
     const groq = new Groq({ apiKey });
 
+    console.log('[API] TTS request:', { model, voice, textLength: text.length });
+
     const wav = await groq.audio.speech.create({
-      model,
+      model: 'canopylabs/orpheus-v1-english',
       voice,
       response_format: "wav",
       input: text,
@@ -154,7 +156,7 @@ async function generateSpeech(input: SpeechInput): Promise<Response> {
         : typeof error === "string"
           ? error
           : "Unknown speech generation error";
-    console.error("[API] Speech generation failed:", message);
+    console.error("[API] Speech generation failed:", { model, voice, message, status, error });
     return new Response(
       JSON.stringify({ error: "Speech generation failed", detail: message }),
       { status: status >= 400 && status < 600 ? status : 500 },

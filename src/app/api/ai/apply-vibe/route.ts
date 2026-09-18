@@ -120,7 +120,7 @@ Generate a complete widget configuration that captures this aesthetic. Be creati
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: userPrompt },
       ],
-      model: 'llama-3.3-70b-versatile',
+      model: 'openai/gpt-oss-20b',
       temperature: 0.4,
       max_tokens: 800,
       response_format: { type: 'json_object' },
@@ -163,7 +163,7 @@ Generate a complete widget configuration that captures this aesthetic. Be creati
         vibe,
         tenantId,
         processedAt: new Date().toISOString(),
-        model: 'llama-3.3-70b-versatile',
+        model: 'openai/gpt-oss-20b',
       },
     });
 

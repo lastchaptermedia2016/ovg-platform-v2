@@ -16,7 +16,7 @@ export async function* unifiedStream(
   const {
     voice = "hannah",
     speed = 1.0,
-    model = "llama-3.3-70b-versatile",
+    model = "openai/gpt-oss-20b",
   } = options;
 
   try {
@@ -39,11 +39,11 @@ export async function* unifiedStream(
       }
     }
 
-    // Generate audio using CanopyLabs Orpheus
+    // Generate audio using Orpheus English
     if (fullText.trim().length > 0) {
       try {
         const audioResponse = await groq.audio.speech.create({
-          model: "canopylabs/orpheus-v1-english",
+          model: "orpheus-english",
           voice,
           input: fullText,
           response_format: "wav",

@@ -14,6 +14,14 @@ function triggerHapticFeedback(): void {
 type Step = 'command' | 'draft' | 'review' | 'confirm';
 type VoiceEntryStep = 0 | 1 | 2 | 3 | 4; // Multi-step voice entry
 
+const STEP_VOICE_PROMPTS: Record<number, string> = {
+  0: "What is the client's name and industry?",
+  1: "What's their email address?",
+  2: "What is their category or mobile number?",
+  3: "What is their website URL?",
+  4: "Let's review the client details before creating.",
+};
+
 // Category options keyed by industry
 const INDUSTRY_CATEGORY_MAP: Record<string, string[]> = {
   AUTOMOTIVE: ['VIN_DECODE', 'LOGISTICS', 'RETAIL_SALES'],
@@ -26,6 +34,43 @@ const INDUSTRY_CATEGORY_MAP: Record<string, string[]> = {
 
 const getCategoriesForIndustry = (ind: string): string[] =>
   INDUSTRY_CATEGORY_MAP[ind.toUpperCase().trim()] ?? INDUSTRY_CATEGORY_MAP['GENERAL BUSINESS'];
+
+// ─── Step-Gating Requirements ────────────────────────────────────────
+// Defines REQUIRED fields for each voiceEntryStep. Step advancement is BLOCKED
+// until ALL required fields for the current step are present and non-empty.
+const STEP_REQUIREMENTS: Record<VoiceEntryStep, (keyof VoiceEntryData)[]> = {
+  0: ['name', 'industry'],
+  1: ['email'],
+  2: ['category', 'mobile'],
+  3: ['website'],
+  4: ['vibe'],
+};
+
+function getMissingRequiredFields(step: VoiceEntryStep, data: VoiceEntryData): (keyof VoiceEntryData)[] {
+  const required = STEP_REQUIREMENTS[step];
+  if (step === 2) {
+    const hasCategory = data.category && data.category.trim() !== '';
+    const hasMobile = data.mobile && data.mobile.trim() !== '';
+    if (hasCategory || hasMobile) return [];
+    return ['category', 'mobile'];
+  }
+  return required.filter((field) => !data[field] || data[field].trim() === '');
+}
+
+function getRepromptMessage(missingFields: (keyof VoiceEntryData)[]): string {
+  if (missingFields.length === 0) return '';
+  const field = missingFields[0];
+  const prompts: Record<keyof VoiceEntryData, string> = {
+    name: "I need the client name to continue.",
+    industry: "What industry is this client in?",
+    category: "What category or use case?",
+    email: "What's their email address?",
+    mobile: "What's their mobile number?",
+    website: "What's their website address?",
+    vibe: "Describe their business vibe or personality.",
+  };
+  return prompts[field] || `Please provide the ${field}.`;
+}
 
 interface DraftData {
   clientName: string;
@@ -140,7 +185,6 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
 
   // ─── UI Highlight & Conversation State ───────────────────────────
   const [highlightedField, setHighlightedField] = useState<'name' | 'email' | 'industry' | 'category' | 'mobile' | 'website' | 'vibe' | null>(null);
-  const [, setConversationStep] = useState<'greeting' | 'name' | 'industry' | 'category' | 'email' | 'mobile' | 'website' | 'vibe' | 'review' | 'complete'>('greeting');
   const [, setMissingFields] = useState<Set<string>>(new Set(['name', 'industry', 'category', 'email', 'mobile', 'website', 'vibe']));
 
   // ─── Review Data ─────────────────────────────────────────────────
@@ -321,6 +365,16 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
     return value.trim();
   }, []);
 
+  // ─── Sanitize Extracted Voice Values ─────────────────────────────────
+  // Strips trailing periods, extra quotes, and outer whitespace from extracted strings
+  const sanitizeValue = useCallback((val: string | null | undefined): string => {
+    if (!val) return '';
+    return val
+      .replace(/[.#]+$/, '') // strip trailing periods/hashes
+      .replace(/^["']+|["']+$/g, '') // strip outer quotes
+      .trim();
+  }, []);
+
   // ─── LLM Response Generation ─────────────────────────────────────
   const generateHannahResponse = useCallback(async (context: string, field: string, value?: string): Promise<string> => {
     try {
@@ -387,10 +441,14 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
       const response = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice: voice || 'hannah', model: 'orpheus-v1', resellerSlug, tenantId, metadata: ttsMetadata }),
+        body: JSON.stringify({ text, voice: voice || 'hannah', model: 'orpheus-english', resellerSlug, tenantId, metadata: ttsMetadata }),
       });
 
-      if (!response.ok) throw new Error('TTS failed');
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({ error: response.statusText }));
+        console.error('TTS API error detail:', response.status, errData);
+        throw new Error(`TTS failed (${response.status}): ${errData.error || response.statusText}`);
+      }
 
       const audioBuffer = await response.arrayBuffer();
       const audioBlob = new Blob([audioBuffer], { type: 'audio/wav' });
@@ -500,7 +558,9 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
 
       if (!response.ok) throw new Error('STT failed');
       const { text } = await response.json();
+      console.log('[UniversalCommandModal] Transcribed speech:', text);
       setTranscript(text);
+      setIsVoiceEntryMode(true);
       await processCommandRef.current(text);
     } catch {
       setError('Transcription failed — please try again');
@@ -531,8 +591,120 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
     setStep('review');
   }, [speak]);
 
+  const processCategoryAndMobile = useCallback(async (transcript: string) => {
+    setHighlightedField('category');
+
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (!session || !session.user) {
+      await speak("I'm having trouble connecting to your secure vault. Please ensure you're logged in so I can save this for you.");
+      document.body.classList.add('heartbeat-error');
+      setTimeout(() => document.body.classList.remove('heartbeat-error'), 3000);
+      return;
+    }
+
+    const parsed = parseWithKeywordDelimiters(transcript);
+    let categorySet = false;
+    let mobileSet = false;
+
+    if (parsed.category?.trim()) {
+      const sanitizedCat = sanitizeValue(parsed.category.trim().toUpperCase());
+      if (sanitizedCat) {
+        setVoiceEntryData(prev => ({ ...prev, category: sanitizedCat }));
+        setFormState(prev => ({ ...prev, category: sanitizedCat }));
+        setMissingFields(prev => { const u = new Set(prev); u.delete('category'); return u; });
+        categorySet = true;
+      }
+    }
+
+    const phoneRegex = /(\+?1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})/g;
+    const phones = transcript.match(phoneRegex);
+    if (phones && phones.length > 0) {
+      const phone = phones[0] || '';
+      setVoiceEntryData(prev => ({ ...prev, mobile: phone }));
+      setFormState(prev => ({ ...prev, mobile: phone }));
+      setMissingFields(prev => { const u = new Set(prev); u.delete('mobile'); return u; });
+      mobileSet = true;
+    }
+
+    if (!mobileSet) {
+      const standaloneRegex = /\b(\d{7,10})\b/g;
+      const standalone = transcript.match(standaloneRegex);
+      if (standalone && standalone.length > 0) {
+        const phone = standalone[0];
+        setVoiceEntryData(prev => ({ ...prev, mobile: phone }));
+        setFormState(prev => ({ ...prev, mobile: phone }));
+        setMissingFields(prev => { const u = new Set(prev); u.delete('mobile'); return u; });
+        mobileSet = true;
+      }
+    }
+
+    if (categorySet || mobileSet) {
+      await speak(categorySet && mobileSet
+        ? "Got the category and mobile number."
+        : categorySet
+          ? "Got the category."
+          : "Got the mobile number.");
+    } else {
+      await speak("I didn't catch a category or mobile number. Can you provide at least one?");
+      setHighlightedField('category');
+      return;
+    }
+
+    setVoiceEntryStep(3 as VoiceEntryStep);
+  }, [parseWithKeywordDelimiters, speak, sanitizeValue]);
+
+  const processWebsite = useCallback(async (transcript: string) => {
+    setHighlightedField('website');
+
+    const cleanTranscript = transcript.toLowerCase();
+    const fuzzyUrlRegex = /\b[a-z0-9.-]+\.[a-z]{2,}\b/gi;
+    const standardUrlRegex = /https?:\/\/[^\s]+/gi;
+    const normalizedTranscript = cleanTranscript.replace(/\s+dot\s+com/gi, '.com').replace(/\s+dot\s+/gi, '.');
+
+    let urls = transcript.match(standardUrlRegex);
+    if (!urls || urls.length === 0) {
+      urls = normalizedTranscript.match(fuzzyUrlRegex);
+    }
+
+    let extractedWebsite: string | null = null;
+    if (urls && urls.length > 0) {
+      const website = urls[0] || '';
+      extractedWebsite = sanitizeWebsiteUrl(website);
+    }
+
+    const lowerTranscript = transcript.toLowerCase();
+    const isSkipCommand = lowerTranscript.includes('skip') ||
+                          lowerTranscript.includes('none') ||
+                          lowerTranscript.includes('next');
+
+    if (!extractedWebsite && !isSkipCommand) {
+      console.warn('[UniversalCommandModal] No valid website domain found in transcript:', transcript);
+      await speak("I couldn't find a valid website address. Please state their website or say skip.");
+      return;
+    }
+
+    if (extractedWebsite) {
+      setVoiceEntryData(prev => ({ ...prev, website: extractedWebsite }));
+      setFormState(prev => ({ ...prev, website: extractedWebsite }));
+      setMissingFields(prev => { const u = new Set(prev); u.delete('website'); return u; });
+      await speak("Got the website URL.");
+    } else {
+      await speak("Skipping website. Moving to next step.");
+    }
+
+    setVoiceEntryStep(4 as VoiceEntryStep);
+  }, [speak, sanitizeWebsiteUrl]);
+
   const processVibe = useCallback(async (transcript: string) => {
     setHighlightedField('vibe');
+
+    let cleanedTranscript = transcript;
+    const catKeywordMatch = cleanedTranscript.match(/category\s+([a-z\s]+?)(?:\s+(?:mobile|phone|website|email|next|skip|done|$))/i);
+    if (catKeywordMatch) {
+      cleanedTranscript = cleanedTranscript.replace(new RegExp(`category\\s+${catKeywordMatch[1]}\\b`, 'i'), '');
+    }
 
     try {
       const visualStyle = {
@@ -548,8 +720,9 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
       const personaTone = `${persona.tone} and ${persona.vocabulary} with ${persona.pace} pace`;
 
       setVoicePersonaTone(personaTone);
-      setVoiceEntryData(prev => ({ ...prev, vibe: transcript }));
-      setFormState(prev => ({ ...prev, systemPrompt: transcript }));
+      const sanitizedVibe = sanitizeValue(cleanedTranscript);
+      setVoiceEntryData(prev => ({ ...prev, vibe: sanitizedVibe }));
+      setFormState(prev => ({ ...prev, systemPrompt: sanitizedVibe }));
 
       setMissingFields(prev => {
         const updated = new Set(prev);
@@ -558,113 +731,15 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
       });
 
       await speak(`Perfect! I've detected a ${personaTone} personality for this ${voiceEntryData.industry.toLowerCase()} business.`);
-
-      if (voiceEntryData.name && voiceEntryData.industry) {
-        setVoiceEntryStep(4);
-        await completeVoiceEntry();
-      }
+      await completeVoiceEntry();
     } catch {
-      setVoiceEntryData(prev => ({ ...prev, vibe: transcript }));
-      setFormState(prev => ({ ...prev, systemPrompt: transcript }));
+      const sanitizedVibe = sanitizeValue(cleanedTranscript);
+      setVoiceEntryData(prev => ({ ...prev, vibe: sanitizedVibe }));
+      setFormState(prev => ({ ...prev, systemPrompt: sanitizedVibe }));
       await speak('Got it. Let me finalize the profile.');
-      setVoiceEntryStep(4);
       await completeVoiceEntry();
     }
-  }, [voiceEntryData, speak, completeVoiceEntry]);
-
-  const processContactInfo = useCallback(async (transcript: string) => {
-    setHighlightedField('mobile');
-
-    const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
-
-    if (!session || !session.user) {
-      await speak("I'm having trouble connecting to your secure vault. Please ensure you're logged in so I can save this for you.");
-      document.body.classList.add('heartbeat-error');
-      setTimeout(() => document.body.classList.remove('heartbeat-error'), 3000);
-      return;
-    }
-
-    const phoneRegex = /(\+?1[-.\s]?)?\(?([0-9]{3})\)?[-.\s]?([0-9]{3})[-.\s]?([0-9]{4})/g;
-    const phones = transcript.match(phoneRegex);
-
-    const cleanTranscript = transcript.toLowerCase();
-    const fuzzyUrlRegex = /\b[a-z0-9.-]+\.[a-z]{2,}\b/gi;
-    const standardUrlRegex = /https?:\/\/[^\s]+/gi;
-    const normalizedTranscript = cleanTranscript.replace(/\s+dot\s+com/gi, '.com').replace(/\s+dot\s+/gi, '.');
-
-    let urls = transcript.match(standardUrlRegex);
-    if (!urls || urls.length === 0) {
-      urls = normalizedTranscript.match(fuzzyUrlRegex);
-    }
-
-    let hasWebsite = false;
-    let hasMobile = false;
-
-    if (phones && phones.length > 0) {
-      const phone = phones[0] || '';
-      setVoiceEntryData(prev => ({ ...prev, mobile: phone }));
-      setFormState(prev => ({ ...prev, mobile: phone }));
-
-      setMissingFields(prev => {
-        const updated = new Set(prev);
-        updated.delete('mobile');
-        return updated;
-      });
-
-      const mobileResponse = await generateHannahResponse('Mobile captured', 'mobile', phone);
-      await speak(mobileResponse);
-      hasMobile = true;
-    }
-
-    if (urls && urls.length > 0) {
-      const website = urls[0] || '';
-      const finalWebsite = sanitizeWebsiteUrl(website);
-
-      if (finalWebsite) {
-        setVoiceEntryData(prev => ({ ...prev, website: finalWebsite }));
-        setFormState(prev => ({ ...prev, website: finalWebsite }));
-
-        setMissingFields(prev => {
-          const updated = new Set(prev);
-          updated.delete('website');
-          return updated;
-        });
-
-        const websiteResponse = await generateHannahResponse('Website captured', 'website', finalWebsite);
-        await speak(websiteResponse);
-        hasWebsite = true;
-      }
-    }
-
-    const existingMobile = voiceEntryData.mobile;
-    const existingWebsite = voiceEntryData.website;
-    const hasExistingMobile = existingMobile && existingMobile.trim() !== '';
-    const hasExistingWebsite = existingWebsite && existingWebsite.trim() !== '';
-
-    const finalHasMobile = hasMobile || hasExistingMobile;
-    const finalHasWebsite = hasWebsite || hasExistingWebsite;
-
-    if (finalHasMobile || finalHasWebsite) {
-      if (finalHasWebsite && !finalHasMobile) {
-        if (!hasMobile) {
-          await speak("Got the site! And what's the mobile number?");
-        }
-        setHighlightedField('mobile');
-      } else if (finalHasMobile && !finalHasWebsite) {
-        if (!hasWebsite) {
-          await speak("Got mobile! And what's the website address?");
-        }
-        setHighlightedField('website');
-      } else {
-        setVoiceEntryStep(3);
-        setHighlightedField('vibe');
-        await speak('Finally, describe their business vibe or personality in a few words.');
-      }
-    } else {
-      await speak("I didn't catch a phone number or website. Can you provide at least one?");
-    }
-  }, [voiceEntryData, speak, sanitizeWebsiteUrl, generateHannahResponse]);
+  }, [voiceEntryData, speak, sanitizeValue, completeVoiceEntry]);
 
   const processEmail = useCallback(async (transcript: string) => {
     setHighlightedField('email');
@@ -704,13 +779,6 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
 
       const response = await generateHannahResponse('Email captured', 'email', finalEmail || undefined);
       await speak(response);
-
-      setVoiceEntryStep(2);
-      setHighlightedField('mobile');
-      setConversationStep('mobile');
-
-      const nextPrompt = await generateHannahResponse('Moving to next field', 'mobile');
-      await speak(nextPrompt);
     } else {
       const errorResponse = await generateHannahResponse('Missing information', 'email');
       await speak(errorResponse);
@@ -749,19 +817,26 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
 
       const data = await response.json();
 
+      const sanitizedName = sanitizeValue(data.name);
+      const sanitizedIndustry = sanitizeValue(data.industry);
+      const sanitizedCategory = sanitizeValue(data.category?.toUpperCase());
+      const _sanitizedEmail = sanitizeValue(data.email);
+      const _sanitizedMobile = sanitizeValue(data.mobile);
+      const _sanitizedWebsite = sanitizeValue(data.website);
+      const _sanitizedVibe = sanitizeValue(data.vibe);
+
       const finalName = parserFoundDelimiters
-        ? (parsed.name?.replace(/^[\s,]+/, '').trim() || data.name)
-        : data.name;
+        ? (parsed.name?.replace(/^[\s,]+/, '').trim() || sanitizedName)
+        : sanitizedName;
 
       const finalIndustry = (parserFoundDelimiters && parsed.industry?.trim())
         ? parsed.industry.trim()
-        : data.industry;
+        : sanitizedIndustry;
 
       const finalCategory = (parserFoundDelimiters && parsed.category?.trim())
         ? parsed.category.trim().toUpperCase()
-        : (data.category?.trim().toUpperCase() || '');
+        : sanitizedCategory;
 
-      // Atomic update: sync both voiceEntryData and formState
       if (finalName) {
         setVoiceEntryData(prev => ({ ...prev, name: finalName }));
         setFormState(prev => ({ ...prev, name: finalName }));
@@ -779,33 +854,11 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
         setFormState(prev => ({ ...prev, category: finalCategory }));
         setMissingFields(prev => { const u = new Set(prev); u.delete('category'); return u; });
       }
-
-      if (data.name && data.industry) {
-        setConversationStep('name');
-        const hannahResp = await generateHannahResponse('Creating client profile', 'name and industry', `${data.name} in ${data.industry}`);
-        await speak(hannahResp);
-
-        if (!finalCategory) {
-          const industryLabel = finalIndustry || data.industry;
-          await speak(`I've got the ${industryLabel} industry. To finalize the capability mapping, what is the specific category for this client?`);
-          setHighlightedField('category');
-          return;
-        }
-
-        setVoiceEntryStep(1);
-        setHighlightedField('email');
-        setConversationStep('email');
-        const nextPrompt = await generateHannahResponse('Moving to next field', 'email');
-        await speak(nextPrompt);
-      } else {
-        const errorResponse = await generateHannahResponse('Missing information', 'name and industry');
-        await speak(errorResponse);
-      }
     } catch {
       const errorResponse = await generateHannahResponse('Error processing input', 'name and industry');
       await speak(errorResponse);
     }
-  }, [parseWithKeywordDelimiters, speak, generateHannahResponse]);
+  }, [parseWithKeywordDelimiters, speak, generateHannahResponse, sanitizeValue]);
 
   const startVoiceEntryMode = useCallback(() => {
     setIsVoiceEntryMode(true);
@@ -815,47 +868,41 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
   }, [speak]);
 
   const processVoiceEntryStep = useCallback(async (transcript: string) => {
-    const lowerTranscript = transcript.toLowerCase();
-
-    if (voiceEntryStep === 2) {
-      const hasMobile = voiceEntryData.mobile && voiceEntryData.mobile.trim() !== '';
-      const hasWebsite = voiceEntryData.website && voiceEntryData.website.trim() !== '';
-
-      const isNavigationKeyword = lowerTranscript.includes('next') ||
-                                  lowerTranscript.includes('continue') ||
-                                  lowerTranscript.includes('done') ||
-                                  lowerTranscript.includes("that's it") ||
-                                  lowerTranscript.includes('finished') ||
-                                  lowerTranscript.includes('ready');
-
-      if (hasMobile && hasWebsite && isNavigationKeyword) {
-        setVoiceEntryStep(3);
-        setHighlightedField('vibe');
-        await speak('Finally, describe their business vibe or personality in a few words.');
-        return;
-      }
+    const missingRequired = getMissingRequiredFields(voiceEntryStep, voiceEntryData);
+    const required = STEP_REQUIREMENTS[voiceEntryStep];
+    const allRequiredEmpty = required.every(
+      (field) => !voiceEntryData[field] || voiceEntryData[field].trim() === '',
+    );
+    if (missingRequired.length > 0 && !allRequiredEmpty) {
+      const repromptMsg = getRepromptMessage(missingRequired);
+      setHighlightedField(missingRequired[0]);
+      await speak(repromptMsg);
+      return;
     }
 
     switch (voiceEntryStep) {
       case 0:
         await processNameAndIndustry(transcript);
+        setVoiceEntryStep(1 as VoiceEntryStep);
         break;
       case 1:
         await processEmail(transcript);
+        setVoiceEntryStep(2 as VoiceEntryStep);
         break;
       case 2:
-        await processContactInfo(transcript);
+        await processCategoryAndMobile(transcript);
+        setVoiceEntryStep(3 as VoiceEntryStep);
         break;
       case 3:
-        await processVibe(transcript);
+        await processWebsite(transcript);
+        setVoiceEntryStep(4 as VoiceEntryStep);
         break;
       case 4:
-        await completeVoiceEntry();
+        await processVibe(transcript);
         break;
     }
-  }, [voiceEntryStep, voiceEntryData, processNameAndIndustry, processEmail, processContactInfo, processVibe, completeVoiceEntry, speak]);
+  }, [voiceEntryStep, voiceEntryData, processNameAndIndustry, processEmail, processCategoryAndMobile, processWebsite, processVibe, speak]);
 
-  // ─── Handle Create Command (Direct Voice) ────────────────────────
   const handleCreateCommand = useCallback(async (command: string) => {
     try {
       if (!resellerSlug) {
@@ -884,24 +931,33 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
       const isOverride = typeof p.is_override === 'boolean' ? p.is_override : false;
       const confidence = typeof p.confidence === 'number' ? Math.min(1, Math.max(0, p.confidence)) : 0;
 
+      // Sanitize all parsed values
+      const sanitizedName = sanitizeValue(p.name);
+      const sanitizedEmail = sanitizeValue(p.email);
+      const sanitizedIndustry = sanitizeValue(p.industry);
+      const sanitizedCategory = sanitizeValue(p.category);
+      const sanitizedMobile = sanitizeValue(p.mobile);
+      const sanitizedWebsite = sanitizeValue(p.website);
+      const sanitizedSystemPrompt = sanitizeValue(p.systemPrompt);
+
       setFormState({
-        name: p.name || '',
-        email: p.email || '',
-        industry: p.industry || 'GENERAL BUSINESS',
-        category: p.category || '',
-        mobile: p.mobile || '',
-        website: p.website || '',
-        systemPrompt: p.systemPrompt || '',
+        name: sanitizedName,
+        email: sanitizedEmail,
+        industry: sanitizedIndustry || 'GENERAL BUSINESS',
+        category: sanitizedCategory,
+        mobile: sanitizedMobile,
+        website: sanitizedWebsite,
+        systemPrompt: sanitizedSystemPrompt,
       });
 
       setDraftData({
-        clientName: p.name || '',
-        clientEmail: p.email || '',
-        industry: p.industry || 'GENERAL BUSINESS',
-        category: p.category || '',
-        mobile: p.mobile || '',
-        website: p.website || '',
-        systemPrompt: p.systemPrompt || '',
+        clientName: sanitizedName,
+        clientEmail: sanitizedEmail,
+        industry: sanitizedIndustry || 'GENERAL BUSINESS',
+        category: sanitizedCategory,
+        mobile: sanitizedMobile,
+        website: sanitizedWebsite,
+        systemPrompt: sanitizedSystemPrompt,
         parsedFromVoice: true,
         is_override: isOverride,
         confidence,
@@ -913,7 +969,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
     } catch (err: unknown) {
       setError(getErrorMessage(err) || 'Failed to process command');
     }
-  }, [resellerSlug, speak]);
+  }, [resellerSlug, speak, sanitizeValue]);
 
   // ─── Handle Delete Command ───────────────────────────────────────
   const handleDeleteCommand = useCallback(async (command: string) => {
@@ -938,6 +994,8 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
   const processCommand = useCallback(async (manualTranscript?: string) => {
     const activeTranscript = manualTranscript || transcript;
     if (!activeTranscript || !activeTranscript.trim()) return;
+
+    console.log('[UniversalCommandModal] Active step & mode:', { step, voiceEntryStep, mode: isVoiceEntryMode ? 'voice-entry' : 'command', transcript: activeTranscript });
 
     setIsProcessing(true);
     setError(null);
@@ -968,7 +1026,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
     } finally {
       setIsProcessing(false);
     }
-  }, [transcript, isVoiceEntryMode, speak, processVoiceEntryStep, handleDeleteCommand, handleCreateCommand]);
+  }, [transcript, isVoiceEntryMode, step, voiceEntryStep, speak, processVoiceEntryStep, handleDeleteCommand, handleCreateCommand]);
 
   // ─── Review Confirm ──────────────────────────────────────────────
   const handleReviewConfirm = useCallback(() => {
@@ -1065,6 +1123,14 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
       setIsProcessing(false);
     }
   }, [draftData, resellerSlug, speak, validateField, normalizeIndustry, onClientCreated, onClose]);
+
+  // ─── Auto-Read Step Prompts on Voice Step Transition ──
+  useEffect(() => {
+    if (!isVoiceEntryMode) return;
+    if (voiceEntryStep === 0 || voiceEntryStep === 4) return;
+    const timer = setTimeout(() => speak(STEP_VOICE_PROMPTS[voiceEntryStep]), 0);
+    return () => clearTimeout(timer);
+  }, [voiceEntryStep, isVoiceEntryMode, speak]);
 
   // ─── Sync refs with latest callback values (after all callbacks are defined) ──
   useEffect(() => {

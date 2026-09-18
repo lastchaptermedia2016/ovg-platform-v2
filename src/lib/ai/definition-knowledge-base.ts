@@ -108,7 +108,7 @@ export const PLATFORM_DEFINITIONS: DefinitionEntry[] = [
  * Matches: "products", "services", "pricing", "plans", "features", "specs",
  *          "cost", "buy", "support", "contact"
  */
-const TOPIC_BYPASS_REGEX = /\b(products?|services?|pricing|plans?|features?|specs?|cost|buy|support|contact)\b/i;
+const TOPIC_BYPASS_REGEX = /\b(products?|services?|pricing|plans?|features?|specs?|cost|buy|support|contact|zeeder|engage|offerings)\b/i;
 
 /**
  * Lookup a definition by query text. Returns the best-matching definition

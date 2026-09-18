@@ -295,6 +295,7 @@ export async function POST(request: NextRequest) {
         tenant_id: crypto.randomUUID(),
         name: sanitizedName,
         industry: clientData.industry,
+        category: clientData.category || 'GENERAL',
         email: sanitizedEmail,           // ✅ Now safe because the column exists
         mobile_number: sanitizedMobile,  // ✅ Matches database column
         website_url: normalizedWebsite,  // ✅ Matches database column
@@ -304,7 +305,8 @@ export async function POST(request: NextRequest) {
         is_active: true,
         show_ovg_branding: true,
         pricing_tier_key: 'basic',
-        custom_assets: {}
+        custom_assets: {},
+        branding_colors: { primary: '#0097b2', secondary: '#D4AF37' },
       };
 
       console.log('[CreateClient] Final database insert payload:', {
@@ -391,7 +393,7 @@ export async function POST(request: NextRequest) {
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: `Voice command: "${voiceCommand}"` },
       ],
-      model: 'llama-3.3-70b-versatile',
+      model: 'openai/gpt-oss-20b',
       temperature: 0.1,
       max_tokens: 200,
       response_format: { type: 'json_object' },

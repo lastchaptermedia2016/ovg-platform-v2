@@ -38,7 +38,7 @@ export async function* processUserMessage(
 
     // === Step 1: Stream text from Groq LLM ===
     const completion = await groq.completions.create({
-      model: "llama-3.3-70b-versatile", // Change model as needed
+      model: "openai/gpt-oss-20b", // Change model as needed
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userMessage },
@@ -58,11 +58,11 @@ export async function* processUserMessage(
       }
     }
 
-    // === Step 2: Generate Orpheus TTS Audio (CanopyLabs) ===
+    // === Step 2: Generate Orpheus TTS Audio ===
     if (fullText.trim().length > 0) {
       try {
         const audioResponse = await groq.audio.speech.create({
-          model: "canopylabs/orpheus-v1-english",
+          model: "orpheus-english",
           voice: tenant.voice_id || "hannah",
           input: fullText,
           response_format: "wav",

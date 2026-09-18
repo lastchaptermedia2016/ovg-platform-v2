@@ -264,10 +264,10 @@ export async function POST(request: NextRequest) {
           brandingCapabilities: {}
         },
         summary: 'Welcome to the Zeeder Client Portal. You can sign in using your corporate email address and password. If you need help with credentials, please reach out to your Account Manager.',
-        metadata: {
+metadata: {
           processedAt: new Date().toISOString(),
           resellerId,
-          model: 'unauthenticated-server-guard',
+          model: 'openai/gpt-oss-20b',
         },
       });
     }
@@ -498,7 +498,7 @@ Output ONLY valid JSON.`;
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: userPrompt },
       ],
-      model: 'llama-3.3-70b-versatile',
+      model: 'openai/gpt-oss-20b',
       temperature: 0.3,
       max_tokens: 1000, // Strict cap to preserve TPM
       response_format: { type: 'json_object' },
@@ -596,7 +596,7 @@ Output ONLY valid JSON.`;
         metadata: {
           processedAt: new Date().toISOString(),
           resellerId,
-          model: 'llama-3.3-70b-versatile',
+          model: 'openai/gpt-oss-20b',
         },
       });
     }
@@ -627,7 +627,7 @@ Output ONLY valid JSON.`;
         metadata: {
           processedAt: new Date().toISOString(),
           resellerId,
-          model: 'llama-3.3-70b-versatile',
+          model: 'openai/gpt-oss-20b',
         },
       });
     }
@@ -649,7 +649,7 @@ Output ONLY valid JSON.`;
         metadata: {
           processedAt: new Date().toISOString(),
           resellerId,
-          model: 'llama-3.3-70b-versatile',
+          model: 'openai/gpt-oss-20b',
         },
       });
     }
@@ -866,15 +866,27 @@ Output ONLY valid JSON.`;
       payload,
       summary, // For Orpheus-v1 TTS
       updateResult,
-      metadata: {
-        processedAt: new Date().toISOString(),
-        resellerId,
-        model: 'llama-3.3-70b-versatile',
-      },
+metadata: {
+          processedAt: new Date().toISOString(),
+          resellerId,
+          model: 'openai/gpt-oss-20b',
+        },
     });
 
   } catch (error) {
     console.error('%c[ProcessCommand:Exception] âŒ AI Process Command Error:', 'color: #dc2626; font-weight: bold;', error);
+
+    // Surface Groq API permission/model access errors (403/404)
+    if (error && typeof error === 'object' && 'status' in error) {
+      const status = (error as { status: number }).status;
+      if (status === 403 || status === 404) {
+        const message = error instanceof Error ? error.message : String(error);
+        return NextResponse.json(
+          { error: `Groq API error (${status}): ${message}` },
+          { status: 502 }
+        );
+      }
+    }
 
     // Return clean error message as specified
     return NextResponse.json(
