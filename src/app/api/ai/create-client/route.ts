@@ -6,20 +6,14 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 import { z } from 'zod';
 import { normalizeEmail } from '@/lib/utils/sanitize-email';
 import { resolveResellerId } from '@/lib/supabase/resolve-reseller-id';
+import { normalizeIndustry, DB_INDUSTRY_VALUES } from '@/lib/utils/normalize-industry';
+import { applyVibe, type WidgetConfig } from '@/lib/ai/apply-vibe';
 
 export const dynamic = 'force-dynamic';
 
-// Production Excellence: Allowed industry enum values
-const ALLOWED_INDUSTRIES = [
-  'AUTOMOTIVE',
-  'RETAIL',
-  'HEALTHCARE',
-  'INSURANCE',
-  'AI AUTOMATION',
-  'GENERAL BUSINESS',
-] as const;
-
 // Zod schema for request validation
+// - industry: normalized via shared helper to a DB-compliant value, then
+//   enforced against the canonical enum (guarantees industry_check compliance)
 // - is_override: boolean indicating if the user explicitly stated an industry
 // - confidence: 0.0-1.0 confidence in the extraction
 // - email: auto-sanitized via .transform() to handle STT artifacts
@@ -30,9 +24,15 @@ const CreateClientRequestSchema = z.object({
   parseOnly: z.boolean().default(false),
   clientData: z.object({
     name: z.string().min(1),
-    industry: z.enum(ALLOWED_INDUSTRIES, {
-      errorMap: () => ({ message: 'Industry must be one of: AUTOMOTIVE, RETAIL, HEALTHCARE, INSURANCE, AI AUTOMATION, GENERAL BUSINESS' })
-    }),
+    industry: z
+      .string()
+      .min(1)
+      .transform(normalizeIndustry)
+      .pipe(
+        z.enum(DB_INDUSTRY_VALUES, {
+          errorMap: () => ({ message: 'Industry must normalize to one of: AUTOMOTIVE, RETAIL, HEALTHCARE, INSURANCE, AI AUTOMATION, GENERAL BUSINESS' })
+        })
+      ),
     category: z.string().optional(),
     email: z.string().email().nullable().optional().transform((val) => {
       // Layer 3 (Zod Contract): Auto-sanitize email via normalizeEmail
@@ -176,6 +176,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'resellerSlug is required' }, { status: 400 });
     }
 
+    // ── Authentication (applies to BOTH modes) ──────────────────────────────
+    // MODE 2 (parseOnly) previously skipped auth entirely and could burn
+    // Groq tokens unauthenticated — anonymous callers are now rejected with
+    // 401 before any reseller resolution or mode dispatch.
+    const { userId: callerUserId, error: callerAuthError } = await getAuthenticatedUser();
+    if (callerAuthError || !callerUserId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const supabase = await createSupabaseClient();
 
     // Payload Enforcement: Use explicit resellerId if provided, otherwise resolve from slug
@@ -203,6 +212,34 @@ export async function POST(request: NextRequest) {
       }
 
       reseller = { id: resolvedId };
+    }
+
+    // ── Authorization: verify the caller is linked to the target reseller ──
+    // Guards BOTH modes: the service-role insert in MODE 1 bypasses RLS,
+    // and MODE 2 (parseOnly) spends Groq tokens — this membership check is
+    // the sole guard preventing cross-reseller provisioning (multi-tenant
+    // isolation). It runs BEFORE mode dispatch so parseOnly cannot bypass it.
+    const { data: resellerLink, error: linkError } = await supabaseAdmin
+      .from('user_resellers')
+      .select('reseller_id')
+      .eq('user_id', callerUserId)
+      .eq('reseller_id', resellerId)
+      .maybeSingle();
+
+    if (linkError) {
+      console.error('[CreateClient] Reseller membership check failed:', linkError);
+      return NextResponse.json({ error: 'Failed to verify reseller membership' }, { status: 500 });
+    }
+
+    if (!resellerLink) {
+      console.warn('[CreateClient] Forbidden: user not linked to target reseller', {
+        userId: callerUserId,
+        resellerId,
+      });
+      return NextResponse.json(
+        { error: 'Forbidden: you do not have permission to create clients for this reseller' },
+        { status: 403 }
+      );
     }
 
     // MODE 1: Insert confirmed clientData directly (from handleConfirm)
@@ -259,38 +296,8 @@ export async function POST(request: NextRequest) {
         }, { status: 400 });
       }
 
-      // ── Authorization: verify the caller is linked to the target reseller ──
-      // The service-role insert below bypasses RLS, so this ownership check is
-      // the sole guard preventing an authenticated user from provisioning a
-      // tenant under any reseller they do not own (multi-tenant isolation).
-      const { userId: callerUserId, error: callerAuthError } = await getAuthenticatedUser();
-      if (callerAuthError || !callerUserId) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-
-      const { data: resellerLink, error: linkError } = await supabaseAdmin
-        .from('user_resellers')
-        .select('reseller_id')
-        .eq('user_id', callerUserId)
-        .eq('reseller_id', resellerId)
-        .maybeSingle();
-
-      if (linkError) {
-        console.error('[CreateClient] Reseller membership check failed:', linkError);
-        return NextResponse.json({ error: 'Failed to verify reseller membership' }, { status: 500 });
-      }
-
-      if (!resellerLink) {
-        console.warn('[CreateClient] Forbidden: user not linked to target reseller', {
-          userId: callerUserId,
-          resellerId,
-        });
-        return NextResponse.json(
-          { error: 'Forbidden: you do not have permission to create clients for this reseller' },
-          { status: 403 }
-        );
-      }
-
+      // NOTE: Authorization (401 + 403 membership) already ran above,
+      // before mode dispatch — see the block after reseller resolution.
       const insertPayload = {
         tenant_id: crypto.randomUUID(),
         name: sanitizedName,
@@ -338,34 +345,29 @@ export async function POST(request: NextRequest) {
       }
 
       // 🎨 AUTO-BRANDING: Generate AI branding based on industry and vibe
-      let widgetConfig = null;
+      // Invoked in-process via @/lib/ai/apply-vibe — no internal HTTP loop
+      // over NEXT_PUBLIC_APP_URL (which silently targeted localhost:3000 when
+      // the env var was unset).
+      let widgetConfig: WidgetConfig | null = null;
       try {
-        const vibeDescription = clientData.systemPrompt 
+        const vibeDescription = clientData.systemPrompt
           ? `${clientData.industry} business with ${clientData.systemPrompt} vibe`
           : `${clientData.industry} professional branding`;
 
-        const vibeResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/ai/apply-vibe`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            vibe: vibeDescription,
-            tenantId: newTenant.id,
-            industry: clientData.industry,
-          }),
+        const { widgetConfig: generatedConfig } = await applyVibe({
+          vibe: vibeDescription,
+          tenantId: newTenant.id,
+          industry: clientData.industry,
         });
+        widgetConfig = generatedConfig;
 
-        if (vibeResponse.ok) {
-          const vibeData = await vibeResponse.json();
-          widgetConfig = vibeData.widgetConfig;
-          
-          // Update tenant with AI-generated widget_config using service role
-          await supabaseAdmin
-            .from('tenants')
-            .update({ widget_config: widgetConfig })
-            .eq('id', newTenant.id);
-          
-          console.log('[CreateClient] ✨ Auto-branding applied:', vibeData.widgetConfig.vibeName);
-        }
+        // Update tenant with AI-generated widget_config using service role
+        await supabaseAdmin
+          .from('tenants')
+          .update({ widget_config: generatedConfig })
+          .eq('id', newTenant.id);
+
+        console.log('[CreateClient] ✨ Auto-branding applied:', generatedConfig.vibeName);
       } catch (brandingError) {
         console.error('[CreateClient] Auto-branding failed (non-blocking):', brandingError);
         // Non-blocking - tenant is still created even if branding fails

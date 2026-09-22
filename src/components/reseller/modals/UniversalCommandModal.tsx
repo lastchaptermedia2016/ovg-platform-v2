@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { mapVisualStyleToPersona } from '@/lib/voice-visual-harmony';
 import { createClient } from '@/lib/supabase/client';
 import { resolveResellerId } from '@/lib/supabase/resolve-reseller-id';
+import { normalizeIndustry } from '@/lib/utils/normalize-industry';
 
 function triggerHapticFeedback(): void {
   if (typeof navigator !== "undefined" && navigator.vibrate) {
@@ -162,7 +163,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isSubmitting] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // ─── Atomic Form State (single source of truth) ──────────────────
   const [formState, setFormState] = useState<FormState>(INITIAL_FORM_STATE);
@@ -205,55 +206,10 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
   // PTT: debounce timer so stopListening always fires even on rapid release
   const pttStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ─── Industry Enum & Normalization ───────────────────────────────
-  const normalizeIndustry = useCallback((industry: string): string => {
-    const ALLOWED_INDUSTRIES = [
-      'AUTOMOTIVE',
-      'RETAIL',
-      'HEALTHCARE',
-      'INSURANCE',
-      'AI AUTOMATION',
-      'GENERAL BUSINESS',
-    ] as const;
-    const upperIndustry = industry.toUpperCase().trim();
-
-    if ((ALLOWED_INDUSTRIES as readonly string[]).includes(upperIndustry)) {
-      return upperIndustry;
-    }
-
-    const fuzzyMap: Record<string, string> = {
-      'INSURANCE': 'INSURANCE',
-      'INSURE': 'INSURANCE',
-      'INSURENS': 'INSURANCE',
-      'INSUR': 'INSURANCE',
-      'AUTO': 'AUTOMOTIVE',
-      'CAR': 'AUTOMOTIVE',
-      'VEHICLE': 'AUTOMOTIVE',
-      'AUTOMOTIVE': 'AUTOMOTIVE',
-      'RETAIL': 'RETAIL',
-      'STORE': 'RETAIL',
-      'SHOP': 'RETAIL',
-      'HEALTH': 'HEALTHCARE',
-      'MEDICAL': 'HEALTHCARE',
-      'HEALTHCARE': 'HEALTHCARE',
-      'HEALTH CARE': 'HEALTHCARE',
-      'AI': 'AI AUTOMATION',
-      'AUTOMATION': 'AI AUTOMATION',
-      'AI AUTOMATION': 'AI AUTOMATION',
-      'GENERAL': 'GENERAL BUSINESS',
-      'BUSINESS': 'GENERAL BUSINESS',
-      'GENERAL BUSINESS': 'GENERAL BUSINESS',
-      'OTHER': 'GENERAL BUSINESS',
-    };
-
-    for (const [key, value] of Object.entries(fuzzyMap)) {
-      if (upperIndustry.includes(key)) {
-        return value;
-      }
-    }
-
-    return 'GENERAL BUSINESS';
-  }, []);
+  // ─── Industry normalization via shared helper ─────────────────────
+  // Single source of truth: @/lib/utils/normalize-industry (also used by
+  // /api/ai/create-client and /api/reseller/tenants/create), guaranteeing
+  // the modal, both routes, and the industry_check constraint agree.
 
   // ─── Keyword Delimiter Parser ────────────────────────────────────
   const parseWithKeywordDelimiters = useCallback((transcript: string): {
@@ -1046,7 +1002,8 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
 
   // ─── Handle Confirm (Final Submit) ───────────────────────────────
   const handleConfirm = useCallback(async () => {
-    if (!draftData) return;
+    if (!draftData || isSubmitting) return;
+    setIsSubmitting(true);
     setIsProcessing(true);
 
     try {
@@ -1055,7 +1012,6 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
 
       if (!session) {
         await speak("I'm having trouble connecting to your secure vault. Please ensure you're logged in so I can save this for you.");
-        setIsProcessing(false);
         return;
       }
 
@@ -1067,20 +1023,17 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
           if (!resolvedId) {
             console.error('OVG-PLATFORM-V2: Failed to resolve resellerId for slug:', resellerSlug);
             await speak("I'm having trouble verifying your reseller account. Please try again.");
-            setIsProcessing(false);
             return;
           }
 
           resellerId = resolvedId;
         } catch {
           await speak('There was an error preparing your client data. Please try again.');
-          setIsProcessing(false);
           return;
         }
       } else {
         console.error('OVG-PLATFORM-V2: No resellerSlug provided for payload enforcement');
         await speak('Reseller context is missing. Please refresh the page and try again.');
-        setIsProcessing(false);
         return;
       }
 
@@ -1121,8 +1074,9 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
       setError(getErrorMessage(err) || 'Failed to create client');
     } finally {
       setIsProcessing(false);
+      setIsSubmitting(false);
     }
-  }, [draftData, resellerSlug, speak, validateField, normalizeIndustry, onClientCreated, onClose]);
+  }, [draftData, isSubmitting, resellerSlug, speak, validateField, onClientCreated, onClose]);
 
   // ─── Auto-Read Step Prompts on Voice Step Transition ──
   useEffect(() => {

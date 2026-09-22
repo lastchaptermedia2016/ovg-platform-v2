@@ -120,6 +120,7 @@ export async function POST(request: NextRequest) {
         title,
         content,
         category: category ?? null,
+        is_active: true,
       })
       .select()
       .single();

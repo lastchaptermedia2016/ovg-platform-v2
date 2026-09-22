@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { z } from "zod";
 import { getBlueprintForIndustry } from "@/config/ai-engine";
+import { normalizeIndustry, DB_INDUSTRY_VALUES } from "@/lib/utils/normalize-industry";
 
 // ──────────────────────────────────────────────
 // Request validation schema
@@ -12,7 +13,21 @@ const CreateTenantSchema = z.object({
   name: z.string().min(1, "Client name is required"),
   email: z.string().email("Valid email required").nullable().optional(),
   websiteUrl: z.string().url("Valid URL required").nullable().optional(),
-  industry: z.enum(["HEALTHCARE", "AUTOMOTIVE", "GENERAL"]),
+  // Accept any industry string, normalize it to a DB-compliant value, then
+  // enforce the canonical enum (guarantees industry_check compliance).
+  // Note: wizard enum 'GENERAL' normalizes to 'GENERAL BUSINESS'.
+  industry: z
+    .string()
+    .min(1, "Industry is required")
+    .transform(normalizeIndustry)
+    .pipe(
+      z.enum(DB_INDUSTRY_VALUES, {
+        errorMap: () => ({
+          message:
+            "Industry must normalize to one of: AUTOMOTIVE, RETAIL, HEALTHCARE, INSURANCE, AI AUTOMATION, GENERAL BUSINESS",
+        }),
+      }),
+    ),
 });
 
 // ──────────────────────────────────────────────

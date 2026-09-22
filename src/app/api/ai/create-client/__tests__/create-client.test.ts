@@ -98,9 +98,10 @@ describe('create-client multi-tenant isolation guard', () => {
     vi.clearAllMocks();
     capturedInserts = [];
     terminal = makeTerminal({ id: 'new-tenant-uuid', name: 'Acme Motors', industry: 'AUTOMOTIVE' });
-    // The route makes a real internal fetch to /api/ai/apply-vibe after a
-    // successful insert. Stub it so the test is deterministic and never hangs
-    // when a dev server is listening on NEXT_PUBLIC_APP_URL.
+    // The route runs auto-branding in-process via @/lib/ai/apply-vibe (the
+    // Groq mock returns '{}' so schema validation fails and branding is
+    // skipped non-blockingly). Keep a defensive fetch stub so any residual
+    // network call can never hang the test.
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ widgetConfig: { vibeName: 'Test Vibe' } }),
