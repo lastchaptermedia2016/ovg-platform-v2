@@ -324,6 +324,15 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
       reconnectTimerRef.current = setTimeout(async () => {
         reconnectAttemptRef.current += 1;
         try {
+          // Explicitly clean up existing channel before reconnecting
+          if (channelRef.current) {
+            try {
+              supabase.removeChannel(channelRef.current);
+            } catch {
+              // best-effort cleanup
+            }
+            channelRef.current = null;
+          }
           // A heartbeat timeout means the underlying Realtime (Phoenix) socket
           // is dead — re-subscribing a new channel onto it won't recover.
           // Force the socket to reset first; the new channel subscription will
@@ -338,18 +347,20 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
     };
 
     const subscribeToChatMessages = async (): Promise<void> => {
-      await loadConversations();
-
-      const resolvedTenantId = await resolveTenantIdentifier(tenantId, supabase);
-      const channelName = `chat_messages:${resolvedTenantId}:${Math.random().toString(36).slice(2, 9)}`;
+      // Explicitly remove existing channel to prevent duplicate socket collision
       if (channelRef.current) {
         try {
-          await supabase.removeChannel(channelRef.current);
+          supabase.removeChannel(channelRef.current);
         } catch {
           // best-effort cleanup
         }
         channelRef.current = null;
       }
+
+      await loadConversations();
+
+      const resolvedTenantId = await resolveTenantIdentifier(tenantId, supabase);
+      const channelName = `chat_messages:${resolvedTenantId}:${Math.random().toString(36).slice(2, 9)}`;
 
       const channel = supabase.channel(channelName);
       channel.on(
