@@ -34,6 +34,7 @@ import { isZeederActionId, type ZeederActionId } from '@/lib/zeeder/action-regis
 import type { CanonicalBranding } from '@/lib/schemas/tenant-config.canonical';
 import { markVoiceNavigation } from '@/lib/voice/voiceNavSignal';
 import { transcodeBlobToWav } from '@/utils/audio/transcode-to-wav';
+import { requestClientTranscription, transcribeWithFallback, describeSttError } from '@/lib/voice/stt-client';
 import { getSpeechRecognition } from '@/types/voice-parser';
 import { useVoiceState } from '@/providers/voice-provider';
 
@@ -290,19 +291,17 @@ export function useZeederVoice({ tenantId, resellerSlug }: { tenantId?: string; 
    * Transcribe a recorded audio blob via the secure /api/client/stt endpoint.
    * Throws on any failure so the caller can fall back to Web Speech.
    */
-  const transcribeBlob = useCallback(async (blob: Blob): Promise<string> => {
-    const wavBlob = await transcodeBlobToWav(blob);
-    const form = new FormData();
-    form.append('file', wavBlob, 'recording.wav');
+  const transcribeBlob = useCallback(
+    async (blob: Blob): Promise<string> => {
+      const wavBlob = await transcodeBlobToWav(blob);
+      return requestClientTranscription({
+        blob: wavBlob,
+        tenantId,
+      });
+    },
+    [tenantId],
+  );
 
-    const res = await fetch('/api/client/stt', { method: 'POST', body: form });
-    if (!res.ok) {
-      const body = await res.json().catch(() => null);
-      throw new Error(body?.error ?? `STT failed with status ${res.status}`);
-    }
-    const data = (await res.json()) as { text?: string };
-    return data.text?.trim() ?? '';
-  }, []);
 
   /**
    * Begin push-to-talk capture with the high-fidelity MediaRecorder pipeline.
@@ -377,51 +376,26 @@ export function useZeederVoice({ tenantId, resellerSlug }: { tenantId?: string; 
         
         try {
           console.log('[ZEEDER-VOICE] Transcoding blob', { size: blob.size, type: blob.type });
-          const text = await transcribeBlob(blob);
-          transcriptRef.current = text;
-          setTranscript(text);
-          if (text) handleVoiceCommandRef.current(text);
-        } catch (err) {
-          // Safely extract error details from any error type
-          let errorInfo: Record<string, unknown> = {};
-          
-          if (err instanceof Error) {
-            errorInfo = {
-              errorType: err.name,
-              errorMessage: err.message,
-              errorStack: err.stack?.split('\n').slice(0, 2).join(' '),
-            };
-          } else if (typeof err === 'object' && err !== null) {
-            const errObj = err as Record<string, unknown>;
-            const objMessage = errObj.message ?? errObj.toString?.() ?? 'Unknown';
-            errorInfo = {
-              errorType: errObj.constructor?.name ?? 'Unknown',
-              errorMessage: objMessage,
-              errorName: errObj.name,
-            };
-          } else if (typeof err === 'string') {
-            errorInfo = {
-              errorType: 'string',
-              errorMessage: err,
-            };
-          } else {
-            errorInfo = {
-              errorType: typeof err,
-              errorMessage: String(err),
-            };
+          const result = await transcribeWithFallback(
+            () => transcribeBlob(blob),
+            (err) => {
+              console.error('[ZEEDER-VOICE] Whisper STT failed — falling back to Web Speech.', {
+                ...describeSttError(err),
+                blobSize: blob.size,
+                blobType: blob.type,
+                mimeType: recorder.mimeType,
+              });
+              // Clear any partial transcript before fallback
+              setTranscript('');
+              transcriptRef.current = '';
+              runWebSpeechFallback();
+            },
+          );
+          if (!result.fellBack) {
+            transcriptRef.current = result.text;
+            setTranscript(result.text);
+            if (result.text) handleVoiceCommandRef.current(result.text);
           }
-          
-          console.error('[ZEEDER-VOICE] Whisper STT failed — falling back to Web Speech.', {
-            ...errorInfo,
-            blobSize: blob.size,
-            blobType: blob.type,
-            mimeType: recorder.mimeType,
-          });
-          
-          // Clear any partial transcript before fallback
-          setTranscript('');
-          transcriptRef.current = '';
-          runWebSpeechFallback();
         } finally {
           teardownRecording();
         }

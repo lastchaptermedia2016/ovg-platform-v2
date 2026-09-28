@@ -28,6 +28,7 @@ import { zeederActionRegistry, isZeederActionId, type ZeederActionId } from '@/l
 import { CLIENT_SYSTEM_REGISTRY, type ClientSystemItem, PAGE_WELCOME_GREETINGS } from '@/lib/client-system-registry';
 import { extractPersonaMode, hasPersonaModeIntent } from '@/lib/ai/extract-persona-mode';
 import { buildSystemPrompt, type KnowledgeEntry } from '@/lib/ai/system-prompt-builder';
+import { getTenantKnowledgeContext, type KnowledgeItem } from '@/lib/reseller/tenant-knowledge-engine';
 import { getClientMemories, extractAndStoreMemories, type ClientMemoryMap } from '@/lib/ai/memory-service';
 import { getVisitorMemories, extractAndStoreVisitorMemories, touchVisitorMemory, normalizeVisitorPhone, normalizeVisitorEmail, type VisitorIdentityType } from '@/lib/ai/memory-service';
 import { resolveTenantId } from '@/lib/resolveTenantId';
@@ -1143,36 +1144,41 @@ async function runSemanticFallback(
     // ── KB-RAG-TRACE: incoming tenant identity ──────────────────────────
     console.log('[KB-RAG-TRACE] incoming tenantId:', persistCtx?.tenantId ?? null, 'isAnon:', isAnon, 'query:', text);
 
-    // ── Knowledge Base context fetch ─────────────────────────────────────
-    // Pull active tenant_knowledge entries so the public widget can reference
-    // custom products/services instead of only the hardcoded template catalog.
+        // ── Knowledge Base context fetch ─────────────────────────────────────
+    // Pull active tenant_knowledge entries via the dedicated retrieval engine
+    // (getTenantKnowledgeContext) so the public widget can reference custom
+    // products/services instead of only the hardcoded template catalog.
+    // The engine enforces multi-tenant isolation (tenant_id + is_active = true)
+    // and never throws — failures resolve to an empty result with error.
     let knowledgeEntries: KnowledgeEntry[] = [];
     if (persistCtx?.tenantId && tenantClient) {
-      const { data: kbData, error: kbError } = await tenantClient
-        .from('tenant_knowledge')
-        .select('title, content, category')
-        .eq('tenant_id', persistCtx.tenantId)
-        .eq('is_active', true)
-        .order('created_at', { ascending: true });
+      const { items: kbItems, error: kbError } = await getTenantKnowledgeContext(
+        persistCtx.tenantId,
+        tenantClient,
+      );
 
-      // ── KB-RAG-TRACE: exact KB query + raw results ────────────────────
-      console.log('[KB-RAG-TRACE] KB query tenant_id:', persistCtx.tenantId, 'error:', kbError?.message ?? null, 'results:', kbData ?? []);
+      if (kbError) {
+        console.warn('[KB-RAG-TRACE] Knowledge retrieval error (non-blocking):', kbError);
+      } else {
+        console.log('[KB-RAG-TRACE] KB query tenant_id:', persistCtx.tenantId, 'results:', kbItems);
+      }
 
-      if (!kbError && Array.isArray(kbData)) {
-        // Deduplicate by title & content snippet to prevent product repetition.
-        const seen = new Set<string>();
-        knowledgeEntries = kbData
-          .map((row: Record<string, unknown>) => ({
-            title: typeof row.title === 'string' ? row.title : '',
-            content: typeof row.content === 'string' ? row.content : '',
-            category: typeof row.category === 'string' ? row.category : null,
-          }))
-          .filter((entry) => {
-            const key = `${entry.title.trim().toLowerCase()}:${entry.content.trim().slice(0, 50).toLowerCase()}`;
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-          });
+      // Deduplicate by title & content snippet to prevent product repetition.
+      const seen = new Set<string>();
+      knowledgeEntries = kbItems
+        .map((item: KnowledgeItem): KnowledgeEntry => ({
+          title: item.title,
+          content: item.content,
+          category: item.category ?? null,
+        }))
+        .filter((entry) => {
+          const key = `${entry.title.trim().toLowerCase()}:${entry.content.trim().slice(0, 50).toLowerCase()}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+
+      if (knowledgeEntries.length > 0) {
         console.log('[KB-RAG-TRACE] KB entries after dedup:', knowledgeEntries.map(e => ({ title: e.title, contentLen: e.content.length, category: e.category })));
       }
     }

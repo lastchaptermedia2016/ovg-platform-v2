@@ -5,6 +5,12 @@ import { mapVisualStyleToPersona } from '@/lib/voice-visual-harmony';
 import { createClient } from '@/lib/supabase/client';
 import { resolveResellerId } from '@/lib/supabase/resolve-reseller-id';
 import { normalizeIndustry } from '@/lib/utils/normalize-industry';
+import { VoiceStepMachine } from './client-creation/VoiceStepMachine';
+import { ManualClientForm } from './client-creation/ManualClientForm';
+import { ReviewSubmitStep } from './client-creation/ReviewSubmitStep';
+import { INITIAL_FORM_STATE, INITIAL_VOICE_ENTRY_DATA, STEP_VOICE_PROMPTS, getMissingRequiredFields, getRepromptMessage } from './client-creation/constants';
+import { classifyVibeInput, MIN_VIBE_LENGTH } from './client-creation/vibe-gating';
+import type { DraftData, FormState, ReviewData, VoiceEntryData, VoiceEntryStep, VoiceStepOutcome } from './client-creation/types';
 
 function triggerHapticFeedback(): void {
   if (typeof navigator !== "undefined" && navigator.vibrate) {
@@ -13,78 +19,9 @@ function triggerHapticFeedback(): void {
 }
 
 type Step = 'command' | 'draft' | 'review' | 'confirm';
-type VoiceEntryStep = 0 | 1 | 2 | 3 | 4; // Multi-step voice entry
 
-const STEP_VOICE_PROMPTS: Record<number, string> = {
-  0: "What is the client's name and industry?",
-  1: "What's their email address?",
-  2: "What is their category or mobile number?",
-  3: "What is their website URL?",
-  4: "Let's review the client details before creating.",
-};
-
-// Category options keyed by industry
-const INDUSTRY_CATEGORY_MAP: Record<string, string[]> = {
-  AUTOMOTIVE: ['VIN_DECODE', 'LOGISTICS', 'RETAIL_SALES'],
-  RETAIL: ['ECOMMERCE', 'BRICK_AND_MORTAR'],
-  HEALTHCARE: ['CLINICAL', 'WELLNESS'],
-  INSURANCE: ['CLAIMS', 'UNDERWRITING'],
-  'AI AUTOMATION': ['AGENTIC_AI', 'WORKFLOW_AUTOMATION', 'CHATBOT'],
-  'GENERAL BUSINESS': ['GENERAL', 'CONSULTING', 'SERVICES'],
-};
-
-const getCategoriesForIndustry = (ind: string): string[] =>
-  INDUSTRY_CATEGORY_MAP[ind.toUpperCase().trim()] ?? INDUSTRY_CATEGORY_MAP['GENERAL BUSINESS'];
-
-// ─── Step-Gating Requirements ────────────────────────────────────────
-// Defines REQUIRED fields for each voiceEntryStep. Step advancement is BLOCKED
-// until ALL required fields for the current step are present and non-empty.
-const STEP_REQUIREMENTS: Record<VoiceEntryStep, (keyof VoiceEntryData)[]> = {
-  0: ['name', 'industry'],
-  1: ['email'],
-  2: ['category', 'mobile'],
-  3: ['website'],
-  4: ['vibe'],
-};
-
-function getMissingRequiredFields(step: VoiceEntryStep, data: VoiceEntryData): (keyof VoiceEntryData)[] {
-  const required = STEP_REQUIREMENTS[step];
-  if (step === 2) {
-    const hasCategory = data.category && data.category.trim() !== '';
-    const hasMobile = data.mobile && data.mobile.trim() !== '';
-    if (hasCategory || hasMobile) return [];
-    return ['category', 'mobile'];
-  }
-  return required.filter((field) => !data[field] || data[field].trim() === '');
-}
-
-function getRepromptMessage(missingFields: (keyof VoiceEntryData)[]): string {
-  if (missingFields.length === 0) return '';
-  const field = missingFields[0];
-  const prompts: Record<keyof VoiceEntryData, string> = {
-    name: "I need the client name to continue.",
-    industry: "What industry is this client in?",
-    category: "What category or use case?",
-    email: "What's their email address?",
-    mobile: "What's their mobile number?",
-    website: "What's their website address?",
-    vibe: "Describe their business vibe or personality.",
-  };
-  return prompts[field] || `Please provide the ${field}.`;
-}
-
-interface DraftData {
-  clientName: string;
-  clientEmail: string;
-  industry: string;
-  category: string;
-  mobile: string;
-  website: string;
-  systemPrompt: string;
-  parsedFromVoice: boolean;
-  is_override?: boolean;
-  confidence?: number;
-}
+/** Grace period after the last TTS playback ends before STT re-arms. */
+const STT_UNLOCK_DEBOUNCE_MS = 500;
 
 interface UniversalCommandModalProps {
   onClose: () => void;
@@ -94,57 +31,6 @@ interface UniversalCommandModalProps {
   voiceEntryLabel?: string;
   voice?: string;
   tenantId?: string;
-}
-
-// ─── Atomic Form State ─────────────────────────────────────────────
-interface FormState {
-  name: string;
-  email: string;
-  industry: string;
-  category: string;
-  mobile: string;
-  website: string;
-  systemPrompt: string;
-}
-
-const INITIAL_FORM_STATE: FormState = {
-  name: '',
-  email: '',
-  industry: 'GENERAL BUSINESS',
-  category: '',
-  mobile: '',
-  website: '',
-  systemPrompt: '',
-};
-
-interface VoiceEntryData {
-  name: string;
-  industry: string;
-  category: string;
-  email: string;
-  mobile: string;
-  website: string;
-  vibe: string;
-}
-
-const INITIAL_VOICE_ENTRY_DATA: VoiceEntryData = {
-  name: '',
-  industry: '',
-  category: '',
-  email: '',
-  mobile: '',
-  website: '',
-  vibe: '',
-};
-
-interface ReviewData {
-  name: string;
-  industry: string;
-  category: string;
-  email: string;
-  mobile: string;
-  website: string;
-  vibe: string;
 }
 
 export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, modalTitle = 'Universal Command', voiceEntryLabel = 'UNIVERSAL', voice = 'hannah', tenantId }: UniversalCommandModalProps) {
@@ -205,6 +91,14 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
   const streamRef = useRef<MediaStream | null>(null);
   // PTT: debounce timer so stopListening always fires even on rapid release
   const pttStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ─── STT Gate (prevents prompt/tail-speech bleed across steps) ─────
+  // While the active step's TTS prompt is playing — plus a short debounce
+  // after it ends — incoming STT results are discarded so prompt echo and
+  // tail speech from the previous step cannot satisfy the new step.
+  const sttLockRef = useRef(false);
+  const sttUnlockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeSpeechCountRef = useRef(0);
 
   // ─── Industry normalization via shared helper ─────────────────────
   // Single source of truth: @/lib/utils/normalize-industry (also used by
@@ -358,6 +252,9 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
       if (pttStopTimerRef.current) {
         clearTimeout(pttStopTimerRef.current);
       }
+      if (sttUnlockTimerRef.current) {
+        clearTimeout(sttUnlockTimerRef.current);
+      }
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
@@ -388,8 +285,33 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
     return () => { active = false; };
   }, [draftData, step]);
 
+  // ─── STT Lock / Debounced Unlock ──────────────────────────────────
+  // Engage the STT gate (cancels any pending unlock).
+  const lockStt = useCallback(() => {
+    if (sttUnlockTimerRef.current) {
+      clearTimeout(sttUnlockTimerRef.current);
+      sttUnlockTimerRef.current = null;
+    }
+    sttLockRef.current = true;
+  }, []);
+
+  // Release only once the LAST in-flight TTS playback settles, after a
+  // debounce so speech overlapping the tail of the prompt is discarded too.
+  const releaseSttLock = useCallback(() => {
+    activeSpeechCountRef.current = Math.max(0, activeSpeechCountRef.current - 1);
+    if (activeSpeechCountRef.current > 0) return;
+    if (sttUnlockTimerRef.current) clearTimeout(sttUnlockTimerRef.current);
+    sttUnlockTimerRef.current = setTimeout(() => {
+      sttLockRef.current = false;
+      sttUnlockTimerRef.current = null;
+    }, STT_UNLOCK_DEBOUNCE_MS);
+  }, []);
+
   // ─── TTS ─────────────────────────────────────────────────────────
   const speak = useCallback(async (text: string, metadata?: { resellerSlug?: string }) => {
+    // Hold STT for the full duration of this playback (echo/tail guard).
+    lockStt();
+    activeSpeechCountRef.current += 1;
     try {
       setIsSpeaking(true);
       const ttsMetadata = { ...metadata, resellerSlug };
@@ -426,8 +348,9 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
       console.error('[Modal TTS] Failed:', _err);
     } finally {
       setIsSpeaking(false);
+      releaseSttLock();
     }
-  }, [resellerSlug, voice, tenantId]);
+  }, [resellerSlug, voice, tenantId, lockStt, releaseSttLock]);
 
   // ─── Microphone ──────────────────────────────────────────────────
   const startListening = useCallback(async () => {
@@ -500,6 +423,13 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
 
   // ─── Transcription ───────────────────────────────────────────────
   const transcribeAudio = useCallback(async (audioBlob: Blob) => {
+    // STT gate: this audio was captured while the active step's TTS prompt
+    // was playing (or during the post-prompt debounce) — it is prompt echo /
+    // tail speech and must not be dispatched to the new step.
+    if (sttLockRef.current) {
+      setTranscript('');
+      return;
+    }
     try {
       setIsProcessing(true);
       const formData = new FormData();
@@ -527,6 +457,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
 
   // ─── Multi-Step Voice Entry ──────────────────────────────────────
   const completeVoiceEntry = useCallback(async () => {
+    setTranscript(''); // flush the utterance that completed step 4
     setHighlightedField(null);
 
     // Read from ref to avoid stale closure
@@ -547,7 +478,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
     setStep('review');
   }, [speak]);
 
-  const processCategoryAndMobile = useCallback(async (transcript: string) => {
+  const processCategoryAndMobile = useCallback(async (transcript: string): Promise<VoiceStepOutcome> => {
     setHighlightedField('category');
 
     const supabase = createClient();
@@ -557,12 +488,11 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
       await speak("I'm having trouble connecting to your secure vault. Please ensure you're logged in so I can save this for you.");
       document.body.classList.add('heartbeat-error');
       setTimeout(() => document.body.classList.remove('heartbeat-error'), 3000);
-      return;
+      return { captured: {} };
     }
 
     const parsed = parseWithKeywordDelimiters(transcript);
-    let categorySet = false;
-    let mobileSet = false;
+    const captured: Partial<VoiceEntryData> = {};
 
     if (parsed.category?.trim()) {
       const sanitizedCat = sanitizeValue(parsed.category.trim().toUpperCase());
@@ -570,7 +500,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
         setVoiceEntryData(prev => ({ ...prev, category: sanitizedCat }));
         setFormState(prev => ({ ...prev, category: sanitizedCat }));
         setMissingFields(prev => { const u = new Set(prev); u.delete('category'); return u; });
-        categorySet = true;
+        captured.category = sanitizedCat;
       }
     }
 
@@ -581,10 +511,10 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
       setVoiceEntryData(prev => ({ ...prev, mobile: phone }));
       setFormState(prev => ({ ...prev, mobile: phone }));
       setMissingFields(prev => { const u = new Set(prev); u.delete('mobile'); return u; });
-      mobileSet = true;
+      captured.mobile = phone;
     }
 
-    if (!mobileSet) {
+    if (!captured.mobile) {
       const standaloneRegex = /\b(\d{7,10})\b/g;
       const standalone = transcript.match(standaloneRegex);
       if (standalone && standalone.length > 0) {
@@ -592,26 +522,26 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
         setVoiceEntryData(prev => ({ ...prev, mobile: phone }));
         setFormState(prev => ({ ...prev, mobile: phone }));
         setMissingFields(prev => { const u = new Set(prev); u.delete('mobile'); return u; });
-        mobileSet = true;
+        captured.mobile = phone;
       }
     }
 
-    if (categorySet || mobileSet) {
-      await speak(categorySet && mobileSet
-        ? "Got the category and mobile number."
-        : categorySet
-          ? "Got the category."
-          : "Got the mobile number.");
-    } else {
+    if (Object.keys(captured).length === 0) {
       await speak("I didn't catch a category or mobile number. Can you provide at least one?");
       setHighlightedField('category');
-      return;
+      return { captured: {} };
     }
 
-    setVoiceEntryStep(3 as VoiceEntryStep);
+    await speak(captured.category && captured.mobile
+      ? "Got the category and mobile number."
+      : captured.category
+        ? "Got the category."
+        : "Got the mobile number.");
+
+    return { captured };
   }, [parseWithKeywordDelimiters, speak, sanitizeValue]);
 
-  const processWebsite = useCallback(async (transcript: string) => {
+  const processWebsite = useCallback(async (transcript: string): Promise<VoiceStepOutcome> => {
     setHighlightedField('website');
 
     const cleanTranscript = transcript.toLowerCase();
@@ -638,7 +568,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
     if (!extractedWebsite && !isSkipCommand) {
       console.warn('[UniversalCommandModal] No valid website domain found in transcript:', transcript);
       await speak("I couldn't find a valid website address. Please state their website or say skip.");
-      return;
+      return { captured: {} };
     }
 
     if (extractedWebsite) {
@@ -646,20 +576,51 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
       setFormState(prev => ({ ...prev, website: extractedWebsite }));
       setMissingFields(prev => { const u = new Set(prev); u.delete('website'); return u; });
       await speak("Got the website URL.");
-    } else {
-      await speak("Skipping website. Moving to next step.");
+      return { captured: { website: extractedWebsite } };
     }
 
-    setVoiceEntryStep(4 as VoiceEntryStep);
+    // Explicit skip/none/next is a product-rule confirmation for this step;
+    // the dispatcher treats `confirmed` as satisfying STEP_REQUIREMENTS.
+    await speak("Skipping website. Moving to next step.");
+    return { captured: {}, confirmed: true };
   }, [speak, sanitizeWebsiteUrl]);
 
-  const processVibe = useCallback(async (transcript: string) => {
+  const processVibe = useCallback(async (transcript: string): Promise<VoiceStepOutcome> => {
     setHighlightedField('vibe');
 
-    let cleanedTranscript = transcript;
-    const catKeywordMatch = cleanedTranscript.match(/category\s+([a-z\s]+?)(?:\s+(?:mobile|phone|website|email|next|skip|done|$))/i);
-    if (catKeywordMatch) {
-      cleanedTranscript = cleanedTranscript.replace(new RegExp(`category\\s+${catKeywordMatch[1]}\\b`, 'i'), '');
+    if (!transcript.trim()) {
+      await speak(getRepromptMessage(['vibe']));
+      return { captured: {} };
+    }
+
+    // Gating: tail/unrelated speech must NOT satisfy STEP_REQUIREMENTS[4].
+    const kind = classifyVibeInput(transcript);
+
+    if (kind === 'skip') {
+      // Deliberate skip signal is a product-rule confirmation (mirrors the
+      // website step); the dispatcher treats it as satisfying the step.
+      await speak('Skipping vibe. Let me finalize the profile.');
+      return { captured: {}, confirmed: true };
+    }
+
+    if (kind === 'bleed') {
+      // Another step's answer / prompt tail — never captured as the vibe.
+      await speak("That sounds like another detail. Describe the client's business vibe, or say skip.");
+      return { captured: {} };
+    }
+
+    if (kind === 'filler') {
+      // Hesitation or bare acknowledgement — ask for a deliberate vibe.
+      await speak(getRepromptMessage(['vibe']));
+      return { captured: {} };
+    }
+
+    const sanitizedVibe = sanitizeValue(transcript);
+    if (sanitizedVibe.length < MIN_VIBE_LENGTH) {
+      // Empty/too-short vibe - clarify and stay on the step. Profile completion
+      // is gated in processVoiceEntryStep once requirements are confirmed.
+      await speak(getRepromptMessage(['vibe']));
+      return { captured: {} };
     }
 
     try {
@@ -676,7 +637,6 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
       const personaTone = `${persona.tone} and ${persona.vocabulary} with ${persona.pace} pace`;
 
       setVoicePersonaTone(personaTone);
-      const sanitizedVibe = sanitizeValue(cleanedTranscript);
       setVoiceEntryData(prev => ({ ...prev, vibe: sanitizedVibe }));
       setFormState(prev => ({ ...prev, systemPrompt: sanitizedVibe }));
 
@@ -687,17 +647,18 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
       });
 
       await speak(`Perfect! I've detected a ${personaTone} personality for this ${voiceEntryData.industry.toLowerCase()} business.`);
-      await completeVoiceEntry();
+      return { captured: { vibe: sanitizedVibe } };
     } catch {
-      const sanitizedVibe = sanitizeValue(cleanedTranscript);
+      // Persona mapping failed - keep the captured vibe (draft state intact)
+      // and let the dispatcher finalize the profile.
       setVoiceEntryData(prev => ({ ...prev, vibe: sanitizedVibe }));
       setFormState(prev => ({ ...prev, systemPrompt: sanitizedVibe }));
       await speak('Got it. Let me finalize the profile.');
-      await completeVoiceEntry();
+      return { captured: { vibe: sanitizedVibe } };
     }
-  }, [voiceEntryData, speak, sanitizeValue, completeVoiceEntry]);
+  }, [voiceEntryData, speak, sanitizeValue]);
 
-  const processEmail = useCallback(async (transcript: string) => {
+  const processEmail = useCallback(async (transcript: string): Promise<VoiceStepOutcome> => {
     setHighlightedField('email');
 
     const supabase = createClient();
@@ -707,7 +668,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
       await speak("I'm having trouble connecting to your secure vault. Please ensure you're logged in so I can save this for you.");
       document.body.classList.add('heartbeat-error');
       setTimeout(() => document.body.classList.remove('heartbeat-error'), 3000);
-      return;
+      return { captured: {} };
     }
 
     const cleanEmail = transcript.toLowerCase()
@@ -717,31 +678,31 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
 
     const emailRegex = /\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/g;
     const emails = cleanEmail.match(emailRegex);
+    const finalEmail = emails && emails.length > 0 ? sanitizeEmail(emails[0]) : null;
 
-    if (emails && emails.length > 0) {
-      const email = emails[0];
-      const finalEmail = sanitizeEmail(email);
+    if (finalEmail) {
+      setVoiceEntryData(prev => ({ ...prev, email: finalEmail }));
+      setFormState(prev => ({ ...prev, email: finalEmail }));
 
-      if (finalEmail) {
-        setVoiceEntryData(prev => ({ ...prev, email: finalEmail }));
-        setFormState(prev => ({ ...prev, email: finalEmail }));
+      setMissingFields(prev => {
+        const updated = new Set(prev);
+        updated.delete('email');
+        return updated;
+      });
 
-        setMissingFields(prev => {
-          const updated = new Set(prev);
-          updated.delete('email');
-          return updated;
-        });
-      }
-
-      const response = await generateHannahResponse('Email captured', 'email', finalEmail || undefined);
+      const response = await generateHannahResponse('Email captured', 'email', finalEmail);
       await speak(response);
-    } else {
-      const errorResponse = await generateHannahResponse('Missing information', 'email');
-      await speak(errorResponse);
+      return { captured: { email: finalEmail } };
     }
+
+    // No valid email captured - voice the clarification and let the user
+    // speak again (step advancement is owned by processVoiceEntryStep).
+    const errorResponse = await generateHannahResponse('Missing information', 'email');
+    await speak(errorResponse);
+    return { captured: {} };
   }, [speak, sanitizeEmail, generateHannahResponse]);
 
-  const processNameAndIndustry = useCallback(async (transcript: string) => {
+  const processNameAndIndustry = useCallback(async (transcript: string): Promise<VoiceStepOutcome> => {
     setHighlightedField('name');
 
     const supabase = createClient();
@@ -751,7 +712,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
       await speak("I'm having trouble connecting to your secure vault. Please ensure you're logged in so I can save this for you.");
       document.body.classList.add('heartbeat-error');
       setTimeout(() => document.body.classList.remove('heartbeat-error'), 3000);
-      return;
+      return { captured: {} };
     }
 
     const parsed = parseWithKeywordDelimiters(transcript);
@@ -793,71 +754,120 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
         ? parsed.category.trim().toUpperCase()
         : sanitizedCategory;
 
+      const captured: Partial<VoiceEntryData> = {};
+
       if (finalName) {
         setVoiceEntryData(prev => ({ ...prev, name: finalName }));
         setFormState(prev => ({ ...prev, name: finalName }));
         setMissingFields(prev => { const u = new Set(prev); u.delete('name'); return u; });
+        captured.name = finalName;
       }
 
       if (finalIndustry) {
         setVoiceEntryData(prev => ({ ...prev, industry: finalIndustry }));
         setFormState(prev => ({ ...prev, industry: finalIndustry.toUpperCase() }));
         setMissingFields(prev => { const u = new Set(prev); u.delete('industry'); return u; });
+        captured.industry = finalIndustry;
       }
 
       if (finalCategory) {
         setVoiceEntryData(prev => ({ ...prev, category: finalCategory }));
         setFormState(prev => ({ ...prev, category: finalCategory }));
         setMissingFields(prev => { const u = new Set(prev); u.delete('category'); return u; });
+        captured.category = finalCategory;
       }
+
+      // Clarify when this attempt captured nothing - merged with prior draft
+      // state so the prompt names the correct outstanding field.
+      if (Object.keys(captured).length === 0) {
+        const gaps: (keyof VoiceEntryData)[] = [];
+        if (!finalName && !voiceEntryData.name) gaps.push('name');
+        if (!finalIndustry && !voiceEntryData.industry) gaps.push('industry');
+        if (gaps.length > 0) {
+          setHighlightedField(gaps[0]);
+          await speak(getRepromptMessage(gaps));
+        }
+      }
+
+      return { captured };
     } catch {
       const errorResponse = await generateHannahResponse('Error processing input', 'name and industry');
       await speak(errorResponse);
+      return { captured: {} };
     }
-  }, [parseWithKeywordDelimiters, speak, generateHannahResponse, sanitizeValue]);
+  }, [parseWithKeywordDelimiters, speak, generateHannahResponse, sanitizeValue, voiceEntryData]);
 
   const startVoiceEntryMode = useCallback(() => {
+    setTranscript(''); // start with a clean transcript buffer
     setIsVoiceEntryMode(true);
     setVoiceEntryStep(0);
     setVoiceEntryData(INITIAL_VOICE_ENTRY_DATA);
     speak("Let's create a new client. First, tell me the client name and industry.");
   }, [speak]);
 
-  const processVoiceEntryStep = useCallback(async (transcript: string) => {
-    const missingRequired = getMissingRequiredFields(voiceEntryStep, voiceEntryData);
-    const required = STEP_REQUIREMENTS[voiceEntryStep];
-    const allRequiredEmpty = required.every(
-      (field) => !voiceEntryData[field] || voiceEntryData[field].trim() === '',
-    );
-    if (missingRequired.length > 0 && !allRequiredEmpty) {
-      const repromptMsg = getRepromptMessage(missingRequired);
-      setHighlightedField(missingRequired[0]);
-      await speak(repromptMsg);
+  /**
+   * Voice step dispatcher - the SINGLE owner of step advancement.
+   *
+   * Gating contract:
+   *  1. Run the extractor for the active step; it captures fields, persists
+   *     them, and voices its own clarification when it captures nothing.
+   *  2. Merge prior draft state with this attempt's captures.
+   *  3. Advance ONLY when all STEP_REQUIREMENTS for the active step are
+   *     satisfied (or the extractor confirmed the step via a product rule
+   *     such as an explicit website or vibe 'skip').
+   *  4. Otherwise keep voiceEntryStep unchanged so the user can speak again -
+   *     existing draft state is never rolled back or corrupted.
+   */
+  const processVoiceEntryStep = useCallback(async (transcript: string): Promise<void> => {
+    const prior = voiceEntryData;
+    const activeStep = voiceEntryStep;
+
+    let outcome: VoiceStepOutcome;
+    switch (activeStep) {
+      case 0:
+        outcome = await processNameAndIndustry(transcript);
+        break;
+      case 1:
+        outcome = await processEmail(transcript);
+        break;
+      case 2:
+        outcome = await processCategoryAndMobile(transcript);
+        break;
+      case 3:
+        outcome = await processWebsite(transcript);
+        break;
+      case 4:
+        outcome = await processVibe(transcript);
+        break;
+    }
+
+    const merged: VoiceEntryData = { ...prior, ...outcome.captured };
+    const missing = outcome.confirmed ? [] : getMissingRequiredFields(activeStep, merged);
+
+    if (missing.length > 0) {
+      // Failed or partial extraction -> STAY on activeStep. When the extractor
+      // captured nothing it has already voiced its clarification; when it made
+      // partial progress, voice the specific outstanding field here.
+      if (Object.keys(outcome.captured).length > 0) {
+        setHighlightedField(missing[0]);
+        await speak(getRepromptMessage(missing));
+      }
       return;
     }
 
-    switch (voiceEntryStep) {
-      case 0:
-        await processNameAndIndustry(transcript);
-        setVoiceEntryStep(1 as VoiceEntryStep);
-        break;
-      case 1:
-        await processEmail(transcript);
-        setVoiceEntryStep(2 as VoiceEntryStep);
-        break;
-      case 2:
-        await processCategoryAndMobile(transcript);
-        setVoiceEntryStep(3 as VoiceEntryStep);
-        break;
-      case 3:
-        await processWebsite(transcript);
-        setVoiceEntryStep(4 as VoiceEntryStep);
-        break;
-      case 4:
-        await processVibe(transcript);
-        break;
+    // Requirements confirmed for this step.
+    if (activeStep === 4) {
+      await completeVoiceEntry();
+      return;
     }
-  }, [voiceEntryStep, voiceEntryData, processNameAndIndustry, processEmail, processCategoryAndMobile, processWebsite, processVibe, speak]);
+
+    // Step transition: flush the transcript buffer and engage the STT gate so
+    // the utterance that satisfied this step — and any tail speech captured
+    // while the next step's TTS prompt plays — cannot bleed into the new step.
+    setTranscript('');
+    lockStt();
+    setVoiceEntryStep((activeStep + 1) as VoiceEntryStep);
+  }, [voiceEntryStep, voiceEntryData, processNameAndIndustry, processEmail, processCategoryAndMobile, processWebsite, processVibe, speak, completeVoiceEntry, lockStt]);
 
   const handleCreateCommand = useCallback(async (command: string) => {
     try {
@@ -1078,10 +1088,49 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
     }
   }, [draftData, isSubmitting, resellerSlug, speak, validateField, onClientCreated, onClose]);
 
+  // ─── Sub-Component Handlers (orchestration for extracted views) ──
+  const handleFormChange = useCallback((patch: Partial<FormState>) => {
+    setFormState(prev => ({ ...prev, ...patch }));
+  }, []);
+
+  const handleIndustryChange = useCallback((industry: string) => {
+    setFormState(prev => ({ ...prev, industry, category: '' }));
+    setCategoryError(false);
+  }, []);
+
+  const handleCategoryChange = useCallback((category: string) => {
+    setFormState(prev => ({ ...prev, category }));
+    setCategoryError(false);
+  }, []);
+
+  const handleEditCommand = useCallback(() => {
+    setStep('command');
+    setTranscript('');
+  }, []);
+
+  const handleProceedToConfirm = useCallback(() => {
+    setStep('confirm');
+  }, []);
+
+  const handleBackToDraft = useCallback(() => {
+    setStep('draft');
+  }, []);
+
+  const handleReviewChange = useCallback((patch: Partial<ReviewData>) => {
+    setReviewData(prev => ({ ...prev, ...patch }));
+  }, []);
+
+  const handleProcessCommandClick = useCallback(() => {
+    void processCommand(transcript);
+  }, [processCommand, transcript]);
+
   // ─── Auto-Read Step Prompts on Voice Step Transition ──
   useEffect(() => {
     if (!isVoiceEntryMode) return;
-    if (voiceEntryStep === 0 || voiceEntryStep === 4) return;
+    // Step 0's opening prompt is spoken by startVoiceEntryMode; every
+    // subsequent transition (including step 4 / vibe) must prompt here so
+    // the user gets a deliberate ask before any utterance is accepted.
+    if (voiceEntryStep === 0) return;
     const timer = setTimeout(() => speak(STEP_VOICE_PROMPTS[voiceEntryStep]), 0);
     return () => clearTimeout(timer);
   }, [voiceEntryStep, isVoiceEntryMode, speak]);
@@ -1120,444 +1169,58 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
         {/* Content */}
         <div className="p-6">
           {step === 'command' && (
-            <div className="space-y-6">
-              {/* Voice Entry Mode UI */}
-              {isVoiceEntryMode && (
-                <div className="space-y-4">
-                  {/* Step Progress Indicator */}
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex gap-2">
-                      {[0, 1, 2, 3, 4].map((stepIdx) => (
-                        <div
-                          key={stepIdx}
-                          className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium transition-all ${
-                            stepIdx <= voiceEntryStep
-                              ? 'bg-cyan-500 text-white'
-                              : 'bg-white/10 text-white/40'
-                          }`}
-                        >
-                          {stepIdx + 1}
-                        </div>
-                      ))}
-                    </div>
-                    <div className="text-xs text-white/60">
-                      Step {voiceEntryStep + 1} of 5
-                    </div>
-                  </div>
-
-                  {/* Current Step Instructions */}
-                  <div className="backdrop-blur-xl bg-cyan-500/10 border border-cyan-500/20 rounded-lg p-3">
-                    <div className="text-xs text-cyan-300 font-medium">
-                      {voiceEntryStep === 0 && "Tell me the client name and industry"}
-                      {voiceEntryStep === 1 && "What's their email address?"}
-                      {voiceEntryStep === 2 && "Mobile number and website"}
-                      {voiceEntryStep === 3 && "Describe their business vibe"}
-                      {voiceEntryStep === 4 && "Completing profile..."}
-                    </div>
-                  </div>
-
-                  {/* Real-time Field Highlighting — reads from voiceEntryData (preview) */}
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className={`backdrop-blur-xl bg-white/[0.02] border rounded-lg p-2 transition-all ${
-                      highlightedField === 'name' ? 'border-cyan-500 bg-cyan-500/10' : 'border-white/10'
-                    }`}>
-                      <div className="text-xs text-white/60">Name</div>
-                      <div className="text-sm text-white">{voiceEntryData.name || '...'}</div>
-                    </div>
-                    <div className={`backdrop-blur-xl bg-white/[0.02] border rounded-lg p-2 transition-all ${
-                      highlightedField === 'industry' ? 'border-cyan-500 bg-cyan-500/10' : 'border-white/10'
-                    }`}>
-                      <div className="text-xs text-white/60">Industry</div>
-                      <div className="text-sm text-white">{voiceEntryData.industry || '...'}</div>
-                    </div>
-                    <div className={`backdrop-blur-xl bg-white/[0.02] border rounded-lg p-2 transition-all ${
-                      highlightedField === 'category' ? 'border-amber-400 bg-amber-400/10' : 'border-white/10'
-                    }`}>
-                      <div className="text-xs text-white/60">Category</div>
-                      <div className="text-sm text-white">{voiceEntryData.category || '...'}</div>
-                    </div>
-                    <div className={`backdrop-blur-xl bg-white/[0.02] border rounded-lg p-2 transition-all ${
-                      highlightedField === 'email' ? 'border-cyan-500 bg-cyan-500/10' : 'border-white/10'
-                    }`}>
-                      <div className="text-xs text-white/60">Email</div>
-                      <div className="text-sm text-white">{voiceEntryData.email || '...'}</div>
-                    </div>
-                    <div className={`backdrop-blur-xl bg-white/[0.02] border rounded-lg p-2 transition-all ${
-                      (highlightedField === 'mobile' || (voiceEntryStep === 2 && !voiceEntryData.mobile)) ? 'border-cyan-500 bg-cyan-500/10' : 'border-white/10'
-                    }`}>
-                      <div className="text-xs text-white/60">Mobile</div>
-                      <div className="text-sm text-white">{voiceEntryData.mobile || '...'}</div>
-                    </div>
-                    <div className={`backdrop-blur-xl bg-white/[0.02] border rounded-lg p-2 transition-all ${
-                      (highlightedField === 'website' || (voiceEntryStep === 2 && !voiceEntryData.website)) ? 'border-cyan-500 bg-cyan-500/10' : 'border-white/10'
-                    }`}>
-                      <div className="text-xs text-white/60">Website</div>
-                      <div className="text-sm text-white">{voiceEntryData.website || '...'}</div>
-                    </div>
-                    <div className={`col-span-2 backdrop-blur-xl bg-white/[0.02] border rounded-lg p-2 transition-all ${
-                      highlightedField === 'vibe' ? 'border-cyan-500 bg-cyan-500/10' : 'border-white/10'
-                    }`}>
-                      <div className="text-xs text-white/60">Vibe</div>
-                      <div className="text-sm text-white truncate">{voiceEntryData.vibe || '...'}</div>
-                    </div>
-                  </div>
-
-                  {voicePersonaTone && (
-                    <div className="backdrop-blur-xl bg-purple-500/10 border border-purple-500/20 rounded-lg p-2">
-                      <div className="text-xs text-purple-300">Detected Persona: {voicePersonaTone}</div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div>
-                <label className="block text-xs font-light tracking-[0.2em] text-white/60 uppercase mb-3">
-                  {isVoiceEntryMode ? (voiceEntryLabel + ' (Voice Entry)') : voiceEntryLabel}
-                </label>
-                <div className={`backdrop-blur-xl bg-white/[0.02] border rounded-lg p-4 transition-all duration-300 ${
-                  isListening
-                    ? 'border-[#0097b2] shadow-[0_0_20px_rgba(0,151,178,0.5)]'
-                    : 'border-white/10'
-                }`}>
-                  <div className="flex items-start gap-4">
-                    <button
-                      onClick={toggleListening}
-                      onMouseDown={handlePTTMouseDown}
-                      onMouseUp={handlePTTStop}
-                      onMouseLeave={handlePTTStop}
-                      onTouchStart={(e) => { e.preventDefault(); handlePTTMouseDown(); }}
-                      onTouchEnd={(e) => { e.preventDefault(); handlePTTStop(); }}
-                      onTouchCancel={() => handlePTTStop()}
-                      className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 flex-shrink-0 touch-none select-none active:scale-95 ${
-                        isListening
-                          ? 'bg-[#0097b2] text-white shadow-[0_0_15px_#0097b2] animate-pulse'
-                          : 'bg-white/5 text-white/60 hover:bg-white/10'
-                      }`}
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                      </svg>
-                    </button>
-                    <div className="flex-1">
-                      <div className="text-xs text-white/40 mb-2">
-                        {isListening ? 'Listening… release to capture' : isProcessing ? 'Transcribing...' : 'Hold to speak, release to capture'}
-                      </div>
-                      <div className="text-sm text-white min-h-[60px]">
-                        {transcript || 'Your voice command will appear here...'}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Voice Entry Mode Toggle */}
-              {!isVoiceEntryMode && (
-                <div className="flex justify-center">
-                  <button
-                    onClick={startVoiceEntryMode}
-                    className="px-4 py-2 text-xs font-light tracking-[0.2em] bg-gradient-to-r from-cyan-500/20 to-purple-500/20 border border-cyan-500/30 rounded-lg text-cyan-300 uppercase hover:from-cyan-500/30 hover:to-purple-500/30 transition-all"
-                  >
-                    Start Multi-Step Voice Entry
-                  </button>
-                </div>
-              )}
-
-              {error && (
-                <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
-                  {error}
-                </div>
-              )}
-
-              <div className="flex justify-end">
-                <button
-                  onClick={() => processCommand(transcript)}
-                  disabled={!transcript || isProcessing || isSpeaking}
-                  className="px-6 py-2 text-xs font-light tracking-[0.2em] bg-cyan-500/20 border border-cyan-500/30 rounded-lg text-cyan-300 uppercase hover:bg-cyan-500/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {isProcessing ? 'Processing...' : isSpeaking ? 'Speaking...' : (isVoiceEntryMode ? 'Next Step' : 'Process Command')}
-                </button>
-              </div>
-            </div>
+            <VoiceStepMachine
+              voiceEntryLabel={voiceEntryLabel}
+              isVoiceEntryMode={isVoiceEntryMode}
+              voiceEntryStep={voiceEntryStep}
+              voiceEntryData={voiceEntryData}
+              highlightedField={highlightedField}
+              voicePersonaTone={voicePersonaTone}
+              isListening={isListening}
+              isProcessing={isProcessing}
+              isSpeaking={isSpeaking}
+              transcript={transcript}
+              error={error}
+              onToggleListening={toggleListening}
+              onPTTStart={handlePTTMouseDown}
+              onPTTStop={handlePTTStop}
+              onStartVoiceEntry={startVoiceEntryMode}
+              onProcessCommand={handleProcessCommandClick}
+            />
           )}
 
           {step === 'draft' && draftData && (
-            <div className="space-y-6">
-              <div className="backdrop-blur-xl bg-white/[0.01] border border-white/10 rounded-lg p-4 space-y-3">
-                {/* Client Name Input — bound to formState.name */}
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Client Name</span>
-                  <input
-                    type="text"
-                    value={formState.name}
-                    onChange={(e) => setFormState(prev => ({ ...prev, name: e.target.value }))}
-                    className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
-                  />
-                </div>
-                {/* Client Email Input — bound to formState.email */}
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Email</span>
-                  <input
-                    type="email"
-                    value={formState.email}
-                    onChange={(e) => setFormState(prev => ({ ...prev, email: e.target.value }))}
-                    className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
-                  />
-                </div>
-                {/* Industry Select — bound to formState.industry */}
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-white/60 uppercase tracking-[0.1em] flex items-center gap-1">
-                    Industry
-                    {draftData.is_override && (
-                      <span title="Industry explicitly stated by user — not auto-classified" className="inline-flex items-center">
-                        <svg className="w-3 h-3 text-emerald-400" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                        </svg>
-                      </span>
-                    )}
-                    {draftData.confidence !== undefined && (
-                      <span className="text-[10px] text-white/40 font-normal tracking-normal">
-                        {Math.round(draftData.confidence * 100)}%
-                      </span>
-                    )}
-                  </span>
-                  <select
-                    value={formState.industry}
-                    onChange={(e) => {
-                      setFormState(prev => ({ ...prev, industry: e.target.value, category: '' }));
-                      setCategoryError(false);
-                    }}
-                    className="text-xs text-white bg-black/30 border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
-                  >
-                    {['AUTOMOTIVE', 'RETAIL', 'HEALTHCARE', 'INSURANCE', 'AI AUTOMATION', 'GENERAL BUSINESS'].map(i => (
-                      <option key={i} value={i}>{i.charAt(0) + i.slice(1).toLowerCase()}</option>
-                    ))}
-                  </select>
-                </div>
-                {/* Category Select — bound to formState.category */}
-                <div className="flex justify-between items-center">
-                  <span className={`text-xs uppercase tracking-[0.1em] ${categoryError ? 'text-amber-400' : 'text-white/60'}`}>Category {categoryError && '⚠ Required'}</span>
-                  <select
-                    value={formState.category}
-                    onChange={(e) => {
-                      setFormState(prev => ({ ...prev, category: e.target.value }));
-                      setCategoryError(false);
-                    }}
-                    className={`text-xs text-white bg-black/30 border-b outline-none w-48 text-right transition-colors ${
-                      categoryError ? 'border-amber-400 focus:border-amber-300' : 'border-white/20 focus:border-cyan-500/50'
-                    }`}
-                  >
-                    <option value="">Select category...</option>
-                    {getCategoriesForIndustry(formState.industry).map(c => (
-                      <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>
-                    ))}
-                  </select>
-                </div>
-                {/* Mobile Number Input — bound to formState.mobile */}
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Mobile Number</span>
-                  <input
-                    type="tel"
-                    value={formState.mobile}
-                    onChange={(e) => setFormState(prev => ({ ...prev, mobile: e.target.value }))}
-                    placeholder="+1234567890"
-                    className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
-                  />
-                </div>
-                {/* Website Input — bound to formState.website */}
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Website</span>
-                  <input
-                    type="url"
-                    value={formState.website}
-                    onChange={(e) => setFormState(prev => ({ ...prev, website: e.target.value }))}
-                    placeholder="https://example.com"
-                    className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
-                  />
-                </div>
-                {/* System Prompt Textarea — bound to formState.systemPrompt */}
-                <div className="flex flex-col gap-2">
-                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">System Prompt</span>
-                  <textarea
-                    value={formState.systemPrompt}
-                    onChange={(e) => setFormState(prev => ({ ...prev, systemPrompt: e.target.value }))}
-                    placeholder="Describe the client's vibe, role, or personality (e.g., 'innovative tech startup', 'traditional family business')"
-                    rows={2}
-                    className="text-xs text-white bg-black/30 border border-white/20 focus:border-cyan-500/50 outline-none rounded p-2 resize-none"
-                  />
-                </div>
-                {draftData.parsedFromVoice && (
-                  <div className="pt-3 border-t border-white/10">
-                    <div className="text-[10px] text-cyan-400/80 uppercase flex items-center gap-2">
-                      ✓ Parsed from voice command
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex justify-between">
-                <button
-                  onClick={() => {
-                    setStep('command');
-                    setTranscript('');
-                  }}
-                  className="px-6 py-2 text-xs font-light tracking-[0.2em] text-white/60 uppercase hover:text-white transition-colors"
-                >
-                  Edit Command
-                </button>
-                <button onClick={() => setStep('confirm')} className="px-6 py-2 text-xs font-light tracking-[0.2em] bg-cyan-500/20 border border-cyan-500/30 rounded-lg text-cyan-300 uppercase hover:bg-cyan-500/30 transition-all">
-                  Review & Confirm
-                </button>
-              </div>
-            </div>
+            <ManualClientForm
+              formState={formState}
+              draftData={draftData}
+              categoryError={categoryError}
+              onFormChange={handleFormChange}
+              onIndustryChange={handleIndustryChange}
+              onCategoryChange={handleCategoryChange}
+              onEditCommand={handleEditCommand}
+              onProceedToConfirm={handleProceedToConfirm}
+            />
           )}
 
           {step === 'review' && (
-            <div className="space-y-6">
-              <div className="text-center space-y-2">
-                <h3 className="text-sm font-light tracking-[0.2em] text-white uppercase">Review Client Details</h3>
-                <p className="text-xs text-white/60">Please correct any errors before saving to database</p>
-              </div>
-
-              <div className="backdrop-blur-xl bg-white/[0.01] border border-white/10 rounded-lg p-4 space-y-3">
-                {/* Client Name Input */}
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Client Name</span>
-                  <input
-                    type="text"
-                    value={reviewData.name}
-                    onChange={(e) => setReviewData({ ...reviewData, name: e.target.value })}
-                    className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
-                  />
-                </div>
-                {/* Industry Select */}
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Industry</span>
-                  <select
-                    value={reviewData.industry}
-                    onChange={(e) => setReviewData({ ...reviewData, industry: e.target.value, category: '' })}
-                    className="text-xs text-white bg-black/30 border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
-                  >
-                    {['AUTOMOTIVE', 'RETAIL', 'HEALTHCARE', 'INSURANCE', 'AI AUTOMATION', 'GENERAL BUSINESS'].map(i => (
-                      <option key={i} value={i}>{i.charAt(0) + i.slice(1).toLowerCase()}</option>
-                    ))}
-                  </select>
-                </div>
-                {/* Category Select */}
-                <div className="flex justify-between items-center">
-                  <span className={`text-xs uppercase tracking-[0.1em] ${!reviewData.category ? 'text-amber-400' : 'text-white/60'}`}>Category {!reviewData.category && '⚠'}</span>
-                  <select
-                    value={reviewData.category}
-                    onChange={(e) => setReviewData({ ...reviewData, category: e.target.value })}
-                    className={`text-xs text-white bg-black/30 border-b outline-none w-48 text-right transition-colors ${
-                      !reviewData.category ? 'border-amber-400' : 'border-white/20 focus:border-cyan-500/50'
-                    }`}
-                  >
-                    <option value="">Select category...</option>
-                    {getCategoriesForIndustry(reviewData.industry).map(c => (
-                      <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>
-                    ))}
-                  </select>
-                </div>
-                {/* Email Input */}
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Email</span>
-                  <input
-                    type="email"
-                    value={reviewData.email}
-                    onChange={(e) => setReviewData({ ...reviewData, email: e.target.value })}
-                    className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
-                  />
-                </div>
-                {/* Mobile Number Input */}
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Mobile</span>
-                  <input
-                    type="tel"
-                    value={reviewData.mobile}
-                    onChange={(e) => setReviewData({ ...reviewData, mobile: e.target.value })}
-                    placeholder="+1234567890"
-                    className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
-                  />
-                </div>
-                {/* Website Input */}
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Website</span>
-                  <input
-                    type="url"
-                    value={reviewData.website}
-                    onChange={(e) => setReviewData({ ...reviewData, website: e.target.value })}
-                    placeholder="https://example.com"
-                    className="text-xs text-white bg-transparent border-b border-white/20 focus:border-cyan-500/50 outline-none w-48 text-right"
-                  />
-                </div>
-                {/* Vibe Input */}
-                <div className="flex flex-col gap-2">
-                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Vibe / Personality</span>
-                  <textarea
-                    value={reviewData.vibe}
-                    onChange={(e) => setReviewData({ ...reviewData, vibe: e.target.value })}
-                    placeholder="Describe the client's vibe (e.g., 'innovative tech startup')"
-                    rows={2}
-                    className="text-xs text-white bg-black/30 border border-white/20 focus:border-cyan-500/50 outline-none rounded p-2 resize-none"
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-between">
-                <button
-                  onClick={() => {
-                    setStep('command');
-                    setTranscript('');
-                  }}
-                  className="px-6 py-2 text-xs font-light tracking-[0.2em] text-white/60 uppercase hover:text-white transition-colors"
-                >
-                  Start Over
-                </button>
-                <button onClick={handleReviewConfirm} className="px-6 py-2 text-xs font-light tracking-[0.2em] bg-cyan-500/20 border border-cyan-500/30 rounded-lg text-cyan-300 uppercase hover:bg-cyan-500/30 transition-all">
-                  Confirm & Save
-                </button>
-              </div>
-            </div>
+            <ReviewSubmitStep
+              mode="review"
+              reviewData={reviewData}
+              onReviewChange={handleReviewChange}
+              onStartOver={handleEditCommand}
+              onConfirmAndSave={handleReviewConfirm}
+            />
           )}
 
           {step === 'confirm' && draftData && (
-            <div className="space-y-6">
-              <div className="backdrop-blur-xl bg-white/[0.01] border border-white/10 rounded-lg p-4 space-y-3">
-                {/* Review Client Name — reads from draftData exclusively */}
-                <div className="flex justify-between">
-                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Client Name</span>
-                  <span className="text-xs text-white capitalize">{draftData.clientName}</span>
-                </div>
-                {/* Review Email — reads from draftData exclusively */}
-                <div className="flex justify-between">
-                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Email</span>
-                  <span className="text-xs text-white">{draftData.clientEmail}</span>
-                </div>
-                {/* Review Industry — reads from draftData exclusively */}
-                <div className="flex justify-between">
-                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Industry</span>
-                  <span className="text-xs text-white capitalize">{draftData.industry}</span>
-                </div>
-                {/* Review Category — reads from draftData exclusively */}
-                <div className="flex justify-between">
-                  <span className="text-xs text-white/60 uppercase tracking-[0.1em]">Category</span>
-                  <span className="text-xs text-white">{draftData.category.replace(/_/g, ' ') || '—'}</span>
-                </div>
-              </div>
-
-              <div className="flex justify-between">
-                <button onClick={() => setStep('draft')} className="px-6 py-2 text-xs font-light tracking-[0.2em] text-white/60 uppercase hover:text-white transition-colors">
-                  Back
-                </button>
-                <button
-                  onClick={handleConfirm}
-                  disabled={isSpeaking || isSubmitting}
-                  className="px-6 py-2 text-xs font-light tracking-[0.2em] bg-cyan-500/20 border border-cyan-500/30 rounded-lg text-cyan-300 uppercase hover:bg-cyan-500/30 transition-all disabled:opacity-50"
-                >
-                  {isSubmitting ? 'Creating...' : isSpeaking ? 'Speaking...' : 'Create Client'}
-                </button>
-              </div>
-            </div>
+            <ReviewSubmitStep
+              mode="confirm"
+              draftData={draftData}
+              isSubmitting={isSubmitting}
+              isSpeaking={isSpeaking}
+              onBack={handleBackToDraft}
+              onSubmit={handleConfirm}
+            />
           )}
         </div>
 

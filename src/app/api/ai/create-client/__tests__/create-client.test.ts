@@ -135,14 +135,35 @@ describe('create-client multi-tenant isolation guard', () => {
       user: null,
       error: null,
     });
-    // Linked: user_resellers row present for this reseller.
-    terminal = makeTerminal({ reseller_id: RESOLVED_RESELLER_ID });
+    // Linked: user_resellers row present for this reseller. The same terminal
+    // also serves the tenant insert's .single(), so it must carry the id —
+    // matching production where .select('id, name, industry') returns it.
+    terminal = makeTerminal({
+      id: 'new-tenant-uuid',
+      name: 'Acme Motors',
+      industry: 'AUTOMOTIVE',
+      reseller_id: RESOLVED_RESELLER_ID,
+    });
 
     const res = await postCreate({ resellerSlug: 'active-slug', clientData: validClientData });
 
     expect(res.status).toBe(200);
-    expect(capturedInserts).toHaveLength(1);
+    // Insert 1 = the protected tenant insert; insert 2 = Phase 4.1
+    // post-creation knowledge seeding (base 1 + industry 3 = 4 rows).
+    expect(capturedInserts).toHaveLength(2);
     expect((capturedInserts[0] as { reseller_id: string }).reseller_id).toBe(RESOLVED_RESELLER_ID);
+
+    const seedPayload = capturedInserts[1] as unknown as Array<{
+      tenant_id: string;
+      title: string;
+      content: string;
+      category: string;
+      is_active: boolean;
+    }>;
+    expect(Array.isArray(seedPayload)).toBe(true);
+    expect(seedPayload).toHaveLength(4);
+    expect(seedPayload[0].tenant_id).toBe('new-tenant-uuid');
+    expect(seedPayload.every((row) => row.is_active && row.title && row.content)).toBe(true);
   });
 
   it('returns 401 when there is no authenticated user', async () => {

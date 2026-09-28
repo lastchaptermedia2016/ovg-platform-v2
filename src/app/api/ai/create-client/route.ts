@@ -8,6 +8,7 @@ import { normalizeEmail } from '@/lib/utils/sanitize-email';
 import { resolveResellerId } from '@/lib/supabase/resolve-reseller-id';
 import { normalizeIndustry, DB_INDUSTRY_VALUES } from '@/lib/utils/normalize-industry';
 import { applyVibe, type WidgetConfig } from '@/lib/ai/apply-vibe';
+import { seedTenantDefaults } from '@/lib/reseller/seed-tenant-knowledge';
 
 export const dynamic = 'force-dynamic';
 
@@ -342,6 +343,41 @@ export async function POST(request: NextRequest) {
           errorCode: insertError.code,
           isPGRSTError: insertError.code?.includes('PGRST') || false
         }, { status: 500 });
+      }
+
+      // ── PHASE 4.1: POST-CREATION PROVISIONING ──────────────────────
+      // Seed base industry knowledge into tenant_knowledge for the new
+      // tenant. CRITICAL: wrapped in a dedicated try/catch so ANY seeding
+      // failure (DB error, thrown exception) is logged cleanly and NEVER
+      // blocks or rolls back the primary tenant-creation response — the
+      // tenant row is already committed at this point.
+      if (newTenant?.id) {
+        try {
+          const seedResult = await seedTenantDefaults(
+            newTenant.id,
+            clientData.industry,
+            supabaseAdmin,
+          );
+
+          if (seedResult.error) {
+            console.error('[CreateClient] Knowledge seeding failed (non-blocking):', {
+              tenantId: newTenant.id,
+              industry: clientData.industry,
+              error: seedResult.error,
+            });
+          } else {
+            console.log('[CreateClient] Knowledge seeded (non-blocking):', {
+              tenantId: newTenant.id,
+              industry: clientData.industry,
+              seeded: seedResult.seeded,
+            });
+          }
+        } catch (seedErr) {
+          console.error('[CreateClient] Knowledge seeding threw (non-blocking):', {
+            tenantId: newTenant.id,
+            error: seedErr instanceof Error ? seedErr.message : String(seedErr),
+          });
+        }
       }
 
       // 🎨 AUTO-BRANDING: Generate AI branding based on industry and vibe

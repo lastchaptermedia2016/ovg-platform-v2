@@ -12,6 +12,7 @@ import { getAuthenticatedUser, createAuthClient } from '@/lib/auth/server';
 import { resolveTenantId } from '@/lib/resolveTenantId';
 import { persistChatMessage, logPlatformAction } from '@/lib/audit/platform-logger';
 import { buildSystemPrompt } from '@/lib/ai/system-prompt-builder';
+import { getTenantKnowledgeContext, type KnowledgeItem } from '@/lib/reseller/tenant-knowledge-engine';
 import { getClientMemories, extractAndStoreMemories, getVisitorMemories, extractAndStoreVisitorMemories, touchVisitorMemory, normalizeVisitorPhone } from '@/lib/ai/memory-service';
 
 process.env.GROQ_API_KEY = process.env.GROQ_API_KEY || 'test-groq-key';
@@ -78,6 +79,15 @@ vi.mock('@/lib/supabase/admin', () => {
   };
 });
 
+vi.mock('@/lib/reseller/tenant-knowledge-engine', () => ({
+  getTenantKnowledgeContext: vi.fn().mockResolvedValue({
+    contextString: '',
+    items: [],
+    error: null,
+  }),
+  formatKnowledgeContext: vi.fn().mockReturnValue(''),
+}));
+
 vi.mock('@/lib/ai/memory-service', async () => {
   const actual = await vi.importActual<typeof import('@/lib/ai/memory-service')>('@/lib/ai/memory-service');
   return {
@@ -94,6 +104,7 @@ vi.mock('@/lib/ai/memory-service', async () => {
 const mockAuth = vi.mocked(getAuthenticatedUser);
 const mockCreateAuthClient = vi.mocked(createAuthClient);
 const mockResolveTenantId = vi.mocked(resolveTenantId);
+const mockGetTenantKnowledgeContext = vi.mocked(getTenantKnowledgeContext);
 const mockGetClientMemories = vi.mocked(getClientMemories);
 const mockExtractAndStoreMemories = vi.mocked(extractAndStoreMemories);
 const mockGetVisitorMemories = vi.mocked(getVisitorMemories);
@@ -823,6 +834,12 @@ describe('POST /api/client/process-command - System Prompt Hydration', () => {
       error: null,
     });
     mockResolveTenantId.mockResolvedValue({ data: 'tenant-uuid-123', widget_config: null, error: null });
+    mockGetTenantKnowledgeContext.mockReset();
+    mockGetTenantKnowledgeContext.mockResolvedValue({
+      contextString: '',
+      items: [],
+      error: null,
+    });
   });
 
   it('should inject a dynamically built system prompt carrying the host business identity', async () => {
@@ -1004,6 +1021,66 @@ describe('POST /api/client/process-command - System Prompt Hydration', () => {
     expect(prompt).toMatch(/You represent "Demo Business"/);
     expect(prompt).toMatch(/BEHAVIORAL BOUNDARIES/);
     expect(prompt).toMatch(/studio|dashboard|portal|branding studio|telemetry signals/);
+  });
+
+  it('should inject tenant knowledge entries into the system prompt catalog section', async () => {
+    cannedGroqResponse = { actionType: 'CLIENT_NOP', summary: 'Sure thing.' };
+    mockTenantRow({ id: 'tenant-uuid-123', name: 'Acme Auto Group' });
+
+    const mockKnowledgeItems: KnowledgeItem[] = [
+      {
+        id: 'kb-1',
+        tenant_id: 'tenant-uuid-123',
+        title: 'Opening Hours',
+        content: 'We are open Monday to Friday, 8am to 6pm.',
+        category: 'faq',
+        is_active: true,
+      },
+      {
+        id: 'kb-2',
+        tenant_id: 'tenant-uuid-123',
+        title: 'Oil Change Pricing',
+        content: 'Standard oil change: $49. Express: $79.',
+        category: 'services',
+        is_active: true,
+      },
+    ];
+
+    mockGetTenantKnowledgeContext.mockResolvedValue({
+      contextString: '### Q: Opening Hours\nA: We are open Monday to Friday, 8am to 6pm.',
+      items: mockKnowledgeItems,
+      error: null,
+    });
+
+    await post('when are you open?');
+
+    expect(mockGetTenantKnowledgeContext).toHaveBeenCalledWith(
+      'tenant-uuid-123',
+      expect.anything(),
+    );
+    expect(lastGroqSystemPrompt).not.toBeNull();
+    expect(lastGroqSystemPrompt).toMatch(/CUSTOM PRODUCT & SERVICE CATALOG/);
+    expect(lastGroqSystemPrompt).toMatch(/Opening Hours/);
+    expect(lastGroqSystemPrompt).toMatch(/8am to 6pm/);
+    expect(lastGroqSystemPrompt).toMatch(/Oil Change Pricing/);
+    expect(lastGroqSystemPrompt).toMatch(/\$49/);
+  });
+
+  it('should degrade gracefully when knowledge retrieval fails (non-blocking)', async () => {
+    cannedGroqResponse = { actionType: 'CLIENT_NOP', summary: 'Ok.' };
+    mockTenantRow({ id: 'tenant-uuid-123', name: 'Acme Auto Group' });
+
+    mockGetTenantKnowledgeContext.mockResolvedValue({
+      contextString: '',
+      items: [],
+      error: 'connection refused',
+    });
+
+    await post('what services do you offer?');
+
+    expect(lastGroqSystemPrompt).not.toBeNull();
+    expect(lastGroqSystemPrompt).not.toContain('CUSTOM PRODUCT & SERVICE CATALOG');
+    expect(lastGroqSystemPrompt).toMatch(/Acme Auto Group/);
   });
 });
 

@@ -20,6 +20,8 @@ import Groq, { toFile } from 'groq-sdk';
 import { getAuthenticatedUser, createAuthClient } from '@/lib/auth/server';
 import { resolveTenantId } from '@/lib/resolveTenantId';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { estimateWavDurationMs } from '@/lib/voice/transcoder';
+import { logVoiceSession } from '@/lib/voice/voice-logger';
 
 export const dynamic = 'force-dynamic';
 
@@ -156,6 +158,19 @@ function buildVocabularyBoost(brandName: string | null): string {
   return [...anchors, ...PHONETIC_DEFLECTION].join(', ');
 }
 
+/**
+ * Persist an STT session row without ever affecting the response path.
+ * `logVoiceSession` never throws; insert failures are diagnostics only.
+ */
+async function persistVoiceSession(
+  payload: Parameters<typeof logVoiceSession>[0],
+): Promise<void> {
+  const { error } = await logVoiceSession(payload);
+  if (error) {
+    console.error('[CLIENT-STT] Failed to log voice session:', error);
+  }
+}
+
 // ──────────────────────────── Route ───────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -206,6 +221,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'No audio file received' }, { status: 400 });
   }
 
+  // Optional client-supplied tenant id — session-tracking ONLY. The tenant
+  // resolved from the authenticated session above stays authoritative and is
+  // the only value ever used for queries or log writes.
+  const rawClientTenantId = formData.get('tenantId');
+  const clientTenantId = typeof rawClientTenantId === 'string' ? rawClientTenantId.trim() : '';
+
   // ── Gate 5: MIME allowlist ─────────────────────────────────────────
   const mime = file.type?.toLowerCase() ?? '';
   if (!ALLOWED_MIME.has(mime)) {
@@ -240,6 +261,16 @@ export async function POST(req: NextRequest) {
   const brandName = await fetchTenantBrandName(tenantId);
   const vocabularyBoost = buildVocabularyBoost(brandName);
 
+  if (clientTenantId && clientTenantId !== tenantId) {
+    console.warn('[CLIENT-STT] Supplied tenantId does not match resolved tenant', {
+      supplied: clientTenantId,
+      resolved: tenantId,
+    });
+  }
+
+  const sessionId = globalThis.crypto.randomUUID();
+  const sttStartedAt = Date.now();
+
   try {
     console.log('[CLIENT-STT] Transcribing', {
       tenantId,
@@ -266,6 +297,18 @@ export async function POST(req: NextRequest) {
     });
 
     const text = transcription.text?.trim() ?? '';
+
+    // Session tracking: persist the STT round-trip (non-fatal on failure).
+    await persistVoiceSession({
+      tenantId,
+      sessionId,
+      audioDurationMs: estimateWavDurationMs(file),
+      sttProvider: 'whisper',
+      transcript: text,
+      latencyMs: Date.now() - sttStartedAt,
+      status: 'completed',
+    });
+
     if (!text) {
       // Decoded but empty — treat as no command, not a failure.
       return NextResponse.json({ text: '' }, { status: 200 });
@@ -286,6 +329,17 @@ export async function POST(req: NextRequest) {
       status: groqError.status,
       code: groqError.code,
       name: groqError.name,
+    });
+
+    // Session tracking: record the failed round-trip (non-fatal).
+    await persistVoiceSession({
+      tenantId,
+      sessionId,
+      audioDurationMs: estimateWavDurationMs(file),
+      sttProvider: 'whisper',
+      transcript: null,
+      latencyMs: Date.now() - sttStartedAt,
+      status: 'failed',
     });
 
     return NextResponse.json(

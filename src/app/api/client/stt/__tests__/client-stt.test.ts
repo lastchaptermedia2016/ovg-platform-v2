@@ -9,6 +9,7 @@ import { NextRequest } from 'next/server';
 import { POST } from '../route';
 import { getAuthenticatedUser, createAuthClient } from '@/lib/auth/server';
 import { supabaseAdmin } from '@/lib/supabase/admin';
+import { logVoiceSession } from '@/lib/voice/voice-logger';
 
 process.env.GROQ_API_KEY = process.env.GROQ_API_KEY || 'test-groq-key';
 
@@ -38,9 +39,14 @@ vi.mock('@/lib/supabase/admin', () => ({
   supabaseAdmin: { from: vi.fn() },
 }));
 
+vi.mock('@/lib/voice/voice-logger', () => ({
+  logVoiceSession: vi.fn().mockResolvedValue({ error: null }),
+}));
+
 const mockAuth = vi.mocked(getAuthenticatedUser);
 const mockCreateAuthClient = vi.mocked(createAuthClient);
 const mockAdminFrom = vi.mocked(supabaseAdmin.from);
+const mockLogVoiceSession = vi.mocked(logVoiceSession);
 
 /** Build a chain that resolves (or fails to resolve) the tenant. */
 function makeAuthChain(opts: { resellerId?: string | null } = {}) {
@@ -104,6 +110,8 @@ beforeEach(() => {
   });
   mockCreateAuthClient.mockResolvedValue(makeAuthChain() as never);
   mockAdminFrom.mockReturnValue(makeAdminChain() as never);
+  mockLogVoiceSession.mockClear();
+  mockLogVoiceSession.mockResolvedValue({ error: null });
 });
 
 describe('POST /api/client/stt', () => {
@@ -164,5 +172,19 @@ describe('POST /api/client/stt', () => {
     expect(body.text).toBe('hello world');
     expect(lastGroqPrompt).toContain('Acme');
     expect(lastGroqPrompt).toContain('Zeeder');
+
+    // Phase 5: the session is logged exactly once, scoped to the resolved
+    // tenant, with the measured latency and server-generated session id.
+    expect(mockLogVoiceSession).toHaveBeenCalledTimes(1);
+    expect(mockLogVoiceSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: expect.any(String),
+        sessionId: expect.any(String),
+        sttProvider: 'whisper',
+        status: 'completed',
+        transcript: 'hello world',
+        latencyMs: expect.any(Number),
+      }),
+    );
   });
 });
