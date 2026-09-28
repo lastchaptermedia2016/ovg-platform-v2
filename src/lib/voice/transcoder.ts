@@ -16,14 +16,19 @@
  *
  * Phase 5 (moved from `src/utils/audio/transcode-to-wav.ts`, which now
  * re-exports from here so existing importers are unchanged):
- *   - `TranscodeError` carries an explicit code (TOO_SHORT, EMPTY, SILENCE,
+ *   - `TranscodeError` carries an explicit code (AUDIO_TOO_SHORT, EMPTY, SILENCE,
  *     UNDECODABLE) so callers can branch on guard failures vs real faults.
- *   - `computeRms` amplitude analysis detects low-amplitude noise clips.
+*   - `computeRms` amplitude analysis detects low-amplitude noise clips.
  *   - `estimateWavDurationMs` lets the server derive session duration from
  *     an uploaded canonical WAV without decoding it.
  *
- * Note: the codebase avoids TypeScript `enum`s entirely (see `as const`
- * unions elsewhere) — `TRANSCODE_ERROR_CODES` follows that convention.
+ *   Note: the codebase avoids TypeScript `enum`s entirely (see `as const`
+ *   unions elsewhere) — `TRANSCODE_ERROR_CODES` follows that convention.
+ *
+ *   Blob guards (EMPTY / AUDIO_TOO_SHORT) run before any Web Audio API
+ *   allocation, so a bad tap never spins up a context. `createDecodeContext`
+ *   resolves the `webkitAudioContext` polyfill, resumes a suspended context,
+ *   and throws a typed `UNDECODABLE` error when Web Audio is unavailable.
  */
 
 const WHISPER_SAMPLE_RATE = 16000;
@@ -51,14 +56,14 @@ const SILENCE_RMS_THRESHOLD = 0.01;
 // ──────────────────────────── TranscodeError ────────────────────────────────
 
 /** All well-known transcode failure codes. */
-export const TRANSCODE_ERROR_CODES = ['TOO_SHORT', 'EMPTY', 'SILENCE', 'UNDECODABLE'] as const;
+export const TRANSCODE_ERROR_CODES = ['AUDIO_TOO_SHORT', 'EMPTY', 'SILENCE', 'UNDECODABLE'] as const;
 
 /** One of {@link TRANSCODE_ERROR_CODES}. */
 export type TranscodeErrorCode = (typeof TRANSCODE_ERROR_CODES)[number];
 
 /**
  * Typed transcode failure. `code` lets callers distinguish "no speech
- * captured" guards (EMPTY / TOO_SHORT / SILENCE) from real codec faults
+ * captured" guards (EMPTY / AUDIO_TOO_SHORT / SILENCE) from real codec faults
  * (UNDECODABLE) without string-matching messages.
  */
 export class TranscodeError extends Error {
@@ -77,8 +82,14 @@ export class TranscodeError extends Error {
  * Decode any audio container the browser supports (webm, mp4, ogg, …)
  * into an AudioBuffer using the native decoder.
  *
+ * The caller is responsible for passing a live (non-closed) AudioContext;
+ * `createDecodeContext` is the recommended constructor. The ArrayBuffer is
+ * cloned before `decodeAudioData` because some engines detach it in place.
+ *
  * @throws {TranscodeError} `EMPTY` for a zero-byte blob, `UNDECODABLE` when
- *   the format is unsupported or the data is corrupted.
+ *   the format is unsupported, the data is corrupted, or the context is
+ *   closed/suspended. The reason string preserves the underlying
+ *   DOMException name (e.g. `EncodingError`) so callers can log it.
  */
 export async function decodeAudioBlob(
   blob: Blob,
@@ -88,18 +99,93 @@ export async function decodeAudioBlob(
     throw new TranscodeError('EMPTY', 'Cannot decode empty audio blob');
   }
 
+  if (audioContext.state === 'closed') {
+    throw new TranscodeError(
+      'UNDECODABLE',
+      `Cannot decode audio: AudioContext is closed`,
+    );
+  }
+
   try {
     const arrayBuffer = await blob.arrayBuffer();
     // decodeAudioData mutates the ArrayBuffer in some engines — clone to be safe.
     return await audioContext.decodeAudioData(arrayBuffer.slice(0));
   } catch (err) {
-    // Enhance error message with blob metadata for debugging transcoding failures
-    const errorMsg = err instanceof Error ? err.message : String(err);
+    const reason = formatErrorReason(err);
     throw new TranscodeError(
       'UNDECODABLE',
-      `Failed to decode audio (${blob.type || 'unknown'}, ${blob.size} bytes): ${errorMsg}`,
+      `Failed to decode audio (${blob.type || 'unknown'}, ${blob.size} bytes): ${reason}`,
     );
   }
+}
+
+/**
+ * Pull a human-readable reason off any throwable — DOMException, Error, or
+ * an unknown object — so the transcode error message is never
+ * `'[object Object]'` or an empty string.
+ */
+function formatErrorReason(err: unknown): string {
+  if (err instanceof Error) {
+    return `${err.name}: ${err.message}`.trim();
+  }
+  if (typeof err === 'object' && err !== null) {
+    const obj = err as Record<string, unknown>;
+    const name = typeof obj.name === 'string' ? obj.name : obj.constructor?.name ?? 'Error';
+    const message = typeof obj.message === 'string' ? obj.message : String(err);
+    return `${name}: ${message}`.trim();
+  }
+  return String(err);
+}
+
+/**
+ * Resolve the Web Audio `AudioContext` constructor, applying the
+ * `webkitAudioContext` prefix fallback for older Safari/WebKit builds, and
+ * return a freshly constructed, resumed context.
+ *
+ * Guards run before this helper is called, so it is only reached for blobs
+ * worth decoding. It throws a typed `TranscodeError('UNDECODABLE', …)` when
+ * the browser lacks Web Audio entirely or the constructor throws.
+ */
+function createDecodeContext(): AudioContext {
+  const ctor = globalThis.AudioContext ?? (globalThis as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (typeof ctor !== 'function') {
+    throw new TranscodeError(
+      'UNDECODABLE',
+      'Web Audio API (AudioContext) is not available in this browser',
+    );
+  }
+
+  let ctx: AudioContext;
+  try {
+    ctx = new ctor();
+  } catch (err) {
+    throw new TranscodeError(
+      'UNDECODABLE',
+      `Failed to construct AudioContext: ${formatErrorReason(err)}`,
+    );
+  }
+
+  // Autoplay policy may leave the context suspended; resume before decode.
+  if (ctx.state === 'suspended') {
+    try {
+      const resumeResult = ctx.resume?.();
+      if (resumeResult instanceof Promise) {
+        // Await but never throw — older Safari may not support resume.
+        resumeResult.catch(() => undefined);
+      }
+    } catch {
+      // resume() may throw synchronously on some engines; ignore.
+    }
+  }
+
+  if (ctx.state === 'closed') {
+    throw new TranscodeError(
+      'UNDECODABLE',
+      'AudioContext closed before decode could begin',
+    );
+  }
+
+  return ctx;
 }
 
 // ──────────────────────────── Resample ──────────────────────────────────────
@@ -270,24 +356,26 @@ export function estimateWavDurationMs(audio: { type: string; size: number }): nu
  * minimum-duration floor here (the recording layer owns tap guards).
  *
  * @throws {TranscodeError} `EMPTY` (zero-byte blob or zero-duration decode),
- *   `TOO_SHORT` (below 1 KB), `SILENCE` (below the RMS threshold),
+ *   `AUDIO_TOO_SHORT` (below 1 KB), `SILENCE` (below the RMS threshold),
  *   `UNDECODABLE` (codec/corruption fault, from decodeAudioBlob).
  */
 export async function transcodeBlobToWav(blob: Blob): Promise<Blob> {
+  // Validate the blob FIRST, before touching the Web Audio API — a zero-byte
+  // or sub-1 KB blob is an accidental tap and must not allocate a context.
+  if (!blob || blob.size === 0) {
+    throw new TranscodeError('EMPTY', 'Cannot transcode an empty audio blob');
+  }
+  if (blob.size < MIN_AUDIO_BLOB_BYTES) {
+    throw new TranscodeError(
+      'AUDIO_TOO_SHORT',
+      `Recorded audio slice is too brief to decode (${blob.size} bytes < ${MIN_AUDIO_BLOB_BYTES} bytes)`,
+    );
+  }
+
   // Use a short-lived AudioContext. We can't reuse the TTS one because
   // it's likely in 'running' state and we want a clean decode pipeline.
-  const decodeCtx = new AudioContext();
+  const decodeCtx = createDecodeContext();
   try {
-    if (!blob || blob.size === 0) {
-      throw new TranscodeError('EMPTY', 'Cannot transcode an empty audio blob');
-    }
-    if (blob.size < MIN_AUDIO_BLOB_BYTES) {
-      throw new TranscodeError(
-        'TOO_SHORT',
-        `Audio blob too small to contain valid audio frames (${blob.size} bytes < ${MIN_AUDIO_BLOB_BYTES} bytes)`,
-      );
-    }
-
     const decoded = await decodeAudioBlob(blob, decodeCtx);
 
     // Validate decoded audio has content
@@ -308,12 +396,13 @@ export async function transcodeBlobToWav(blob: Blob): Promise<Blob> {
     return encodeAsWav(resampled);
   } catch (err) {
     // Provide detailed error info for debugging transcoding failures
-    const errorMessage = err instanceof Error ? err.message : String(err);
     console.error('[TranscodeToWav] Transcoding failed:', {
       blobSize: blob?.size ?? 0,
       blobType: blob?.type ?? 'unknown',
       code: err instanceof TranscodeError ? err.code : undefined,
-      error: errorMessage,
+      errorName: err instanceof Error ? err.name : undefined,
+      errorMessage: err instanceof Error ? err.message : String(err),
+      errorStack: err instanceof Error && err.stack ? err.stack.split('\n').slice(0, 3).join('\n') : undefined,
       errorDetails: serializeError(err),
     });
     throw err;
@@ -321,12 +410,10 @@ export async function transcodeBlobToWav(blob: Blob): Promise<Blob> {
     // Close the transient context to release hardware resources.
     // Per .clinerules: Lifecycle Cleanup is separate from Hardware Cleanup,
     // and an AudioContext is a lifecycle resource we own for this op.
-    if (decodeCtx.state !== 'closed') {
-      try {
-        await decodeCtx.close();
-      } catch {
-        // Closing can fail in some edge cases, but we still want to continue
-      }
+    try {
+      await decodeCtx.close();
+    } catch {
+      // Closing can fail in some edge cases, but we still want to continue
     }
   }
 }

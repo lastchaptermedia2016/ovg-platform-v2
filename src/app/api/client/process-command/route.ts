@@ -25,9 +25,11 @@ import { isAnonRateLimited } from '@/lib/rate-limit/tenant-rate-limit';
 import { buildBookingCapture } from '@/lib/booking/booking-capture';
 import { z } from 'zod';
 import { zeederActionRegistry, isZeederActionId, type ZeederActionId } from '@/lib/zeeder/action-registry';
-import { CLIENT_SYSTEM_REGISTRY, type ClientSystemItem, PAGE_WELCOME_GREETINGS } from '@/lib/client-system-registry';
+import { CLIENT_SYSTEM_REGISTRY, type ClientSystemItem } from '@/lib/client-system-registry';
 import { extractPersonaMode, hasPersonaModeIntent } from '@/lib/ai/extract-persona-mode';
 import { buildSystemPrompt, type KnowledgeEntry } from '@/lib/ai/system-prompt-builder';
+import { buildActionSummary, buildNavigationSummary, humanizeSummary } from '@/lib/ai/conversational-voice';
+import { clientStudioHref, hasNavigationIntent, resolveClientStudioTab, resolveNavigationTarget } from '@/lib/voice/client-routes';
 import { getTenantKnowledgeContext, type KnowledgeItem } from '@/lib/reseller/tenant-knowledge-engine';
 import { getClientMemories, extractAndStoreMemories, type ClientMemoryMap } from '@/lib/ai/memory-service';
 import { getVisitorMemories, extractAndStoreVisitorMemories, touchVisitorMemory, normalizeVisitorPhone, normalizeVisitorEmail, type VisitorIdentityType } from '@/lib/ai/memory-service';
@@ -173,6 +175,23 @@ const CLIENT_DEFINITION_INTENT_REGEX =
  */
 const CLIENT_INFORMATIONAL_INTENT_REGEX =
   /(^|\b)(how do|how to|how can i|where is|where can i|can you show me|show me how|help me with|help me set up|guide me|walk me through|explain|what is|what are|tell me about)/i;
+
+/**
+ * Unambiguous "teach me" phrasings.
+ *
+ * These are requests for INSTRUCTIONS about a control, not requests to open a
+ * viewport — "show me how to change the header" must reach the LLM for a
+ * step-by-step guide even though it contains the word "header" (Branding).
+ *
+ * This is the narrow guard that lets the deterministic navigation branch sit
+ * BEFORE {@link CLIENT_INFORMATIONAL_INTENT_REGEX} (so "where is my CRM"
+ * navigates) without stealing how-to questions from the LLM. Note that
+ * "where is" is deliberately absent here: "where is the color picker" resolves
+ * to no viewport and therefore falls through to the informational branch
+ * anyway, while "where is my CRM" resolves to Integrations and navigates.
+ */
+const CLIENT_HOWTO_INTENT_REGEX =
+  /(how do|how to|how can i|how would i|show me how|help me with|help me set up|walk me through|guide me|tell me how)/i;
 
 /**
  * Persona-page navigation intent. Matches explicit "go to / open / show / take
@@ -409,15 +428,26 @@ function parseIntent(text: string): ZeederActionId | null {
   }
 
   // ── fetchTelemetry ───────────────────────────────────────────────────
-  if (/(telemetry|metrics|health|status|performance|stats|signal)/i.test(lower)) {
+  // "analytics" is deliberately here and NOT in the navigate branch: there is
+  // no analytics page on the client surface, so an analytics request must
+  // resolve to the telemetry action rather than a 404 route.
+  if (/(telemetry|metrics|health|status|performance|stats|signal|analytics|insights)/i.test(lower)) {
     return 'fetchTelemetry';
   }
 
   // ── navigate ─────────────────────────────────────────
   // Matches explicit navigation intents to client dashboard tabs.
+  // The target alternation is deliberately broader than the four tab names so
+  // everyday synonyms ("open my faq", "where do I find my crm") classify as
+  // navigation instead of falling through to the LLM. The concrete viewport is
+  // resolved by `resolveNavigationTarget` in the POST handler — this branch
+  // only decides WHETHER this is a navigation.
+  const NAV_VERB = '(?:go to|navigate to|open|show|take me to|jump to|switch to|move to|visit|head to|where is)';
+  const NAV_TARGET =
+    '(?:branding|brand|logo|logo\\s*url|colou?rs?|theme|styling|persona|tone|voice|knowledge|knowledge\\s*base|faq|faqs|polic(?:y|ies)|training|manuals?|documents?|articles|playbooks?|integrations?|crm|booking|calendar\\s*sync|inventory|commerce|whatsapp|sms|handover|webhooks?|analytics|studio|dashboard|main\\s*page|overview|home|main\\s+dashboard)';
   if (
-    /(go to|navigate to|open|show|take me to|jump to|switch to|move to|visit)\b.*\b(branding|persona|knowledge|integrations|analytics|studio|dashboard|main\s+page|overview|home|main\s+dashboard)\b/i.test(lower) ||
-    /^(go to|navigate to|open|show|take me to|jump to|switch to|move to|visit)\s+(branding|persona|knowledge|integrations|analytics|studio|dashboard|main\s+page|overview|home|main\s+dashboard)/i.test(lower)
+    new RegExp(`${NAV_VERB}\\b.{0,40}\\b${NAV_TARGET}\\b`, 'i').test(lower) ||
+    new RegExp(`^${NAV_VERB}\\s+${NAV_TARGET}`, 'i').test(lower)
   ) {
     return 'navigate';
   }
@@ -674,7 +704,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
       targetIds: [],
       payload: { ...payloadOverrides, tab: 'persona' },
       summary:
-        "Sure thing! I've opened your AI Persona settings — you can fine-tune its voice, tone, and behavior right here.",
+        "You got it—I've got your AI Persona settings open, so you can fine-tune its voice, tone, and behavior right here.",
     };
     const response = NextResponse.json(data);
     await tryPersistCommand(data, 'SYSTEM_UPDATE_BRANDING', data.payload);
@@ -692,7 +722,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
         targetIds: [],
         payload: {},
         summary:
-          "We're looking right at your Studio configurations together! You can toggle between sales or concierge mode right here on your screen. Which one would you like to set?",
+          "We're looking right at your Studio together! You can toggle between Sales or Concierge mode right here on your screen. Which one should we set?",
       };
       const response = NextResponse.json(data);
       await tryPersistCommand(data, 'CLIENT_NOP', {});
@@ -704,7 +734,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
       targetIds: [],
       payload: payloadOverrides,
       summary:
-        "Sure thing! I've pulled up your Studio dashboard where you can adjust both your visual Branding and AI Persona. Which mode are we setting today—sales or concierge?",
+        "You got it—I've pulled up your Studio dashboard, where you can adjust both your visual Branding and AI Persona. Which mode are we setting today, sales or concierge?",
     };
     const response = NextResponse.json(data);
     await tryPersistCommand(data, 'SYSTEM_UPDATE_BRANDING', payloadOverrides);
@@ -778,6 +808,37 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
     const response = NextResponse.json(data);
     await tryPersistCommand(data, 'CLIENT_NOP', {});
     return response;
+  }
+
+  // ── Studio viewport navigation → deterministic SYSTEM_NAVIGATE ─────────
+  // Runs BEFORE the booking, definition, and informational checks so that a
+  // plain "open my FAQ" / "where is my CRM" navigates deterministically
+  // instead of being captured as a booking or answered as a how-to guide. It
+  // is skipped for explicit "teach me" phrasings (CLIENT_HOWTO_INTENT_REGEX),
+  // which belong to the LLM's step-by-step guide.
+  //
+  // The persona-nav shortcut above runs first and keeps its own
+  // SYSTEM_UPDATE_BRANDING + tab: 'persona' contract.
+  //
+  // This is the fix for the dropped-target bug: every viewport now resolves
+  // here and carries BOTH `tab` and a real `href`, so the client hook never
+  // has to guess and can never fall back to Branding for a Knowledge or
+  // Integrations request.
+  if (!isAnon && hasNavigationIntent(text.trim()) && !CLIENT_HOWTO_INTENT_REGEX.test(text.trim())) {
+    const navTab = resolveClientStudioTab(text.trim());
+    if (navTab) {
+      const href = clientStudioHref(navTab);
+      const data: ClientCommandResponse = {
+        success: true,
+        actionType: 'SYSTEM_NAVIGATE',
+        targetIds: [],
+        payload: { ...payloadOverrides, tab: navTab, href },
+        summary: buildNavigationSummary(href),
+      };
+      const response = NextResponse.json(data);
+      await tryPersistCommand(data, 'SYSTEM_NAVIGATE', data.payload);
+      return response;
+    }
   }
 
   // ── Booking intent → semantic fallback (structured field capture) ──
@@ -976,10 +1037,18 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
   }
 
   if (resolvedActionId === 'navigate') {
-    const dashboardAlias = /\b(dashboard|main\s+page|overview|home|main\s+dashboard)\b/i.test(text.trim());
-    if (dashboardAlias) {
-      responsePayload = { ...payloadOverrides, href: '/client/dashboard' };
-    }
+    // Belt-and-braces target resolution. The early deterministic branch above
+    // already handles explicit viewport navigation, but `navigate` can also be
+    // reached with a client-supplied `actionId` or an alias the resolver does
+    // not recognise. Resolve the destination here too so the payload ALWAYS
+    // carries a real `href` — an empty payload is what made the client hook
+    // fall back to Branding.
+    const navTarget = resolveNavigationTarget(text.trim());
+    responsePayload = {
+      ...payloadOverrides,
+      ...(navTarget.tab ? { tab: navTarget.tab } : {}),
+      href: navTarget.href,
+    };
   }
 
   const data: ClientCommandResponse = {
@@ -987,10 +1056,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
     actionType: systemType,
     targetIds: [],
     payload: responsePayload,
-    summary:
-      systemType === 'SYSTEM_NAVIGATE' && responsePayload.href
-        ? PAGE_WELCOME_GREETINGS[responsePayload.href as string] ?? `Navigating to ${responsePayload.href as string}.`
-        : `Parsed intent: ${systemType}`,
+    // Conversational, TTS-ready confirmation. Never echoes the raw SYSTEM_*
+    // identifier or a route path — see `buildActionSummary`.
+    summary: buildActionSummary(systemType, { href: responsePayload.href as string | undefined }),
   };
   const response = NextResponse.json(data);
   await tryPersistCommand(data, systemType, responsePayload);
@@ -1229,9 +1297,9 @@ async function runSemanticFallback(
       'You MUST respond with a SINGLE valid JSON object and nothing else — no markdown, no code fences, no prose outside the JSON.',
       'The response MUST be valid JSON format.',
       `Allowed "actionType" values: ${[...allowedActions(isAnon)].join(' | ')} (use "CLIENT_NOP" for normal conversational replies).`,
-      '  - "summary": the plain-text reply shown to the user.',
+      '  - "summary": the plain-text reply shown and read aloud to the user. Follow the ZEEDER PERSONA & CONVERSATIONAL VOICE GUIDELINES: contractions, a warm human opener, ONE punchy sentence for actions, and absolutely no trailing dots or ellipses (never "branding page........."). Never echo action identifiers or route paths.',
       '  - "payload": for bookings, include { "firstName": string|null, "phone": string|null, "treatment": string|null, "preferredDate": string|null, "preferredTime": string|null, "notes": string|null }.',
-      'Example: { "actionType": "CLIENT_NOP", "summary": "Hi! How can I help you today?" }',
+      'Example: { "actionType": "CLIENT_NOP", "summary": "Hey! What can I help you configure today?" }',
     ].join('\n');
 
     const enrichedSystemPrompt = toolsPrompt
@@ -1355,10 +1423,13 @@ const completion = await groq.chat.completions.create({
       responsePayload = { ...(llmParsed.payload as Record<string, unknown> ?? {}) };
     }
 
-    const summary =
-      toolResultMessage ??
-      (llmParsed.summary?.toString().trim() ||
-        "I didn't quite catch that. What can I help you configure in your portal today?");
+    // ── Summary normalization ────────────────────────────────────────
+    // Model output is untrusted: strip trailing ellipses/dots, swap mechanical
+    // openers ("Sure no problem opening...") for the ZEEDER voice, and guarantee
+    // a punchy single-sentence TTS cadence before it reaches the client.
+    const GENERIC_SUMMARY_FALLBACK =
+      "I didn't quite catch that. What can I help you configure in your portal today?";
+    const summary = humanizeSummary(toolResultMessage ?? llmParsed.summary, GENERIC_SUMMARY_FALLBACK);
 
     const data: ClientCommandResponse = {
       success: true,
@@ -1399,7 +1470,7 @@ const completion = await groq.chat.completions.create({
       actionType: 'CLIENT_NOP',
       targetIds: [],
       payload: capabilityPayload,
-      summary,
+      summary: humanizeSummary(summary, fallbackSummary),
     };
     if (persistCtx) {
       await tryPersistCommandInCtx(persistCtx, text, data, 'CLIENT_NOP', {});

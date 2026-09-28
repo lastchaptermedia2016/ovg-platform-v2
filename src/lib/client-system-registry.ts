@@ -41,14 +41,21 @@ export const CLIENT_SYSTEM_TABS: { id: ClientSystemCategory; label: string }[] =
   { id: 'memory', label: 'Knowledge' },
 ];
 
+/**
+ * Post-arrival greetings keyed by route.
+ *
+ * Keys MUST be real routes (see `src/app/client/**`). This table previously
+ * carried `/client`, `/client/dashboard/memories`, `/client/dashboard/analytics`
+ * and `/client/dashboard/settings` — none of which exist — and had no entry at
+ * all for the Knowledge or Integrations viewports, so a voice navigation into
+ * either one had nothing to speak.
+ */
 export const PAGE_WELCOME_GREETINGS: Record<string, string> = {
-  '/client': "Welcome to your main dashboard! How can I assist you with your AI agent today?",
-  '/client/dashboard': "Welcome to your main dashboard! How can I assist you with your AI agent today?",
-  '/client/dashboard/studio/branding': "Welcome to your branding page! How can I assist with your styling or widget layout?",
-  '/client/dashboard/studio/persona': "Welcome to your persona studio! Ready to tune your assistant's identity or voice?",
-  '/client/dashboard/memories': "Welcome to your knowledge base! What memories or rules would you like to update?",
-  '/client/dashboard/analytics': "Welcome to your analytics dashboard! Would you like a breakdown of recent chats?",
-  '/client/dashboard/settings': "Welcome to your settings hub! How can I help configure your portal?",
+  '/client/dashboard': "You got it—here's your main dashboard! What would you like to work on today?",
+  '/client/dashboard/studio/branding': "Here are your branding settings! Want to tweak colors, logo, or layout?",
+  '/client/dashboard/studio/persona': "Here's your persona studio! Ready to tune your assistant's voice and tone?",
+  '/client/dashboard/studio/knowledge': "Here's your knowledge base! What FAQ, policy, or training content should we add?",
+  '/client/dashboard/studio/integrations': "Here are your integrations! Want to hook up booking, CRM, or commerce?",
 };
 
 export const CLIENT_SYSTEM_REGISTRY: Record<ClientSystemCategory, ClientSystemItem[]> = {
@@ -193,6 +200,16 @@ export const CLIENT_SYSTEM_REGISTRY: Record<ClientSystemCategory, ClientSystemIt
       id: 'publish_draft',
       label: 'Publish studio draft',
       description: 'Commit the current unsaved studio draft to live configuration.',
+    },
+    {
+      id: 'manage_integrations',
+      label: 'Manage integrations',
+      description: 'Connect Smart Booking, CRM, live inventory, and handover add-ons.',
+      action: {
+        type: 'nav',
+        href: '/client/dashboard/studio/integrations',
+        label: 'Open Integrations',
+      },
     },
   ],
 };

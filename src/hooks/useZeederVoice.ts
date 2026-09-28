@@ -11,10 +11,25 @@
  *
  * Voice capture uses a high-fidelity pipeline:
  *   1. `startListening()` opens the mic via `MediaRecorder` (15s cap).
- *   2. The blob is transcoded to WAV and POSTed to `/api/client/stt`
+ *   2. A **pre-transcode validity guard** rejects empty, sub-threshold, or
+ *      non-audio blobs *before* any decode or network call, so an accidental
+ *      tap can never reach the transcoder or `/api/client/stt`. It throws the
+ *      typed `TranscodeError` (see `assertPreTranscodeValid` below).
+ *   3. The blob is transcoded to WAV and POSTed to `/api/client/stt`
  *      (Groq Whisper, server-side, tenant-scoped vocabulary boost).
- *   3. On any failure it transparently falls back to the device Web Speech
- *      API (`webkitSpeechRecognition`) with a `sttFallback` indicator.
+ *   4. On a genuine STT/codec failure it transparently falls back to the
+ *      device Web Speech API (`webkitSpeechRecognition`) with a `sttFallback`
+ *      indicator. A guard rejection is NOT a fallback case — it surfaces a
+ *      short "hold the button longer" hint instead, so a 100ms tap never
+ *      starts a bogus recognition session.
+ *
+ * @remarks
+ * Diagnostics: every STT failure is logged through `describeSttError(err)`,
+ * which always yields a plain, fully-enumerable object with explicit
+ * `name`/`message`/`stack` (+ `code` for a `TranscodeError`) or `rawError`
+ * for non-`Error` throwables. Spreading a raw thrown error loses all of those
+ * (they are non-enumerable) and prints `{}`, so the console output here is
+ * never an empty object.
  *
  * @remarks
  * This hook is intentionally **zero-dependency** with respect to the
@@ -34,7 +49,10 @@ import { isZeederActionId, type ZeederActionId } from '@/lib/zeeder/action-regis
 import type { CanonicalBranding } from '@/lib/schemas/tenant-config.canonical';
 import { markVoiceNavigation } from '@/lib/voice/voiceNavSignal';
 import { transcodeBlobToWav } from '@/utils/audio/transcode-to-wav';
+import { TranscodeError, type TranscodeErrorCode } from '@/lib/voice/transcoder';
+import { buildNavigationSummary, humanizeSummary } from '@/lib/ai/conversational-voice';
 import { requestClientTranscription, transcribeWithFallback, describeSttError } from '@/lib/voice/stt-client';
+import { clientStudioHref, isClientStudioTab } from '@/lib/voice/client-routes';
 import { getSpeechRecognition } from '@/types/voice-parser';
 import { useVoiceState } from '@/providers/voice-provider';
 
@@ -93,6 +111,83 @@ const MAX_RECORDING_MS = 15_000;
 const MIN_AUDIO_BLOB_BYTES = 1024;
 
 // ──────────────────────────── Helpers ────────────────────────────────────
+
+/**
+ * Transcode codes that represent a "nothing usable was captured" guard
+ * (EMPTY / AUDIO_TOO_SHORT / SILENCE) rather than a genuine codec or server
+ * fault. `UNDECODABLE` is deliberately excluded: that IS a real failure and
+ * still deserves the Web Speech fallback.
+ */
+const GUARD_TRANSCODE_CODES: ReadonlySet<TranscodeErrorCode> = new Set<TranscodeErrorCode>([
+  'EMPTY',
+  'AUDIO_TOO_SHORT',
+  'SILENCE',
+]);
+
+/** User-facing hint shown when a tap never produced a usable clip. */
+const SHORT_CLIP_HINT = 'Hold the button a little longer and try again.';
+
+/**
+ * True when a throwable is a "guard rejection" — i.e. the capture itself was
+ * unusable (accidental tap / silence / empty) rather than Whisper or a codec
+ * failing. Used to avoid popping the Web Speech recognizer for a 100ms tap.
+ */
+function isGuardRejection(err: unknown): boolean {
+  return err instanceof TranscodeError && GUARD_TRANSCODE_CODES.has(err.code);
+}
+
+/**
+ * Pre-flight validity guard run BEFORE `transcodeBlobToWav` and any network
+ * call, so a micro blob never reaches the decoder or `/api/client/stt`.
+ *
+ * Pure and side-effect free (apart from one warning for a blank MIME type):
+ * it either returns normally or throws a typed `TranscodeError`, which lets
+ * `transcribeWithFallback` branch on `.code` instead of matching strings.
+ *
+ * Rules:
+ *   - zero-byte / missing blob → `EMPTY`
+ *   - below {@link MIN_AUDIO_BLOB_BYTES} → `AUDIO_TOO_SHORT`
+ *   - a non-`audio/*` MIME type → `UNDECODABLE` (nothing the browser can decode)
+ *   - a blank MIME type is TOLERATED with a warning, because some browsers
+ *     omit the type on `MediaRecorder` chunks and the payload is still valid.
+ *
+ * This deliberately mirrors (rather than replaces) the `recorder.onstop`
+ * duration/size guards: those stop the obvious cases before we ever build a
+ * Blob, while this is the last line of defence for any other caller of
+ * `transcribeBlob`. Valid clips are unaffected — nothing here rejects a clip
+ * that would previously have transcoded successfully.
+ *
+ * @throws {TranscodeError} With the code documented above.
+ */
+function assertPreTranscodeValid(blob: Blob): void {
+  if (!blob || blob.size === 0) {
+    throw new TranscodeError('EMPTY', 'Refusing to transcode an empty audio blob');
+  }
+
+  if (blob.size < MIN_AUDIO_BLOB_BYTES) {
+    throw new TranscodeError(
+      'AUDIO_TOO_SHORT',
+      `Refusing to transcode: audio blob is too small to contain valid audio frames (${blob.size} bytes < ${MIN_AUDIO_BLOB_BYTES} bytes)`,
+    );
+  }
+
+  const mime = (blob.type ?? '').trim();
+  if (!mime) {
+    // Some browsers omit the type entirely; the bytes may still be decodable.
+    console.warn(
+      '[ZEEDER-VOICE] Recorded blob has no MIME type — attempting transcode anyway.',
+      { blobSize: blob.size },
+    );
+    return;
+  }
+
+  if (!mime.toLowerCase().startsWith('audio/')) {
+    throw new TranscodeError(
+      'UNDECODABLE',
+      `Refusing to transcode: expected an audio/* container, received "${mime}" (${blob.size} bytes)`,
+    );
+  }
+}
 
 /**
  * Wait for the client profile to hydrate before issuing a command.
@@ -281,7 +376,14 @@ export function useZeederVoice({ tenantId, resellerSlug }: { tenantId?: string; 
       recognition.start();
       recognitionRef.current = recognition;
       setIsListening(true);
-    } catch {
+    } catch (err) {
+      // Do not swallow this silently: `recognition.start()` throws (e.g.
+      // InvalidStateError, NotAllowedError) and that is the root cause of a
+      // dead mic button. describeSttError keeps the log non-empty.
+      console.error(
+        '[ZEEDER-VOICE] Web Speech recognizer failed to start.',
+        describeSttError(err),
+      );
       setIsListening(false);
       setState(prev => ({ ...prev, error: 'Failed to start local voice recognition.' }));
     }
@@ -290,9 +392,14 @@ export function useZeederVoice({ tenantId, resellerSlug }: { tenantId?: string; 
   /**
    * Transcribe a recorded audio blob via the secure /api/client/stt endpoint.
    * Throws on any failure so the caller can fall back to Web Speech.
+   *
+   * The pre-flight guard runs FIRST so an empty/sub-threshold/non-audio blob
+   * is rejected with a typed `TranscodeError` before we burn an AudioContext
+   * on a decode attempt or POST a micro blob to Whisper.
    */
   const transcribeBlob = useCallback(
     async (blob: Blob): Promise<string> => {
+      assertPreTranscodeValid(blob);
       const wavBlob = await transcodeBlobToWav(blob);
       return requestClientTranscription({
         blob: wavBlob,
@@ -358,9 +465,15 @@ export function useZeederVoice({ tenantId, resellerSlug }: { tenantId?: string; 
         
         if (durationMs < MIN_DURATION_MS || blob.size < MIN_AUDIO_BLOB_BYTES) {
           console.warn(
-            `[ZEEDER-VOICE] Ignoring short audio clip (${durationMs}ms, ${blob.size} bytes). ` +
-            `Minimum: ${MIN_DURATION_MS}ms duration and ${MIN_AUDIO_BLOB_BYTES} bytes. ` +
-            'Likely an accidental tap or noise burst. Hold the button longer for a valid command.'
+            '[ZEEDER-VOICE] Ignoring short audio clip — likely an accidental tap or noise burst. Hold the button longer for a valid command.',
+            {
+              durationMs,
+              blobSize: blob.size,
+              blobType: blob.type,
+              minDurationMs: MIN_DURATION_MS,
+              minBlobBytes: MIN_AUDIO_BLOB_BYTES,
+              chunks: chunksRef.current.length,
+            },
           );
           teardownRecording();
           return;
@@ -379,12 +492,38 @@ export function useZeederVoice({ tenantId, resellerSlug }: { tenantId?: string; 
           const result = await transcribeWithFallback(
             () => transcribeBlob(blob),
             (err) => {
-              console.error('[ZEEDER-VOICE] Whisper STT failed — falling back to Web Speech.', {
-                ...describeSttError(err),
-                blobSize: blob.size,
-                blobType: blob.type,
-                mimeType: recorder.mimeType,
-              });
+              // Resolve the throwable ONCE into a plain, enumerable shape.
+              // Spreading the raw error would print `{}` because name/message/
+              // stack/code are non-enumerable on Error/DOMException instances.
+              const details = describeSttError(err);
+              const guardRejected = isGuardRejection(err);
+              const transcodeCode = err instanceof TranscodeError ? err.code : undefined;
+
+              console.error(
+                guardRejected
+                  ? '[ZEEDER-VOICE] Recording rejected by the pre-transcode guard — not starting the Web Speech fallback.'
+                  : '[ZEEDER-VOICE] Whisper STT failed — falling back to Web Speech.',
+                {
+                  ...details,
+                  stage: guardRejected ? 'pre-transcode-guard' : 'stt',
+                  transcodeCode,
+                  guardRejected,
+                  blobSize: blob.size,
+                  blobType: blob.type,
+                  recorderMimeType: recorder.mimeType,
+                  chunks: chunksRef.current.length,
+                },
+              );
+
+              // Guard rejection: no usable audio was captured, so popping the
+              // recognizer would start a bogus session for a 100ms tap. Surface
+              // a short hint instead and let the user try again.
+              if (guardRejected) {
+                setIsListening(false);
+                setState(prev => ({ ...prev, error: SHORT_CLIP_HINT }));
+                return;
+              }
+
               // Clear any partial transcript before fallback
               setTranscript('');
               transcriptRef.current = '';
@@ -625,14 +764,21 @@ export function useZeederVoice({ tenantId, resellerSlug }: { tenantId?: string; 
 
             const tab = (data.payload as { tab?: unknown; view?: unknown } | undefined)?.tab
               ?? (data.payload as { tab?: unknown; view?: unknown } | undefined)?.view;
-            const targetPath =
-              tab === 'persona'
-                ? '/client/dashboard/studio/persona'
-                : '/client/dashboard/studio/branding';
+            // Resolve the viewport through the shared registry instead of a
+            // hardcoded binary: an unknown `tab` is NOT branding, it is a
+            // missing target and must not silently mis-route the user.
+            const targetPath = isClientStudioTab(tab)
+              ? clientStudioHref(tab)
+              : clientStudioHref('branding');
 
             markVoiceNavigation();
             await speakSummary(
-              data.summary ?? 'Welcome to your branding page, how can I help?',
+              humanizeSummary(
+                data.summary,
+                isClientStudioTab(tab)
+                  ? buildNavigationSummary(targetPath)
+                  : "You got it—I'm taking you straight to your branding settings.",
+              ),
             );
             router.push(targetPath);
             setState(prev => ({ ...prev, isProcessing: false }));
@@ -663,9 +809,30 @@ export function useZeederVoice({ tenantId, resellerSlug }: { tenantId?: string; 
         if (data.actionType === 'SYSTEM_NAVIGATE') {
           const tab = (data.payload as { tab?: string } | undefined)?.tab;
           const href = (data.payload as { href?: string } | undefined)?.href;
-          const targetPath = href ?? (tab ? `/client/dashboard/studio/${tab}` : '/client/dashboard/studio/branding');
+          // The endpoint now always supplies a real `href`, but a legacy or
+          // third-party response may only carry `tab`. Resolve it through the
+          // shared registry so the tab is validated against the real routes.
+          //
+          // Deliberately NO branding fallback: a navigation with no usable
+          // target is a contract violation, and silently showing Branding is
+          // far worse than saying so. The user stays put and hears why.
+          const targetPath =
+            typeof href === 'string' && href.startsWith('/client/')
+              ? href
+              : isClientStudioTab(tab)
+                ? clientStudioHref(tab)
+                : null;
+
+          if (!targetPath) {
+            console.error(
+              `[ZEEDER-VOICE] SYSTEM_NAVIGATE had no usable target (tab="${String(tab)}", href="${String(href)}") — not navigating.`,
+            );
+            setState(prev => ({ ...prev, isProcessing: false }));
+            return;
+          }
+
           markVoiceNavigation();
-          await speakSummary(data.summary ?? `Navigating to ${targetPath}.`);
+          await speakSummary(humanizeSummary(data.summary, buildNavigationSummary(targetPath)));
           router.push(targetPath);
           setState(prev => ({ ...prev, isProcessing: false }));
           console.log(`[ZEEDER-VOICE] Routed SYSTEM_NAVIGATE → ${targetPath}`);

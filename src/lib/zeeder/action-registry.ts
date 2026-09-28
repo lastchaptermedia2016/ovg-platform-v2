@@ -13,9 +13,18 @@
  *
  * @remarks
  * This module is intentionally **zero-dependency** with respect to the
- * reseller domain. It does not import from `@/hooks`, `@/contexts/HannahContext`,
+ * reseller domain. It does NOT import from `@/hooks`, `@/contexts/HannahContext`,
  * or any reseller-scoped utilities.
+ *
+ * Navigation targets are NOT hardcoded here — they come from the shared
+ * `@/lib/voice/client-routes` registry, which is verified against the real
+ * `src/app/client/**` route tree. A hardcoded tab list here previously
+ * advertised `analytics`, which has no page and produced a 404.
  */
+
+// Route/label helpers are pure leaf modules, safe for both server and client.
+import { clientStudioHref, isClientStudioTab } from '@/lib/voice/client-routes';
+import { buildNavigationSummary } from '@/lib/ai/conversational-voice';
 
 // ──────────────────────────── Type Definitions ───────────────────────────
 
@@ -394,13 +403,26 @@ export const zeederActionRegistry = new Map<ZeederActionId, ZeederActionEntry>([
       id: 'navigate',
       description: 'Navigate to a specific tab or page in the client dashboard.',
       handler: async (payload: Record<string, unknown>): Promise<ZeederActionResult> => {
-        const allowedTabs = ['branding', 'persona', 'knowledge', 'integrations', 'analytics'] as const;
+        // Tabs and their routes come from the shared registry. It deliberately
+        // EXCLUDES 'analytics': there is no analytics page on the client
+        // surface, so the old hardcoded list produced a 404 for any analytics
+        // request. An analytics intent resolves to `fetchTelemetry` instead.
         const rawTab = payload.targetTab ?? payload.tab;
-        const tab = typeof rawTab === 'string' && allowedTabs.includes(rawTab as typeof allowedTabs[number])
-          ? (rawTab as typeof allowedTabs[number])
-          : undefined;
-        const href = payload.href as string | undefined;
-        const targetPath = href ?? (tab ? `/client/dashboard/studio/${tab}` : '/client/dashboard/studio/branding');
+        const tab = isClientStudioTab(rawTab) ? rawTab : undefined;
+        const href = typeof payload.href === 'string' ? payload.href : undefined;
+        // No Branding default: without a validated target we report failure
+        // rather than dumping the user on a screen they did not ask for.
+        const targetPath = href ?? (tab ? clientStudioHref(tab) : undefined);
+
+        if (!targetPath) {
+          console.warn(
+            `[ZEEDER:navigate] No usable target (targetTab="${String(rawTab)}", href="${String(href)}").`,
+          );
+          return {
+            success: false,
+            error: "I couldn't tell which screen you meant. Try naming the page — knowledge, persona, branding, or integrations.",
+          };
+        }
 
         // Client-side navigation using browser location.
         if (typeof window !== 'undefined') {
@@ -412,7 +434,8 @@ export const zeederActionRegistry = new Map<ZeederActionId, ZeederActionEntry>([
         return {
           success: true,
           data: { targetPath, tab, href },
-          greeting: `Navigating to ${targetPath}.`,
+          // Conversational, TTS-ready — never speaks a raw route path.
+          greeting: buildNavigationSummary(targetPath),
         };
       },
     },

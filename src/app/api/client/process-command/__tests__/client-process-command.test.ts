@@ -660,6 +660,77 @@ describe('POST /api/client/process-command - Persona Intent Without Target Mode'
   });
 });
 
+// ── Regression: the navigation target must survive the pipeline ─────────────
+// A "knowledge" request used to be classified as SYSTEM_NAVIGATE but the
+// payload carried no target, so `useZeederVoice` fell back to a hardcoded
+// Branding path — the AI said one thing and the UI did another.
+describe('POST /api/client/process-command - Studio viewport navigation', () => {
+  beforeEach(() => {
+    mockAuth.mockResolvedValue({
+      user: null,
+      userId: 'client-user',
+      email: 'client@example.com',
+      error: null,
+    });
+  });
+
+  const VIEWPORTS: Array<[string, string]> = [
+    ['take me to the knowledge page', 'knowledge'],
+    ['open my faq', 'knowledge'],
+    ['show me the training documents', 'knowledge'],
+    ['open the branding page', 'branding'],
+    ['where is my crm', 'integrations'],
+    ['open the integrations tab', 'integrations'],
+  ];
+
+  it('routes each viewport to its real path instead of branding', async () => {
+    for (const [utterance, tab] of VIEWPORTS) {
+      const res = await post(utterance);
+      const body = await res.json();
+
+      expect(res.status, utterance).toBe(200);
+      expect(body.actionType, utterance).toBe('SYSTEM_NAVIGATE');
+      expect(body.payload.tab, utterance).toBe(tab);
+      expect(body.payload.href, utterance).toBe(`/client/dashboard/studio/${tab}`);
+    }
+  });
+
+  it('never sends a knowledge request to the branding viewport', async () => {
+    const res = await post('take me to the knowledge page');
+    const body = await res.json();
+
+    expect(body.payload.href).not.toMatch(/branding/);
+    expect(body.summary).not.toMatch(/branding/i);
+    // Conversational confirmation, never a raw path or ellipsis.
+    expect(body.summary).toMatch(/knowledge base/i);
+    expect(body.summary).not.toMatch(/\.{2,}/);
+    expect(body.summary).not.toMatch(/\/client\//);
+  });
+
+  it('keeps explicit dashboard navigation on the dashboard route', async () => {
+    const res = await post('take me to my dashboard');
+    const body = await res.json();
+
+    expect(body.actionType).toBe('SYSTEM_NAVIGATE');
+    expect(body.payload.href).toBe('/client/dashboard');
+  });
+
+  it('resolves analytics to telemetry, never to a non-existent analytics route', async () => {
+    const res = await post('show me the analytics');
+    const body = await res.json();
+
+    expect(body.actionType).toBe('SYSTEM_TELEMETRY');
+    expect(JSON.stringify(body.payload)).not.toMatch(/analytics/);
+  });
+
+  it('leaves branding MUTATION commands on SYSTEM_UPDATE_BRANDING', async () => {
+    for (const utterance of ['update my branding', 'change the header color']) {
+      const body = await (await post(utterance)).json();
+      expect(body.actionType, utterance).toBe('SYSTEM_UPDATE_BRANDING');
+    }
+  });
+});
+
 describe('POST /api/client/process-command - Sandbox Test Mode (Studio Preview)', () => {
   beforeEach(() => {
     mockAuth.mockResolvedValue({

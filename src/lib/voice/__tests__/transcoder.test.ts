@@ -50,11 +50,18 @@ let createdContexts: Array<{ state: string; close: () => Promise<void> }> = [];
 
 class FakeAudioContext {
   state = 'running';
+  resume = vi.fn(async () => {
+    this.state = 'running';
+  });
   close = vi.fn(async () => {
     this.state = 'closed';
   });
   decodeAudioData = vi.fn(async () => {
-    if (decodeShouldReject) throw new Error('EncodingError: unable to decode audio data');
+    if (decodeShouldReject) {
+      const err = new Error('The media resource could not be decoded.');
+      err.name = 'EncodingError';
+      throw err;
+    }
     return decodeBuffer;
   });
   constructor() {
@@ -109,7 +116,7 @@ afterEach(() => {
 
 describe('TranscodeError', () => {
   it('exposes exactly the four directive error codes', () => {
-    expect([...TRANSCODE_ERROR_CODES]).toEqual(['TOO_SHORT', 'EMPTY', 'SILENCE', 'UNDECODABLE']);
+    expect([...TRANSCODE_ERROR_CODES]).toEqual(['AUDIO_TOO_SHORT', 'EMPTY', 'SILENCE', 'UNDECODABLE']);
   });
 
   it('is a typed Error subclass carrying its code', () => {
@@ -128,8 +135,11 @@ describe('transcodeBlobToWav — guard states', () => {
     await expectTranscodeError(transcodeBlobToWav(new Blob([])), 'EMPTY');
   });
 
-  it('throws TOO_SHORT for a sub-1 KB blob', async () => {
-    await expectTranscodeError(transcodeBlobToWav(webmBlob(500)), 'TOO_SHORT');
+  it('throws AUDIO_TOO_SHORT for a sub-1 KB blob', async () => {
+    const err = await transcodeBlobToWav(webmBlob(500)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TranscodeError);
+    expect((err as TranscodeError).code).toBe('AUDIO_TOO_SHORT');
+    expect((err as TranscodeError).message).toContain('500 bytes < 1024 bytes');
   });
 
   it('throws UNDECODABLE when the codec cannot be decoded', async () => {
@@ -151,10 +161,88 @@ describe('transcodeBlobToWav — guard states', () => {
     await expectTranscodeError(transcodeBlobToWav(webmBlob()), 'SILENCE');
   });
 
-  it('always closes the transient AudioContext, even on guard failures', async () => {
+  it('does not allocate an AudioContext for an invalid (empty) blob', async () => {
     await transcodeBlobToWav(new Blob([])).catch(() => undefined);
+    expect(createdContexts).toHaveLength(0);
+  });
+
+  it('does not allocate an AudioContext for a too-brief blob', async () => {
+    await transcodeBlobToWav(webmBlob(500)).catch(() => undefined);
+    expect(createdContexts).toHaveLength(0);
+  });
+
+  it('creates and closes a transient AudioContext on the success path', async () => {
+    await transcodeBlobToWav(webmBlob());
     expect(createdContexts).toHaveLength(1);
     expect(createdContexts[0]?.state).toBe('closed');
+  });
+
+  it('creates and closes a transient AudioContext even on a decode failure', async () => {
+    decodeShouldReject = true;
+    await transcodeBlobToWav(webmBlob()).catch(() => undefined);
+    expect(createdContexts).toHaveLength(1);
+    expect(createdContexts[0]?.state).toBe('closed');
+  });
+
+  it('resumes a suspended AudioContext before decoding', async () => {
+    const resume = vi.fn(async () => undefined);
+    class SuspendedAudioContext {
+      state: string = 'suspended';
+      resume = resume;
+      close = vi.fn(async () => { this.state = 'closed'; });
+      decodeAudioData = vi.fn(async () => decodeBuffer);
+      constructor() {
+        createdContexts.push(this);
+      }
+    }
+    vi.stubGlobal('AudioContext', SuspendedAudioContext);
+
+    await transcodeBlobToWav(webmBlob());
+    expect(resume).toHaveBeenCalled();
+    expect(createdContexts).toHaveLength(1);
+    expect(createdContexts[0]?.state).toBe('closed');
+  });
+
+  it('uses the webkitAudioContext polyfill when AudioContext is undefined', async () => {
+    vi.unstubAllGlobals();
+    createdContexts.length = 0;
+    let webkitCalls = 0;
+    class WebkitAudioContext {
+      state: string = 'running';
+      close = vi.fn(async () => { this.state = 'closed'; });
+      decodeAudioData = vi.fn(async () => decodeBuffer);
+      constructor() {
+        webkitCalls++;
+        createdContexts.push(this);
+      }
+    }
+    vi.stubGlobal('webkitAudioContext', WebkitAudioContext);
+    vi.stubGlobal('AudioContext', undefined);
+    vi.stubGlobal('OfflineAudioContext', FakeOfflineAudioContext);
+
+    await transcodeBlobToWav(webmBlob());
+    expect(webkitCalls).toBe(1);
+    expect(createdContexts).toHaveLength(1);
+    expect(createdContexts[0]?.state).toBe('closed');
+  });
+
+  it('throws UNDECODABLE when no Web Audio API is available', async () => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal('AudioContext', undefined);
+    vi.stubGlobal('webkitAudioContext', undefined);
+
+    const err = await transcodeBlobToWav(webmBlob()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TranscodeError);
+    expect((err as TranscodeError).code).toBe('UNDECODABLE');
+    expect((err as TranscodeError).message).toContain('not available in this browser');
+    expect(createdContexts).toHaveLength(0);
+  });
+
+  it('surfaces the DOMException name in the decode rejection message', async () => {
+    decodeShouldReject = true;
+    const err = await transcodeBlobToWav(webmBlob()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TranscodeError);
+    expect((err as TranscodeError).message).toContain('EncodingError');
   });
 });
 

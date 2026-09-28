@@ -12,6 +12,8 @@
  * Client (Zeeder) surface only. Does NOT import reseller-domain code.
  */
 
+import { TranscodeError } from './transcoder';
+
 /** Options for {@link requestClientTranscription}. */
 export interface RequestClientTranscriptionOptions {
   /** Transcoded audio (canonical WAV) to upload. */
@@ -86,28 +88,31 @@ export async function transcribeWithFallback(
 }
 
 /**
- * Serialize an arbitrary throwable into a loggable shape (handles Error,
- * DOMException-like objects, plain objects, strings, and primitives).
+ * Serialize an arbitrary throwable into a loggable shape.
+ *
+ * The result is ALWAYS a plain, fully-enumerable object with at least one
+ * key, so it is safe to hand straight to `console.error(..., describeSttError(err))`
+ * or to spread into a log payload (`{ ...describeSttError(err), stage }`) without
+ * the payload collapsing to `{}`.
+ *
+ * This matters because spreading or serializing a thrown `Error`/`DOMException`
+ * is exactly what loses the data: `name`, `message`, `stack` (and a
+ * `TranscodeError`'s `code`) are non-enumerable, so a naive spread yields an
+ * empty object. They are therefore extracted explicitly.
+ *
+ * `Error` instances contribute `name`/`message`/`stack`, plus `code` when the
+ * throwable is a `TranscodeError`. Any OTHER throwable (DOMException-like
+ * plain objects, strings, numbers, symbols, …) is stringified into `rawError`,
+ * which is what guarantees the log is never `{}`.
  */
 export function describeSttError(err: unknown): Record<string, unknown> {
   if (err instanceof Error) {
     return {
-      errorType: err.name,
-      errorMessage: err.message,
-      errorStack: err.stack?.split('\n').slice(0, 2).join(' '),
+      name: err.name,
+      message: err.message,
+      stack: err.stack,
+      ...(err instanceof TranscodeError ? { code: err.code } : {}),
     };
   }
-  if (typeof err === 'object' && err !== null) {
-    const errObj = err as Record<string, unknown>;
-    const objMessage = errObj.message ?? errObj.toString?.() ?? 'Unknown';
-    return {
-      errorType: errObj.constructor?.name ?? 'Unknown',
-      errorMessage: objMessage,
-      errorName: errObj.name,
-    };
-  }
-  if (typeof err === 'string') {
-    return { errorType: 'string', errorMessage: err };
-  }
-  return { errorType: typeof err, errorMessage: String(err) };
+  return { rawError: String(err) };
 }

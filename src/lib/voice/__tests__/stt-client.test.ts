@@ -10,6 +10,7 @@ import {
   transcribeWithFallback,
   describeSttError,
 } from '../stt-client';
+import { TranscodeError } from '../transcoder';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -114,32 +115,90 @@ describe('transcribeWithFallback', () => {
 });
 
 describe('describeSttError', () => {
-  it('serializes Error instances with a truncated stack', () => {
+  it('extracts name/message/stack from Error instances', () => {
     const described = describeSttError(new Error('boom'));
-    expect(described.errorType).toBe('Error');
-    expect(described.errorMessage).toBe('boom');
-    expect(described.errorStack).toBeDefined();
+
+    expect(described.name).toBe('Error');
+    expect(described.message).toBe('boom');
+    expect(typeof described.stack).toBe('string');
+    expect(described.stack).toBeDefined();
+    expect(described.stack as string).not.toBe('');
   });
 
-  it('serializes DOMException-like objects by constructor name', () => {
+  it('includes the TranscodeError code for transcode failures', () => {
+    const described = describeSttError(new TranscodeError('EMPTY', 'no audio frames'));
+
+    expect(described.name).toBe('TranscodeError');
+    expect(described.message).toBe('no audio frames');
+    expect(described.code).toBe('EMPTY');
+    expect(typeof described.stack).toBe('string');
+  });
+
+  it('omits code for a plain Error (no undefined noise keys)', () => {
+    const described = describeSttError(new Error('boom'));
+
+    expect('code' in described).toBe(false);
+  });
+
+  it('stringifies a DOMException-like plain object under rawError', () => {
     const domExceptionLike = {
       name: 'EncodingError',
       message: 'unable to decode',
-      constructor: { name: 'DOMException' },
+      toString() {
+        return 'EncodingError: unable to decode';
+      },
     };
     const described = describeSttError(domExceptionLike);
-    expect(described.errorMessage).toBe('unable to decode');
-    expect(described.errorName).toBe('EncodingError');
+
+    expect(described).toEqual({ rawError: 'EncodingError: unable to decode' });
+    expect(Object.keys(described)).not.toHaveLength(0);
+    expect(typeof described.rawError).toBe('string');
+    expect(described.rawError as string).not.toBe('');
+  });
+
+  it('stringifies a bare object literal without toString', () => {
+    const described = describeSttError({ name: 'EncodingError', message: 'unable to decode' });
+
+    expect(Object.keys(described)).toHaveLength(1);
+    expect(typeof described.rawError).toBe('string');
+    expect(described.rawError as string).not.toBe('');
   });
 
   it('serializes plain strings', () => {
-    expect(describeSttError('plain failure')).toEqual({
-      errorType: 'string',
-      errorMessage: 'plain failure',
-    });
+    expect(describeSttError('plain failure')).toEqual({ rawError: 'plain failure' });
   });
 
   it('serializes primitive non-strings', () => {
-    expect(describeSttError(42)).toEqual({ errorType: 'number', errorMessage: '42' });
+    expect(describeSttError(42)).toEqual({ rawError: '42' });
+  });
+
+  it('never returns an empty object for any throwable (regression guard for {})', () => {
+    const throwables: unknown[] = [
+      new Error('boom'),
+      new TypeError('bad type'),
+      new TranscodeError('EMPTY', 'no audio frames'),
+      { name: 'EncodingError', message: 'unable to decode' },
+      { toString: () => 'EncodingError: unable to decode' },
+      'plain failure',
+      42,
+      null,
+      undefined,
+      Symbol('sym'),
+      [],
+    ];
+
+    for (const throwable of throwables) {
+      const described = describeSttError(throwable);
+      const keys = Object.keys(described);
+
+      expect(keys.length, `empty description for ${String(throwable)}`).toBeGreaterThan(0);
+      expect(described).not.toEqual({});
+      for (const key of keys) {
+        expect(
+          Object.getOwnPropertyDescriptor(described, key)?.enumerable,
+          `key ${key} must be enumerable`,
+        ).toBe(true);
+      }
+    }
   });
 });

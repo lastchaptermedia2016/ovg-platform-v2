@@ -11,6 +11,20 @@ OVG-Platform-V2 is a high-performance, multi-tenant SaaS platform designed for *
 - **State Management:** Zustand for predictable, typed store
 - **Animation:** Framer Motion for UI transitions
 
+## System Capabilities (Production)
+
+### Live Intervene & Human Handoff System
+Real-time WebSocket synchronization (`supabase_realtime`) with instant AI pause/resume, dynamic badge state indicators (`Owner speaking` / `AI paused`), and Live Chat Inbox intervention controls.
+
+### Resilient Realtime Channel Management
+Channel lifecycle teardown pattern handling reconnection backoffs, preventing WebSocket socket collisions and `TIMED_OUT` errors during state updates or re-renders.
+
+### RAG + LLM Engine
+Knowledge Base vector/catalog retrieval with deduplication, structured Groq LLM action parsing, and fallback orchestration.
+
+### Voice Orchestration & Orpheus TTS
+Speech synthesis via Orpheus English TTS model (`hannah`) with sub-1000ms latency and browser audio buffer diagnostics.
+
 ## 🚀 Current Project State: Complete Branding & AI System
 
 The **OVG Platform** is now a fully-functional enterprise solution with advanced AI-powered branding capabilities.
@@ -481,6 +495,15 @@ npm test           # Run all Vitest test suites
 npm run typecheck  # Type-check with tsc --noEmit
 ```
 
+### Verification & Build Commands
+```bash
+# Code Quality Verification
+npx eslint .
+npx tsc --noEmit
+npm run test
+npm run build
+```
+
 ## 🧪 Testing
 
 ### Test Suite Status
@@ -575,15 +598,19 @@ ovg-platform-v2/
 └── tsconfig.json             # TypeScript configuration
 ```
 
-## 📋 Refactoring Status
-
-An active refactor is underway across three phases. See `.kiro/specs/ovg-platform-refactor/tasks.md` for the full implementation plan.
+## 📋 Phase Implementation Status
 
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 1 | Canonical Supabase Clients & Import Migration | ✅ Complete |
 | 2 | Security Hardening (getUser, admin guards, diagnostics cleanup) | 🏗️ In Progress |
 | 3 | Architecture Cleanups (hardcoded slugs, type standards, lint fixes) | 📋 Planned |
+| 4 | UI/UX Excellence & Polish (Unified glassmorphism, Knowledge Base cards, dynamic badge transparency, high-contrast status pills) | ✅ Complete |
+| 5 | Voice Pipeline & Database Schemas (`tenant_voice_sessions` schema active; `useZeederVoice` orchestration ready) | 🟢 Green-Gated / In Progress |
+
+## 📋 Refactoring Status
+
+An active refactor is underway across three phases. See `.kiro/specs/ovg-platform-refactor/tasks.md` for the full implementation plan.
 
 ## 📊 Key Implementation Details
 
