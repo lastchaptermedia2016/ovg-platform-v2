@@ -44,6 +44,8 @@ interface InitialConfig {
   suggestedActions?: SuggestedAction[];
   /** Pre-configured greeting text loaded from widget_config. */
   greeting?: string;
+  /** Client website URL (tenants.website_url) used by AI Design Mirror scraping. */
+  websiteUrl?: string | null;
 }
 
 interface ClientBrandingStudioProps {
@@ -53,6 +55,8 @@ interface ClientBrandingStudioProps {
   onClientChange: (clientId: string) => void;
   initialConfig?: InitialConfig;
   planTier?: string;
+  /** Client website URL (tenants.website_url) — used by AI Design Mirror scraping. */
+  websiteUrl?: string | null;
 }
 
 export interface BrandingConfig {
@@ -96,6 +100,12 @@ export interface BrandingConfig {
   brandName: string;
   /** Widget placement corner — synced from tenant widget_config.branding.widgetPosition */
   widgetPosition: 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left';
+  /** Client website URL (tenants.website_url) — used by AI Design Mirror scraping. */
+  websiteUrl: string | null;
+  /** Raw scraped branding payload from AI Design Mirror (JSON string). */
+  branding: string;
+  /** Scraped primary brand color hex (e.g. '#307fbb'). */
+  brandingColors: string;
 }
 
 type StudioAction = IncomingAIAction;
@@ -270,6 +280,9 @@ export function ClientBrandingStudio({
       return isImageBackground(bg) ? (bg ?? '') : '';
     })(),
     widgetPosition: initialConfig?.branding?.widgetPosition || 'bottom-right',
+    websiteUrl: initialConfig?.websiteUrl ?? null,
+    branding: (initialConfig?.branding ? JSON.stringify(initialConfig.branding) : '') as string,
+    brandingColors: (initialConfig?.branding?.primaryColor as string | undefined) || '#307fbb',
   });
 
   const [suggestedActions, setSuggestedActions] = useState<SuggestedAction[]>(
@@ -288,6 +301,11 @@ export function ClientBrandingStudio({
   const [textCommand, setTextCommand] = useState('');
   const [isProcessingText, setIsProcessingText] = useState(false);
   const userHasTypedRef = useRef(false);
+
+  // AI Design Mirror scraping state — shown as a subtle loading indicator
+  // when the toggle is flipped on and a website URL is available.
+  const [isMirroring, setIsMirroring] = useState(false);
+  const [mirrorError, setMirrorError] = useState<string | null>(null);
 
   // Guided Onboarding State
   const [showGuidedSetup, setShowGuidedSetup] = useState(false);
@@ -1648,9 +1666,81 @@ export function ClientBrandingStudio({
     router.push('/reseller/lastchaptermedia2016/clients');
   }, [resetState, router, setHasGreeted]);
 
-  const updateConfig = (key: keyof BrandingConfig, value: string | number | boolean) => {
+  const updateConfig = useCallback((key: keyof BrandingConfig, value: string | number | boolean) => {
     setConfig((prev) => ({ ...prev, [key]: value }));
-  };
+  }, [setConfig]);
+
+  /**
+   * AI Design Mirror toggle handler.
+   *
+   * Flipping the toggle ON triggers an async brand scrape against the client's
+   * website URL (tenants.website_url). On success the scraped payload is merged
+   * into the studio config so the preview updates immediately. Failures are
+   * surfaced as an inline warning but never block the toggle state change —
+   * the user can always re-enable or manually correct the branding.
+   */
+  const handleToggleDesignMirror = useCallback(async (nextEnabled: boolean) => {
+    // Always flip the toggle first so the UI stays responsive.
+    updateConfig('aiDesignMirror', nextEnabled);
+    setMirrorError(null);
+
+    if (!nextEnabled) return;
+
+    const websiteUrl = config.websiteUrl?.trim();
+    if (!websiteUrl) {
+      setMirrorError('Add a website URL to enable AI Design Mirror auto-scraping.');
+      return;
+    }
+
+    setIsMirroring(true);
+    try {
+      const res = await fetch('/api/resellers/scrape-brand', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: websiteUrl }),
+      });
+
+      const data = await res.json() as {
+        success: boolean;
+        data?: { brandName?: string; logoUrl?: string; brandingColors?: string; branding?: Record<string, unknown> };
+        error?: string;
+      };
+
+      if (!res.ok || !data.success || !data.data) {
+        throw new Error(data.error || 'Failed to detect branding');
+      }
+
+      const detected = data.data;
+      const patches: Array<[keyof BrandingConfig, string]> = [];
+      if (detected.brandName && detected.brandName.trim()) {
+        patches.push(['brandName', detected.brandName.trim()]);
+      }
+      if (detected.logoUrl && detected.logoUrl.trim()) {
+        patches.push(['logoUrl', detected.logoUrl.trim()]);
+      }
+      if (detected.brandingColors && detected.brandingColors.trim()) {
+        patches.push(['brandingColors', detected.brandingColors.trim()]);
+      }
+      if (detected.branding && typeof detected.branding === 'object') {
+        patches.push(['branding', JSON.stringify(detected.branding)]);
+      }
+
+      for (const [key, value] of patches) {
+        updateConfig(key, value as string);
+      }
+
+      if (patches.length > 0) {
+        setSaveMessage('AI Design Mirror applied detected branding');
+        setTimeout(() => setSaveMessage(null), 4000);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Brand scraping failed';
+      console.error('[ClientBrandingStudio] AI Design Mirror scrape error:', message, err);
+      setMirrorError(message);
+    } finally {
+      setIsMirroring(false);
+    }
+  }, [config.websiteUrl, updateConfig]);
 
   const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -2200,13 +2290,21 @@ export function ClientBrandingStudio({
                   <span className="text-[#FFD700] text-lg">🔒</span>
                 )}
                 <div>
-                  <div className="text-sm text-white font-medium">AI Design Mirror</div>
+                  <div className="text-sm text-white font-medium flex items-center gap-2">
+                    AI Design Mirror
+                    {isMirroring && (
+                      <span className="text-[10px] text-[#0097b2] animate-pulse">Mirroring design…</span>
+                    )}
+                  </div>
                   <div className="text-xs text-white/50">Auto-scrape and mirror design</div>
+                  {mirrorError && (
+                    <div className="text-[10px] text-red-400 mt-1">{mirrorError}</div>
+                  )}
                 </div>
               </div>
               <button
-                onClick={() => updateConfig('aiDesignMirror', !config.aiDesignMirror)}
-                disabled={isFeatureLocked('aiDesignMirror')}
+                onClick={() => handleToggleDesignMirror(!config.aiDesignMirror)}
+                disabled={isFeatureLocked('aiDesignMirror') || isMirroring}
                 className={`w-12 h-6 rounded-full transition-all relative ${
                   config.aiDesignMirror ? 'bg-[#0097b2]' : 'bg-white/20'
                 } ${isFeatureLocked('aiDesignMirror') ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}

@@ -195,6 +195,7 @@ export default function ClientBrandingPage() {
           planTier={clientData?.pricing_tier_key || 'standard'}
           clients={allClients}
           onClientChange={handleClientChange}
+          websiteUrl={(clientData as Tenant & { website_url?: string | null } | null)?.website_url ?? null}
         />
         <IntegrationSuite
           key={clientId}

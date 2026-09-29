@@ -1083,7 +1083,7 @@ async function fetchTenantDetails(
     const { data, error } = await supabase
       .from('tenants')
       .select('id, tenant_id, name, branding_colors, system_prompt, preferred_voice, pricing_tier_key, show_ovg_branding, widget_config')
-      .eq('id', tenantId)
+      .or(`id.eq.${tenantId},tenant_id.eq.${tenantId}`)
       .maybeSingle();
     if (error || !data) return null;
     return data as Record<string, unknown>;

@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { getBlueprintForIndustry } from "@/config/ai-engine";
 
 // ──────────────────────────────────────────────
@@ -19,6 +20,12 @@ interface FormData {
   email: string;
   websiteUrl: string;
   industry: IndustryKey;
+}
+
+interface ScrapedBranding {
+  brandName: string;
+  logoUrl: string;
+  primaryColor: string;
 }
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -48,6 +55,66 @@ export function ClientOnboardingWizard({
   });
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<keyof FormData, string>>>({});
+  const [scrapedBranding, setScrapedBranding] = useState<ScrapedBranding | null>(null);
+  const [isScraping, setIsScraping] = useState(false);
+  const [scrapeError, setScrapeError] = useState<string | null>(null);
+
+  const handleFieldChange = useCallback(
+    (field: keyof FormData, value: string) => {
+      setForm((prev) => ({ ...prev, [field]: value }));
+      // Clear error on change
+      setFieldErrors((prev) => ({ ...prev, [field]: "" }));
+    },
+    [],
+  );
+
+  // Auto-detect branding from the client's website URL.
+  const handleAutoDetectBranding = useCallback(async () => {
+    const rawUrl = form.websiteUrl.trim();
+    if (!rawUrl) {
+      setScrapeError("Enter a website URL first");
+      return;
+    }
+    // Accept bare domains by normalizing before validation feedback.
+    const normalized = rawUrl.startsWith("http") ? rawUrl : `https://${rawUrl}`;
+    if (!URL_REGEX.test(normalized)) {
+      setScrapeError("Invalid URL (must start with http:// or https://)");
+      return;
+    }
+
+    setIsScraping(true);
+    setScrapeError(null);
+    try {
+      const res = await fetch("/api/resellers/scrape-brand", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: rawUrl }),
+      });
+      const data = await res.json() as {
+        success: boolean;
+        data?: { brandName?: string; logoUrl?: string; brandingColors?: string };
+        error?: string;
+      };
+      if (!res.ok || !data.success || !data.data) {
+        setScrapeError(data.error || "Failed to detect branding");
+        return;
+      }
+      const detected: ScrapedBranding = {
+        brandName: (data.data.brandName || "").trim(),
+        logoUrl: (data.data.logoUrl || "").trim(),
+        primaryColor: (data.data.brandingColors || "#307fbb").trim(),
+      };
+      setScrapedBranding(detected);
+      // Pre-seed the client name field when it's empty and we got a brand name.
+      if (!form.name.trim() && detected.brandName) {
+        setForm((prev) => ({ ...prev, name: detected.brandName }));
+      }
+    } catch {
+      setScrapeError("Network error during brand detection");
+    } finally {
+      setIsScraping(false);
+    }
+  }, [form.websiteUrl, form.name]);
 
   // Validation
   const validations = useMemo(() => {
@@ -61,15 +128,6 @@ export function ClientOnboardingWizard({
   const canProceedStep1 = useMemo(
     () => form.name.trim().length > 0 && !validations.email && !validations.websiteUrl,
     [form.name, validations],
-  );
-
-  const handleFieldChange = useCallback(
-    (field: keyof FormData, value: string) => {
-      setForm((prev) => ({ ...prev, [field]: value }));
-      // Clear error on change
-      setFieldErrors((prev) => ({ ...prev, [field]: "" }));
-    },
-    [],
   );
 
   const handleNext = useCallback(() => {
@@ -104,6 +162,7 @@ export function ClientOnboardingWizard({
           email: form.email.trim() || null,
           websiteUrl: form.websiteUrl.trim() || null,
           industry: form.industry,
+          scrapedBranding: scrapedBranding ?? null,
         }),
       });
 
@@ -122,7 +181,7 @@ export function ClientOnboardingWizard({
       setSaveStatus("error");
       setTimeout(() => setSaveStatus("idle"), 3000);
     }
-  }, [resellerSlug, form, router]);
+  }, [resellerSlug, form, router, scrapedBranding]);
 
   // Preview blueprint for the selected industry
   const selectedBlueprint = useMemo(
@@ -222,19 +281,81 @@ export function ClientOnboardingWizard({
             <label className="text-xs text-white/60 tracking-wide mb-1.5 block">
               Website URL
             </label>
-            <input
-              type="url"
-              value={form.websiteUrl}
-              onChange={(e) => handleFieldChange("websiteUrl", e.target.value)}
-              placeholder="https://example.com"
-              className={`w-full px-4 py-2.5 rounded-lg bg-white/10 border text-sm text-white tracking-wide outline-none transition-all placeholder:text-white/30 ${
-                fieldErrors.websiteUrl
-                  ? "border-red-500 focus:border-red-500"
-                  : "border-white/20 focus:border-[#0097b2] focus:ring-1 focus:ring-[#0097b2]/50"
-              }`}
-            />
+            <div className="flex gap-2">
+              <input
+                type="url"
+                value={form.websiteUrl}
+                onChange={(e) => handleFieldChange("websiteUrl", e.target.value)}
+                placeholder="https://example.com"
+                className={`flex-1 px-4 py-2.5 rounded-lg bg-white/10 border text-sm text-white tracking-wide outline-none transition-all placeholder:text-white/30 ${
+                  fieldErrors.websiteUrl
+                    ? "border-red-500 focus:border-red-500"
+                    : "border-white/20 focus:border-[#0097b2] focus:ring-1 focus:ring-[#0097b2]/50"
+                }`}
+              />
+              <button
+                type="button"
+                onClick={handleAutoDetectBranding}
+                disabled={isScraping}
+                title="Auto-detect brand name, logo, and colors from the website"
+                className={`px-4 py-2.5 rounded-lg border text-xs tracking-widest uppercase font-medium transition-all duration-200 whitespace-nowrap ${
+                  isScraping
+                    ? "border-[#0097b2]/50 bg-[#0097b2]/10 text-[#0097b2] cursor-wait"
+                    : "border-[#D4AF37]/60 bg-[#D4AF37]/10 text-[#D4AF37] hover:bg-[#D4AF37]/20 hover:shadow-[0_0_16px_rgba(212,175,55,0.4)]"
+                }`}
+              >
+                {isScraping ? (
+                  <span className="flex items-center gap-2">
+                    <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Detecting…
+                  </span>
+                ) : (
+                  "✨ Auto-Detect"
+                )}
+              </button>
+            </div>
             {fieldErrors.websiteUrl && (
               <p className="text-[10px] text-red-400 mt-1">{fieldErrors.websiteUrl}</p>
+            )}
+            {scrapeError && (
+              <p className="text-[10px] text-red-400 mt-1">{scrapeError}</p>
+            )}
+            {scrapedBranding && !isScraping && (
+              <div className="mt-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 space-y-1">
+                <p className="text-[10px] tracking-[0.2em] uppercase text-emerald-300/70 font-medium">
+                  Detected Branding
+                </p>
+                <div className="flex items-center gap-3 text-xs text-white/80">
+                  {scrapedBranding.logoUrl ? (
+                    <Image
+                      src={scrapedBranding.logoUrl}
+                      alt="detected logo"
+                      width={24}
+                      height={24}
+                      unoptimized
+                      style={{ objectFit: 'contain' }}
+                      className="rounded bg-white/10"
+                    />
+                  ) : (
+                    <span
+                      className="w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold"
+                      style={{ background: scrapedBranding.primaryColor }}
+                    >
+                      {scrapedBranding.brandName?.charAt(0)?.toUpperCase() || "?"}
+                    </span>
+                  )}
+                  <span className="truncate">
+                    <span className="text-white font-medium">{scrapedBranding.brandName || "—"}</span>
+                    <span className="text-white/40"> · </span>
+                    <span style={{ color: scrapedBranding.primaryColor }}>
+                      {scrapedBranding.primaryColor}
+                    </span>
+                  </span>
+                </div>
+              </div>
             )}
           </div>
 
@@ -341,6 +462,27 @@ export function ClientOnboardingWizard({
               value={INDUSTRY_OPTIONS.find((o) => o.key === form.industry)?.label ?? form.industry}
             />
             <SummaryRow label="Default Plan" value="Standard (R 2,450/mo)" />
+            {scrapedBranding && (
+              <div className="flex items-center justify-between px-4 py-3">
+                <span className="text-xs text-white/50 tracking-wide">Auto-Branding</span>
+                <span className="text-sm text-white/90 font-medium truncate ml-4 max-w-[240px] flex items-center gap-2">
+                  {scrapedBranding.logoUrl ? (
+                    <Image
+                      src={scrapedBranding.logoUrl}
+                      alt="logo"
+                      width={20}
+                      height={20}
+                      unoptimized
+                      style={{ objectFit: 'contain' }}
+                      className="rounded bg-white/10"
+                    />
+                  ) : null}
+                  <span style={{ color: scrapedBranding.primaryColor }}>
+                    {scrapedBranding.brandName || "—"}
+                  </span>
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Save Button */}

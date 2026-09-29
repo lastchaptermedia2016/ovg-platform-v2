@@ -42,6 +42,7 @@ export async function GET(request: NextRequest) {
       .select('id, sender_id, message, role, created_at')
       .eq('tenant_id', tenant.id)
       .eq('conversation_id', conversationId)
+      .eq('channel', 'widget')
       .order('created_at', { ascending: true })
       .limit(50);
 

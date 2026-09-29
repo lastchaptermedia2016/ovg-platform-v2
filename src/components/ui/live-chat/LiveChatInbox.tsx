@@ -237,6 +237,7 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
       sender_id: currentUserId ?? 'unknown',
       message: content,
       role: 'agent',
+      channel: 'widget',
       created_at: new Date().toISOString(),
       conversation_id: targetConversationId,
     };
@@ -373,6 +374,11 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
           },
           (payload) => {
             const row = payload.new as ChatMessage;
+
+            // System/voice-command feedback rows must never surface as customer
+            // conversations in the inbox — they are not real widget chats.
+            if (row.channel !== 'widget') return;
+
             setMessages((prev) => {
               // Exact ID collision guard
               if (prev.some((m) => m.id === row.id)) return prev;

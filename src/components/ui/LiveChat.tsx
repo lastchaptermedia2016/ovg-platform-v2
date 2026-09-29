@@ -39,6 +39,7 @@ interface ChatMessage {
   message: string;
   created_at: string;
   role: string;
+  channel: string;
   conversation_id?: string;
 }
 
@@ -169,6 +170,11 @@ export function LiveChat({ tenantId, accessToken, conversationId }: LiveChatProp
           },
           (payload) => {
             const row = payload.new as ChatMessage;
+
+            // System/voice-command feedback rows are agent-side only and must
+            // never surface in the customer widget chat conversation list.
+            if (row.channel !== 'widget') return;
+
             if (!active) return;
             setMessages((prev) => {
               const optimisticIndex = prev.findIndex(
@@ -383,6 +389,7 @@ export function LiveChat({ tenantId, accessToken, conversationId }: LiveChatProp
       sender_id: currentUserId ?? 'unknown',
       message: content,
       role: 'agent',
+      channel: 'widget',
       created_at: new Date().toISOString(),
     };
 

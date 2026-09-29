@@ -141,7 +141,7 @@ async function fetchTenantBrandName(tenantId: string): Promise<string | null> {
   const { data, error } = await supabaseAdmin
     .from('tenants')
     .select('widget_config')
-    .eq('id', tenantId)
+    .or(`id.eq.${tenantId},tenant_id.eq.${tenantId}`)
     .maybeSingle();
 
   if (error || !data?.widget_config) return null;

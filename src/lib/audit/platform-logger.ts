@@ -84,6 +84,8 @@ export async function persistChatMessage(
       .insert({
         tenant_id: tenantId,
         sender_id: userId,
+        role: 'assistant',
+        channel: 'system',
         message: JSON.stringify({
           user: text,
           assistant: {

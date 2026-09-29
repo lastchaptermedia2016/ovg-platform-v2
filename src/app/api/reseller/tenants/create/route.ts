@@ -6,13 +6,29 @@ import { getBlueprintForIndustry } from "@/config/ai-engine";
 import { normalizeIndustry, DB_INDUSTRY_VALUES } from "@/lib/utils/normalize-industry";
 
 // ──────────────────────────────────────────────
+// Types
+// ──────────────────────────────────────────────
+interface ScrapedBranding {
+  brandName?: string;
+  logoUrl?: string;
+  primaryColor?: string;
+}
+
+// ──────────────────────────────────────────────
 // Request validation schema
 // ──────────────────────────────────────────────
+const ScrapedBrandingSchema = z.object({
+  brandName: z.string().trim().max(120).optional(),
+  logoUrl: z.string().trim().max(2048).optional(),
+  primaryColor: z.string().trim().max(32).optional(),
+}).nullable().optional();
+
 const CreateTenantSchema = z.object({
   resellerSlug: z.string().min(1),
   name: z.string().min(1, "Client name is required"),
   email: z.string().email("Valid email required").nullable().optional(),
   websiteUrl: z.string().url("Valid URL required").nullable().optional(),
+  scrapedBranding: ScrapedBrandingSchema,
   // Accept any industry string, normalize it to a DB-compliant value, then
   // enforce the canonical enum (guarantees industry_check compliance).
   // Note: wizard enum 'GENERAL' normalizes to 'GENERAL BUSINESS'.
@@ -29,6 +45,29 @@ const CreateTenantSchema = z.object({
       }),
     ),
 });
+
+// ──────────────────────────────────────────────
+// Helpers
+// ──────────────────────────────────────────────
+/** Build the tenant widget_config, merging any auto-detected branding. */
+function buildWidgetConfig(scraped: ScrapedBranding | null | undefined) {
+  const primaryColor = scraped?.primaryColor?.trim() || "#0097b2";
+  const logoUrl = scraped?.logoUrl?.trim() || "";
+  const brandName = scraped?.brandName?.trim() || "";
+  return {
+    branding: {
+      primaryColor,
+      accentColor: "#D4AF37",
+      logoUrl,
+      brandName,
+    },
+    features: {
+      aiInsightBadge: false,
+      aiDesignMirror: false,
+      customCss: false,
+    },
+  };
+}
 
 // ──────────────────────────────────────────────
 // POST — Atomic tenant + ai_settings creation
@@ -49,7 +88,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { resellerSlug, name, email, websiteUrl, industry } =
+    const { resellerSlug, name, email, websiteUrl, industry, scrapedBranding } =
       validationResult.data;
 
     const supabase = await createClient();
@@ -134,18 +173,7 @@ export async function POST(request: NextRequest) {
     const now = new Date().toISOString();
 
     // ── Step 1: Insert into tenants ──
-    const widgetConfig = {
-      branding: {
-        primaryColor: "#0097b2",
-        accentColor: "#D4AF37",
-        logoUrl: "",
-      },
-      features: {
-        aiInsightBadge: false,
-        aiDesignMirror: false,
-        customCss: false,
-      },
-    };
+    const widgetConfig = buildWidgetConfig(scrapedBranding);
 
     const { data: tenantInsert, error: tenantError } = await supabase
       .from("tenants")

@@ -28,6 +28,7 @@ export async function POST(request: Request) {
         sender_id: null,
         message: message.trim(),
         role: 'visitor',
+        channel: 'widget',
         conversation_id: conversationId,
       });
 

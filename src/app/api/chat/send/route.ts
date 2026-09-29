@@ -34,6 +34,7 @@ export async function POST(request: NextRequest) {
       sender_id: user.id,
       message: message.trim(),
       role: 'agent',
+      channel: 'widget',
     };
     if (conversationId && isUuid(conversationId)) {
       insertPayload.conversation_id = conversationId;

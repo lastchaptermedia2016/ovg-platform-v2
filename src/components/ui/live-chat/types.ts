@@ -18,7 +18,8 @@ export interface ChatMessage {
   sender_id: string | null;
   message: string;
   created_at: string;
-  role: 'visitor' | 'agent';
+  role: 'visitor' | 'agent' | 'assistant';
+  channel: 'widget' | 'system';
   conversation_id: string;
 }
 

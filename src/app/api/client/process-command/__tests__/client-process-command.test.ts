@@ -957,7 +957,9 @@ describe('POST /api/client/process-command - System Prompt Hydration', () => {
 
     await post('how do I customize the header?');
 
-    expect(chainMethods.eq).toHaveBeenCalledWith('id', 'tenant-uuid-123');
+    // The tenant-detail fetch must resolve by id OR tenant_id so a UUID-format
+    // slug that is not the PK still hydrates the system prompt.
+    expect(chainMethods.or).toHaveBeenCalledWith('id.eq.tenant-uuid-123,tenant_id.eq.tenant-uuid-123');
     expect(lastGroqSystemPrompt).toMatch(/Zeeder Motors/);
   });
 

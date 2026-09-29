@@ -44,9 +44,9 @@ export async function GET(request: NextRequest) {
 
     const { data: conversations, error: convError } = await supabaseAdmin
       .from('chat_messages')
-      .select('conversation_id, created_at, message, role, sender_id')
+      .select('conversation_id, created_at, message, role, sender_id, channel')
       .eq('tenant_id', tenant.id)
-      .not('conversation_id', 'is', null)
+      .eq('channel', 'widget')
       .gte('created_at', cutoff)
       .order('created_at', { ascending: false })
       .limit(500);
@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
 
     const convMap = new Map<string, {
       id: string;
-      messages: Array<{ created_at: string; message: string; role: string; sender_id: string | null }>;
+      messages: Array<{ created_at: string; message: string; role: string; sender_id: string | null; channel: string }>;
     }>();
 
     const orderedMessages = (conversations ?? []).reverse();
@@ -66,12 +66,13 @@ export async function GET(request: NextRequest) {
     for (const row of orderedMessages) {
       if (!isUuid(row.conversation_id)) continue;
       const current = convMap.get(row.conversation_id);
-      const target = current ?? { id: row.conversation_id, messages: [] as Array<{ created_at: string; message: string; role: string; sender_id: string | null }> };
+      const target = current ?? { id: row.conversation_id, messages: [] as Array<{ created_at: string; message: string; role: string; sender_id: string | null; channel: string }> };
       target.messages.push({
         created_at: row.created_at,
         message: row.message,
         role: row.role,
         sender_id: row.sender_id,
+        channel: row.channel,
       });
       convMap.set(row.conversation_id, target);
     }

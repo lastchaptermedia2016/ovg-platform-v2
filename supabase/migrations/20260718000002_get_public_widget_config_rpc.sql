@@ -55,3 +55,4 @@ GRANT EXECUTE ON FUNCTION get_public_widget_config(TEXT) TO anon, authenticated;
 
 COMMENT ON FUNCTION get_public_widget_config IS
   'Anonymous-safe widget config loader. Returns only branding and suggestedActions, completely isolating internal studio states (incl. widget_studio) and all secrets/prompts.';
+

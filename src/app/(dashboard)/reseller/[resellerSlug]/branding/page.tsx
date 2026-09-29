@@ -15,6 +15,7 @@ import { createClient } from '@/lib/supabase/client';
 interface TenantRecord {
   id: string;
   name: string;
+  website_url?: string | null;
   pricing_tier_key?: string;
   metadata?: unknown;
   widget_config?: {
@@ -202,6 +203,7 @@ export default function ResellerBrandingPage() {
           greeting: (widgetConfig.greeting as string) || '',
           ai_settings: widgetConfig.ai_settings as Record<string, unknown> | undefined,
           aiPersona: widgetConfig.aiPersona as Record<string, unknown> | undefined,
+          websiteUrl: (tenant.website_url as string | undefined) ?? null,
         });
 
         setHydratedPlanTier(tenant.pricing_tier_key || 'standard');
@@ -315,6 +317,7 @@ export default function ResellerBrandingPage() {
                 onClientChange={handleClientChange}
                 initialConfig={hydratedConfig as { branding?: Partial<BrandingConfig>; features?: { aiInsightBadge?: boolean; aiDesignMirror?: boolean; customCss?: boolean; voiceFeaturesEnabled?: boolean } }}
                 planTier={hydratedPlanTier}
+                websiteUrl={(hydratedConfig.websiteUrl as string | undefined | null) ?? null}
               />
             ) : (
               <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-xl p-6 mb-6">

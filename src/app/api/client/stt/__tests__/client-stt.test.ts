@@ -66,7 +66,12 @@ function makeAuthChain(opts: { resellerId?: string | null } = {}) {
             }),
           };
         }
-        return { eq: () => Promise.resolve({ data: [{ id: 'tenant-1' }], error: null }) };
+        // resolveTenantId awaits this chain directly (no .maybeSingle),
+        // so .eq() must itself be a thenable.
+        return {
+          eq: () =>
+            Promise.resolve({ data: [{ id: 'tenant-1' }], error: null }),
+        };
       },
     }),
   };
@@ -75,7 +80,7 @@ function makeAuthChain(opts: { resellerId?: string | null } = {}) {
 function makeAdminChain(brandName: string | null = 'Acme') {
   return {
     select: () => ({
-      eq: () => ({
+      or: () => ({
         maybeSingle: () =>
           Promise.resolve({
             data: brandName
