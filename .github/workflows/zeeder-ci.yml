@@ -83,23 +83,10 @@ jobs:
         run: |
           supabase start --exclude storage-api,realtime,studio,edge-runtime,vector,logflare,supavisor,imgproxy,mailpit
 
-      # Fail fast if the stack did not come up healthy — a silent start failure
-      # would otherwise surface later as a cryptic "Invalid supabaseUrl" error
-      # from the Next.js build.
-      - name: Verify Supabase Stack Is Healthy
-        run: |
-          set -euo pipefail
-          supabase status
-          if ! supabase status | grep -q "API URL"; then
-            echo "::error::Supabase failed to start properly — no API URL reported."
-            exit 1
-          fi
-          echo "Supabase stack is healthy."
-
-      # Pull the local instance's active keys straight from the CLI and write
-      # them into GITHUB_ENV. This makes the workflow zero-config: no GitHub
-      # Actions secrets are needed, and the values stay in sync with whatever
-      # `supabase start` actually generated (port, anon key, service role key).
+      # Pull local instance active keys straight from the CLI in machine-readable
+      # env format. This acts as both the export mechanism and the health check:
+      # if the stack isn't responding, this command fails cleanly with a non-zero
+      # exit code — no brittle grep against human-readable CLI output tables.
       # Verified override names against the CLI source
       # (internal/status/status.go CustomName struct):
       #   api.url            -> NEXT_PUBLIC_SUPABASE_URL
@@ -116,11 +103,6 @@ jobs:
             --override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY \
             > /tmp/supabase.env
 
-          # Debug: show what the CLI actually emitted.
-          echo "=== Generated environment file ==="
-          cat /tmp/supabase.env
-          echo "=== End generated file ==="
-
           # `supabase status -o env` emits `export KEY="value"` lines, which
           # are not valid entries in $GITHUB_ENV. Strip the `export ` prefix so
           # the file ends up with plain KEY=value lines.
@@ -130,9 +112,6 @@ jobs:
           set -a
           source /tmp/supabase.env
           set +a
-
-          echo "NEXT_PUBLIC_SUPABASE_URL value: '${NEXT_PUBLIC_SUPABASE_URL:-EMPTY}'"
-          echo "NEXT_PUBLIC_SUPABASE_ANON_KEY length: ${#NEXT_PUBLIC_SUPABASE_ANON_KEY}"
 
           test -n "${NEXT_PUBLIC_SUPABASE_URL:-}"
           test -n "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}"
@@ -145,7 +124,6 @@ jobs:
               ;;
           esac
 
-          echo "Supabase URL: $NEXT_PUBLIC_SUPABASE_URL"
           echo "Supabase environment variables validated."
 
       - name: Run Schema Migrations Verification
@@ -153,23 +131,6 @@ jobs:
 
       - name: Execute Vitest Engine
         run: npm test
-
-      - name: Validate Supabase Build Environment
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ ! "$NEXT_PUBLIC_SUPABASE_URL" =~ ^https?:// ]]; then
-            echo "::error::NEXT_PUBLIC_SUPABASE_URL must be an HTTP or HTTPS URL"
-            exit 1
-          fi
-
-          if [ -z "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}" ]; then
-            echo "::error::NEXT_PUBLIC_SUPABASE_ANON_KEY is empty"
-            exit 1
-          fi
-
-          echo "Supabase build environment is valid."
 
       - name: Validate Next.js Compilation Build
         run: npm run build
