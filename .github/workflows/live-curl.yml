@@ -317,11 +317,16 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          if ! pg_isready -h 127.0.0.1 -p "$SUPABASE_DB_PORT" -q; then
+          # Default to the standard local Supabase port (54322 per
+          # supabase/config.toml) if the export step failed or was skipped —
+          # `if: always()` means this runs even when earlier steps errored, so
+          # an unbound SUPABASE_DB_PORT must not abort the cleanup.
+          DB_PORT="${SUPABASE_DB_PORT:-54322}"
+          if ! pg_isready -h 127.0.0.1 -p "$DB_PORT" -q; then
             echo "DB not reachable, skipping cleanup"
             exit 0
           fi
-          psql -h 127.0.0.1 "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 <<SQL
+          psql -h 127.0.0.1 "${SUPABASE_DB_URL:-postgresql://postgres:postgres@127.0.0.1:$DB_PORT/postgres}" -v ON_ERROR_STOP=1 <<SQL
             DELETE FROM rate_limits WHERE key LIKE 't:${CI_TENANT_SLUG}|%' OR key = 't:${CI_TENANT_SLUG}';
             DELETE FROM tenant_appointments WHERE tenant_id = (SELECT id FROM tenants WHERE tenant_id='${CI_TENANT_SLUG}');
           SQL
