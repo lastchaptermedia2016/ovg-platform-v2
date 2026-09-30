@@ -54,10 +54,10 @@ jobs:
           echo "Supabase config.toml present."
 
       - name: Start Local Supabase Stack
-        run: supabase start --no-ssl
+        run: supabase start
 
       - name: Run Schema Migrations Verification
-        run: supabase db reset --no-ssl
+        run: supabase db reset
 
       - name: Execute Vitest Engine
         run: npm test
