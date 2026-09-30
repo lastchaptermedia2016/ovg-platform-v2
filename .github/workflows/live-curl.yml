@@ -198,19 +198,12 @@ jobs:
           } >> "$GITHUB_ENV"
           echo "Direct Postgres URL built for port ${SUPABASE_DB_PORT}."
 
-      # Apply every migration EXCEPT the booking-bridge (012) which is out of
-      # scope. tenant_appointments is created by 003_pre_baseline (sorted before
-      # 012), so skipping 012 does not break the LEAD read-back.
-      - name: Apply migrations (exclude 012) to local stack
-        run: |
-          set -euo pipefail
-          for f in $(ls supabase/migrations/*.sql | sort); do
-            case "$(basename "$f")" in
-              012_create_booking_bridge_schema.sql) echo "SKIP (out of scope): $f";;
-              *) echo "APPLY: $f"; psql -h 127.0.0.1 "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f "$f";;
-            esac
-          done
-
+      # NOTE: no migration-apply loop here. `supabase start` already applies every
+      # file in supabase/migrations/ on the local stack, so re-applying them
+      # with psql fails on non-idempotent migrations (e.g. 004_intent_alerts
+      # errors with "policy already exists"). tenant_appointments is created
+      # by 003_pre_baseline (sorted before 012), so the LEAD read-back below
+      # still works without the booking-bridge schema.
       - name: Seed dedicated CI tenant
         run: |
           set -euo pipefail
