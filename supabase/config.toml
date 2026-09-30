@@ -15,14 +15,8 @@ port = 54321
 schemas = ["public", "auth"]
 extra_search_path = ["public", "auth"]
 
-[api.keys]
-# These are placeholders; `supabase start` overwrites them on first boot.
-anon_key = "placeholder-anon-key-regenerated-on-start"
-service_role_key = "placeholder-service-role-key-regenerated-on-start"
-
 [db]
 port = 54322
-image = "supabase/postgres:15.8.082"
 major_version = 15
 
 [db.seed]
@@ -42,18 +36,5 @@ port = 54323
 [auth]
 enabled = true
 
-[auth.email]
-# Auth is disabled in CI; no SMTP needed.
-double_confirm_change_enabled = false
-enable_signups = false
-enable_confirm_emails = false
-
 [storage]
-enabled = true
-
-[metrics]
-enabled = true
-port = 54324
-
-[logs]
 enabled = true
