@@ -365,3 +365,12 @@ jobs:
       - name: Stop dev server
         if: always()
         run: pkill -f "next dev" || true
+
+      # Diagnostics only: surface the app's server log when any scenario fails,
+      # so "Unknown tenant" / 500 / route errors are visible without rerunning.
+      # The dev server writes to /tmp/next-dev.log (see "Start next dev").
+      - name: Dump app log on failure
+        if: failure()
+        run: |
+          echo "=== app log (last 200 lines) ==="
+          tail -n 200 /tmp/next-dev.log || true
