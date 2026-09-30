@@ -124,14 +124,12 @@ jobs:
           # `supabase status` can transiently fail. Retry to give the stack
           # time to stabilize; if it never comes up, dump the real status so
           # the failure is diagnosable instead of a silent empty value.
+          # NOTE: no --override-name flags and no 2>/dev/null — the override
+          # names did not match CLI 2.109.1's native output, so the values
+          # came back empty even though the command exited 0.
           MAX_RETRIES=5
           RETRY_COUNT=0
-          until supabase status -o env \
-            --override-name api.url=NEXT_PUBLIC_SUPABASE_URL \
-            --override-name auth.anon_key=NEXT_PUBLIC_SUPABASE_ANON_KEY \
-            --override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY \
-            --override-name db.port=SUPABASE_DB_PORT \
-            > /tmp/supabase.raw 2>/dev/null; do
+          until supabase status -o env > /tmp/supabase.raw; do
             RETRY_COUNT=$((RETRY_COUNT + 1))
             if [ "$RETRY_COUNT" -ge "$MAX_RETRIES" ]; then
               echo "::error::Failed to get Supabase status after $MAX_RETRIES attempts"
@@ -142,56 +140,48 @@ jobs:
             sleep 3
           done
 
-          # Enhanced debugging
-          echo "=== Raw Supabase Status Output ===" >&2
-          cat /tmp/supabase.raw >&2
-          echo "=== File size ===" >&2
-          wc -c /tmp/supabase.raw >&2
-          echo "=== Line count ===" >&2
-          wc -l /tmp/supabase.raw >&2
-          echo "=== Service status ===" >&2
-          supabase status >&2
-          echo "=== Hex dump (first 200 chars) ===" >&2
-          head -c 200 /tmp/supabase.raw | od -c >&2
+          # Show the variable NAMES the CLI actually emits (never the values)
+          # so the next log reveals whether the keys match our extraction.
+          echo "=== supabase status env keys ===" >&2
+          sed 's/=.*/=<redacted>/' /tmp/supabase.raw >&2
 
-          # Extract each variable with grep + cut -f2- (everything after the
-          # first `=`, so values containing `=` survive) and strip wrapping
-          # quotes with sed. Per-variable extraction is more robust than an
-          # IFS loop: a blank line or a value with an embedded `=` can't
-          # corrupt the key/value split. The `|| echo ""` keeps the script
-          # alive when grep finds no match — the test -n assertions below
-          # catch the empty case with a named error.
-          NEXT_PUBLIC_SUPABASE_URL=$(grep '^export NEXT_PUBLIC_SUPABASE_URL=' /tmp/supabase.raw | cut -d'=' -f2- | sed 's/^"//;s/"$//' || echo "")
-          NEXT_PUBLIC_SUPABASE_ANON_KEY=$(grep '^export NEXT_PUBLIC_SUPABASE_ANON_KEY=' /tmp/supabase.raw | cut -d'=' -f2- | sed 's/^"//;s/"$//' || echo "")
-          SUPABASE_SERVICE_ROLE_KEY=$(grep '^export SUPABASE_SERVICE_ROLE_KEY=' /tmp/supabase.raw | cut -d'=' -f2- | sed 's/^"//;s/"$//' || echo "")
-          SUPABASE_DB_PORT=$(grep '^export SUPABASE_DB_PORT=' /tmp/supabase.raw | cut -d'=' -f2- | sed 's/^"//;s/"$//' || echo "")
+          # Extract values from the raw output using the CLI's native key
+          # names. The regex tolerates an optional `export ` prefix, so both
+          # `API_URL=...` and `export API_URL=...` match. head -n1 picks the
+          # first match; cut -d= -f2- keeps everything after the first `=`
+          # so JWT values survive intact; sed strips wrapping double-quotes;
+          # `|| true` means a missing key yields an empty string rather than
+          # aborting the step under set -euo pipefail.
+          get() { grep -E "^(export )?$1=" /tmp/supabase.raw | head -n1 | cut -d= -f2- | sed 's/^"//; s/"$//' || true; }
 
-          echo "NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL" >> /tmp/supabase.clean
-          echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY" >> /tmp/supabase.clean
-          echo "SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY" >> /tmp/supabase.clean
-          echo "SUPABASE_DB_PORT=$SUPABASE_DB_PORT" >> /tmp/supabase.clean
-
-          echo "=== Cleaned Environment ===" >&2
-          cat /tmp/supabase.clean >&2
-
-          set -a
-          source /tmp/supabase.clean
-          set +a
-
-          cat /tmp/supabase.clean >> "$GITHUB_ENV"
-
-          # Validate required variables exist and are non-empty
-          test -n "${NEXT_PUBLIC_SUPABASE_URL:-}" || { echo "::error::NEXT_PUBLIC_SUPABASE_URL is empty"; exit 1; }
-          test -n "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}" || { echo "::error::NEXT_PUBLIC_SUPABASE_ANON_KEY is empty"; exit 1; }
-          test -n "${SUPABASE_DB_PORT:-}" || { echo "::error::SUPABASE_DB_PORT is empty"; exit 1; }
-
-          case "$NEXT_PUBLIC_SUPABASE_URL" in
-            http://*|https://*) ;;
-            *)
-              echo "::error::Invalid NEXT_PUBLIC_SUPABASE_URL: [$NEXT_PUBLIC_SUPABASE_URL]"
-              exit 1
-              ;;
+          URL="$(get API_URL)"
+          ANON="$(get ANON_KEY)"
+          SERVICE="$(get SERVICE_ROLE_KEY)"
+          DB_PORT="$(get DB_PORT)"
+          if [ -z "$DB_PORT" ]; then
+            DB_PORT="$(get DB_URL | sed -E 's#^[a-z]+://[^/]*:([0-9]+)/.*#\1#')"
+          fi
+          case "$DB_PORT" in
+            ''|*[!0-9]*) echo "::error::Could not determine DB port (got: [$DB_PORT])"; exit 1 ;;
           esac
+          SUPABASE_DB_PORT="$DB_PORT"
+
+          # Fail with a clear message if any extracted value is empty.
+          for n in URL ANON SERVICE DB_PORT; do
+            [ -n "${!n}" ] || { echo "::error::$n is empty"; exit 1; }
+          done
+
+          # Mask the two sensitive keys so they never appear in job logs.
+          echo "::add-mask::$ANON"
+          echo "::add-mask::$SERVICE"
+
+          # Export all four under the names the rest of the workflow expects.
+          {
+            echo "NEXT_PUBLIC_SUPABASE_URL=$URL"
+            echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$ANON"
+            echo "SUPABASE_SERVICE_ROLE_KEY=$SERVICE"
+            echo "SUPABASE_DB_PORT=$DB_PORT"
+          } >> "$GITHUB_ENV"
 
           echo "Supabase environment variables validated."
 
