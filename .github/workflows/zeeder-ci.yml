@@ -27,7 +27,9 @@ jobs:
       - name: Initialize Supabase CLI
         uses: supabase/setup-cli@v1
         with:
-          version: 'latest'
+          version: 2.109.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Docker is required by `supabase start` (it runs Postgres, Studio, and
       # the Auth/Gotrue containers). On ubuntu-latest the daemon is pre-installed

@@ -43,7 +43,9 @@ jobs:
       - name: Initialize Supabase CLI
         uses: supabase/setup-cli@v1
         with:
-          version: 'latest'
+          version: 2.109.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify Docker daemon is healthy
         run: |
@@ -249,6 +251,10 @@ jobs:
           CI_SUPABASE_DB_URL: ${{ secrets.CI_SUPABASE_DB_URL }}
         run: |
           set -euo pipefail
+          if ! pg_isready -h 127.0.0.1 -p 5432 -q; then
+            echo "DB not reachable, skipping cleanup"
+            exit 0
+          fi
           psql -h 127.0.0.1 "$CI_SUPABASE_DB_URL" -v ON_ERROR_STOP=1 <<SQL
             DELETE FROM rate_limits WHERE key LIKE 't:${CI_TENANT_SLUG}|%' OR key = 't:${CI_TENANT_SLUG}';
             DELETE FROM tenant_appointments WHERE tenant_id = (SELECT id FROM tenants WHERE tenant_id='${CI_TENANT_SLUG}');
