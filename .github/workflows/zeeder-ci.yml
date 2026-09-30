@@ -108,11 +108,26 @@ jobs:
         run: |
           set -euo pipefail
 
-          supabase status -o env \
+          # `supabase start` returns before the containers are fully ready, so
+          # `supabase status` can transiently fail. Retry to give the stack
+          # time to stabilize; if it never comes up, dump the real status so
+          # the failure is diagnosable instead of a silent empty value.
+          MAX_RETRIES=5
+          RETRY_COUNT=0
+          until supabase status -o env \
             --override-name api.url=NEXT_PUBLIC_SUPABASE_URL \
             --override-name auth.anon_key=NEXT_PUBLIC_SUPABASE_ANON_KEY \
             --override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY \
-            > /tmp/supabase.raw
+            > /tmp/supabase.raw 2>/dev/null; do
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            if [ "$RETRY_COUNT" -ge "$MAX_RETRIES" ]; then
+              echo "::error::Failed to get Supabase status after $MAX_RETRIES attempts"
+              supabase status
+              exit 1
+            fi
+            echo "Supabase status unavailable, retrying... ($RETRY_COUNT/$MAX_RETRIES)"
+            sleep 3
+          done
 
           # Debug: show raw output
           echo "=== Raw Supabase Status Output ===" >&2
@@ -122,10 +137,12 @@ jobs:
           # first `=`, so values containing `=` survive) and strip wrapping
           # quotes with sed. Per-variable extraction is more robust than an
           # IFS loop: a blank line or a value with an embedded `=` can't
-          # corrupt the key/value split.
-          NEXT_PUBLIC_SUPABASE_URL=$(grep '^export NEXT_PUBLIC_SUPABASE_URL=' /tmp/supabase.raw | cut -d'=' -f2- | sed 's/^"//;s/"$//')
-          NEXT_PUBLIC_SUPABASE_ANON_KEY=$(grep '^export NEXT_PUBLIC_SUPABASE_ANON_KEY=' /tmp/supabase.raw | cut -d'=' -f2- | sed 's/^"//;s/"$//')
-          SUPABASE_SERVICE_ROLE_KEY=$(grep '^export SUPABASE_SERVICE_ROLE_KEY=' /tmp/supabase.raw | cut -d'=' -f2- | sed 's/^"//;s/"$//')
+          # corrupt the key/value split. The `|| echo ""` keeps the script
+          # alive when grep finds no match — the test -n assertions below
+          # catch the empty case with a named error.
+          NEXT_PUBLIC_SUPABASE_URL=$(grep '^export NEXT_PUBLIC_SUPABASE_URL=' /tmp/supabase.raw | cut -d'=' -f2- | sed 's/^"//;s/"$//' || echo "")
+          NEXT_PUBLIC_SUPABASE_ANON_KEY=$(grep '^export NEXT_PUBLIC_SUPABASE_ANON_KEY=' /tmp/supabase.raw | cut -d'=' -f2- | sed 's/^"//;s/"$//' || echo "")
+          SUPABASE_SERVICE_ROLE_KEY=$(grep '^export SUPABASE_SERVICE_ROLE_KEY=' /tmp/supabase.raw | cut -d'=' -f2- | sed 's/^"//;s/"$//' || echo "")
 
           echo "NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL" >> /tmp/supabase.clean
           echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY" >> /tmp/supabase.clean
