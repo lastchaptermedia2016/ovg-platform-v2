@@ -76,14 +76,27 @@ jobs:
         run: |
           supabase start --exclude storage-api,realtime,studio,edge-runtime,vector,logflare,supavisor,imgproxy,mailpit
 
+      # Pull the local instance's active keys straight from the CLI and write
+      # them into GITHUB_ENV. This makes the workflow zero-config: no GitHub
+      # Actions secrets are needed, and the values stay in sync with whatever
+      # `supabase start` actually generated (port, anon key, service role key).
+      # Verified override names against the CLI source
+      # (internal/status/status.go CustomName struct):
+      #   api.url            -> NEXT_PUBLIC_SUPABASE_URL
+      #   auth.anon_key      -> NEXT_PUBLIC_SUPABASE_ANON_KEY
+      #   auth.service_role_key -> SUPABASE_SERVICE_ROLE_KEY
+      - name: Export Local Supabase Keys to Environment
+        run: |
+          supabase status -o env \
+            --override-name api.url=NEXT_PUBLIC_SUPABASE_URL \
+            --override-name auth.anon_key=NEXT_PUBLIC_SUPABASE_ANON_KEY \
+            --override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY >> $GITHUB_ENV
+
       - name: Run Schema Migrations Verification
         run: supabase db reset
 
       - name: Execute Vitest Engine
         run: npm test
-        env:
-          NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_LOCAL_SERVICE_ROLE_KEY }}
 
       - name: Validate Next.js Compilation Build
         run: npm run build
