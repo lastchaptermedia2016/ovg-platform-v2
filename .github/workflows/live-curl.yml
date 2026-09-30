@@ -39,6 +39,34 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # ── Local Supabase stack (required before any migration/test step) ────
+      - name: Initialize Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 'latest'
+
+      - name: Verify Docker daemon is healthy
+        run: |
+          set -euo pipefail
+          if ! docker info >/dev/null 2>&1; then
+            echo "::error::Docker daemon is not running. `supabase start` requires Docker."
+            exit 1
+          fi
+          echo "Docker daemon is healthy."
+          docker ps
+
+      - name: Verify Supabase config exists
+        run: |
+          set -euo pipefail
+          if [ ! -f supabase/config.toml ]; then
+            echo "::error::supabase/config.toml not found. Run `supabase init` or commit the file."
+            exit 1
+          fi
+          echo "Supabase config.toml present."
+
+      - name: Start Local Supabase Stack
+        run: supabase start
+
       # ── Provision dedicated CI Supabase ────────────────────────────────────
       - name: Apply migrations (exclude 012) to CI project
         env:
