@@ -5,13 +5,20 @@ on:
   push:
     branches: [main]
 
-# Dedicated CI Supabase project — isolated from dev, so the rate-limit window and
-# tenant_appointments LEAD rows never pollute the working dev environment.
+# Live-curl regression gate.
+#
+# The rate-limit window and tenant_appointments LEAD rows are ephemeral by
+# design — they live only inside this job's local Supabase stack and are torn
+# down in the final cleanup step, so nothing here pollutes the dev environment.
+#
+# ZERO-CONFIG: this workflow derives ALL Supabase credentials from the local
+# stack via `supabase status -o env` (see "Export Local Supabase Keys to
+# Environment"). No CI_SUPABASE_* secrets are required — the same pattern as
+# zeeder-ci.yml. This avoids port drift (the local Postgres runs on 54322 per
+# supabase/config.toml, not 5432) and keeps the anon/service-role keys in sync
+# with whatever `supabase start` generated.
+#
 # Required GitHub Encrypted Secrets (repo or a `ci` environment):
-#   CI_SUPABASE_DB_URL        direct Postgres url (postgresql://...) to the CI project
-#   CI_SUPABASE_URL           == NEXT_PUBLIC_SUPABASE_URL
-#   CI_SUPABASE_ANON_KEY      == NEXT_PUBLIC_SUPABASE_ANON_KEY
-#   CI_SUPABASE_SERVICE_ROLE_KEY == SUPABASE_SERVICE_ROLE_KEY
 #   CI_GROQ_API_KEY           real Groq key — FAIL-CLOSED if absent (see test stage)
 # Migration 012 (booking_slots / booking_appointments / reserve_booking_slot) is
 # intentionally NEVER applied here (out of scope for these four scenarios).
@@ -87,46 +94,113 @@ jobs:
         run: |
           supabase start --exclude storage-api,realtime,studio,edge-runtime,vector,logflare,supavisor,imgproxy,mailpit
 
-      # ── Provision dedicated CI Supabase ────────────────────────────────────
-      - name: Apply migrations (exclude 012) to CI project
-        env:
-          CI_SUPABASE_DB_URL: ${{ secrets.CI_SUPABASE_DB_URL }}
+      # Fail fast if the stack did not come up healthy — a silent start failure
+      # would otherwise surface later as a cryptic "Invalid supabaseUrl" error
+      # from the Next.js dev server.
+      - name: Verify Supabase Stack Is Healthy
         run: |
           set -euo pipefail
-          # Apply every migration EXCEPT the booking-bridge (012) which is out of scope.
+          supabase status
+          if ! supabase status | grep -q "API URL"; then
+            echo "::error::Supabase failed to start properly — no API URL reported."
+            exit 1
+          fi
+          echo "Supabase stack is healthy."
+
+      # Pull the local instance's active keys straight from the CLI and write
+      # them into GITHUB_ENV. This makes the workflow zero-config: no GitHub
+      # Actions secrets are needed, and the values stay in sync with whatever
+      # `supabase start` actually generated (port, anon key, service role key).
+      # Verified override names against the CLI source
+      # (internal/status/status.go CustomName struct):
+      #   api.url            -> NEXT_PUBLIC_SUPABASE_URL
+      #   auth.anon_key      -> NEXT_PUBLIC_SUPABASE_ANON_KEY
+      #   auth.service_role_key -> SUPABASE_SERVICE_ROLE_KEY
+      #   db.port            -> SUPABASE_DB_PORT
+      - name: Export Local Supabase Keys to Environment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          supabase status -o env \
+            --override-name api.url=NEXT_PUBLIC_SUPABASE_URL \
+            --override-name auth.anon_key=NEXT_PUBLIC_SUPABASE_ANON_KEY \
+            --override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY \
+            --override-name db.port=SUPABASE_DB_PORT \
+            > /tmp/supabase.env
+
+          # Debug: show what the CLI actually emitted.
+          echo "=== Generated environment file ==="
+          cat /tmp/supabase.env
+          echo "=== End generated file ==="
+
+          # `supabase status -o env` emits `export KEY="value"` lines, which
+          # are not valid entries in $GITHUB_ENV. Strip the `export ` prefix so
+          # the file ends up with plain KEY=value lines.
+          sed -E 's/^export //' /tmp/supabase.env >> "$GITHUB_ENV"
+
+          # Make the values available to this step as well.
+          set -a
+          source /tmp/supabase.env
+          set +a
+
+          echo "NEXT_PUBLIC_SUPABASE_URL value: '${NEXT_PUBLIC_SUPABASE_URL:-EMPTY}'"
+          echo "SUPABASE_DB_PORT value: '${SUPABASE_DB_PORT:-EMPTY}'"
+          echo "NEXT_PUBLIC_SUPABASE_ANON_KEY length: ${#NEXT_PUBLIC_SUPABASE_ANON_KEY}"
+
+          test -n "${NEXT_PUBLIC_SUPABASE_URL:-}"
+          test -n "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}"
+          test -n "${SUPABASE_DB_PORT:-}"
+
+          case "$NEXT_PUBLIC_SUPABASE_URL" in
+            http://*|https://*) ;;
+            *)
+              echo "::error::Invalid NEXT_PUBLIC_SUPABASE_URL: $NEXT_PUBLIC_SUPABASE_URL"
+              exit 1
+              ;;
+          esac
+
+          echo "Supabase URL: $NEXT_PUBLIC_SUPABASE_URL"
+          echo "Supabase environment variables validated."
+
+      # Build a direct Postgres URL from the locally generated port so every
+      # psql / pg_isready call below binds to the SAME ephemeral stack. This
+      # replaces the old CI_SUPABASE_DB_URL secret (which pointed at a remote
+      # "dedicated" project that this workflow never actually used).
+      - name: Build Local Postgres URL
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:${SUPABASE_DB_PORT}/postgres"
+          } >> "$GITHUB_ENV"
+          echo "Direct Postgres URL built for port ${SUPABASE_DB_PORT}."
+
+      # Apply every migration EXCEPT the booking-bridge (012) which is out of
+      # scope. tenant_appointments is created by 003_pre_baseline (sorted before
+      # 012), so skipping 012 does not break the LEAD read-back.
+      - name: Apply migrations (exclude 012) to local stack
+        run: |
+          set -euo pipefail
           for f in $(ls supabase/migrations/*.sql | sort); do
             case "$(basename "$f")" in
               012_create_booking_bridge_schema.sql) echo "SKIP (out of scope): $f";;
-              *) echo "APPLY: $f"; psql -h 127.0.0.1 "$CI_SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f "$f";;
+              *) echo "APPLY: $f"; psql -h 127.0.0.1 "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f "$f";;
             esac
           done
 
       - name: Seed dedicated CI tenant
-        env:
-          CI_SUPABASE_DB_URL: ${{ secrets.CI_SUPABASE_DB_URL }}
         run: |
           set -euo pipefail
-          psql -h 127.0.0.1 "$CI_SUPABASE_DB_URL" -v ON_ERROR_STOP=1 <<SQL
+          psql -h 127.0.0.1 "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 <<SQL
             INSERT INTO tenants (tenant_id, name, branding_color, voice_id, system_prompt)
             VALUES ('${CI_TENANT_SLUG}', 'CI Live-Curl Tenant', '#0097b2', 'hannah', 'CI tenant for live-curl regression gate.')
             ON CONFLICT (tenant_id) DO NOTHING;
           SQL
 
-      # ── Boot app pointing at the CI project ───────────────────────────────
-      - name: Export CI env for next dev
-        run: |
-          echo "NEXT_PUBLIC_SUPABASE_URL=${{ secrets.CI_SUPABASE_URL }}" >> "$GITHUB_ENV"
-          echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ secrets.CI_SUPABASE_ANON_KEY }}" >> "$GITHUB_ENV"
-          echo "SUPABASE_SERVICE_ROLE_KEY=${{ secrets.CI_SUPABASE_SERVICE_ROLE_KEY }}" >> "$GITHUB_ENV"
-          # GROQ_API_KEY is intentionally NOT set here; the test stage fails closed
-          # if it is missing so we never silently exercise the local fallback.
-
+      # ── Boot app pointing at the local stack ───────────────────────────────
       - name: Start next dev
         run: npm run dev > /tmp/next-dev.log 2>&1 &
-        env:
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.CI_SUPABASE_URL }}
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.CI_SUPABASE_ANON_KEY }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.CI_SUPABASE_SERVICE_ROLE_KEY }}
 
       - name: Wait for server
         run: |
@@ -184,7 +258,6 @@ jobs:
       - name: Scenario — BOOK-as-LEAD (real LLM + LEAD insert read-back)
         env:
           CI_GROQ_API_KEY: ${{ secrets.CI_GROQ_API_KEY }}
-          CI_SUPABASE_DB_URL: ${{ secrets.CI_SUPABASE_DB_URL }}
         run: |
           set -euo pipefail
           export GROQ_API_KEY="$CI_GROQ_API_KEY"
@@ -197,7 +270,7 @@ jobs:
           # Confirm the route produced a booking capture payload
           echo "$resp" | jq -e '.payload.phone' >/dev/null || { echo "BOOK: no phone captured"; exit 1; }
           # Read back the real LEAD row written by supabaseAdmin
-          lead=$(psql -h 127.0.0.1 "$CI_SUPABASE_DB_URL" -t -A -c "SELECT status FROM tenant_appointments WHERE tenant_id=(SELECT id FROM tenants WHERE tenant_id='${CI_TENANT_SLUG}') ORDER BY created_at DESC LIMIT 1;")
+          lead=$(psql -h 127.0.0.1 "$SUPABASE_DB_URL" -t -A -c "SELECT status FROM tenant_appointments WHERE tenant_id=(SELECT id FROM tenants WHERE tenant_id='${CI_TENANT_SLUG}') ORDER BY created_at DESC LIMIT 1;")
           echo "latest tenant_appointments.status = [$lead]"
           [ "$lead" = "LEAD" ] || { echo "BOOK: expected LEAD row, got [$lead]"; exit 1; }
 
@@ -247,15 +320,13 @@ jobs:
       # ── Tear down ─────────────────────────────────────────────────────────
       - name: Cleanup CI tenant rate/lead rows
         if: always()
-        env:
-          CI_SUPABASE_DB_URL: ${{ secrets.CI_SUPABASE_DB_URL }}
         run: |
           set -euo pipefail
-          if ! pg_isready -h 127.0.0.1 -p 5432 -q; then
+          if ! pg_isready -h 127.0.0.1 -p "$SUPABASE_DB_PORT" -q; then
             echo "DB not reachable, skipping cleanup"
             exit 0
           fi
-          psql -h 127.0.0.1 "$CI_SUPABASE_DB_URL" -v ON_ERROR_STOP=1 <<SQL
+          psql -h 127.0.0.1 "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 <<SQL
             DELETE FROM rate_limits WHERE key LIKE 't:${CI_TENANT_SLUG}|%' OR key = 't:${CI_TENANT_SLUG}';
             DELETE FROM tenant_appointments WHERE tenant_id = (SELECT id FROM tenants WHERE tenant_id='${CI_TENANT_SLUG}');
           SQL
