@@ -129,9 +129,17 @@ jobs:
             sleep 3
           done
 
-          # Debug: show raw output
+          # Enhanced debugging
           echo "=== Raw Supabase Status Output ===" >&2
           cat /tmp/supabase.raw >&2
+          echo "=== File size ===" >&2
+          wc -c /tmp/supabase.raw >&2
+          echo "=== Line count ===" >&2
+          wc -l /tmp/supabase.raw >&2
+          echo "=== Service status ===" >&2
+          supabase status >&2
+          echo "=== Hex dump (first 200 chars) ===" >&2
+          head -c 200 /tmp/supabase.raw | od -c >&2
 
           # Extract each variable with grep + cut -f2- (everything after the
           # first `=`, so values containing `=` survive) and strip wrapping
