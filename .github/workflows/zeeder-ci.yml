@@ -114,7 +114,14 @@ jobs:
             --override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY \
             > /tmp/supabase.raw
 
+          # Debug: show raw output
+          echo "=== Raw Supabase Status Output ===" >&2
+          cat /tmp/supabase.raw >&2
+
           while IFS='=' read -r key val; do
+            # Skip empty lines — a stray blank line would otherwise write a
+            # `=value` entry with an empty key into $GITHUB_ENV.
+            [ -z "$key" ] && continue
             # Strip 'export ' prefix if present on the key
             key="${key#export }"
             # Strip leading and trailing double-quotes from the value
@@ -122,6 +129,9 @@ jobs:
             val="${val#\"}"
             echo "$key=$val" >> /tmp/supabase.clean
           done < /tmp/supabase.raw
+
+          echo "=== Cleaned Environment ===" >&2
+          cat /tmp/supabase.clean >&2
 
           # Source the cleaned file so the validation tests below can see the
           # values, then promote it to $GITHUB_ENV for downstream steps.
@@ -131,13 +141,14 @@ jobs:
 
           cat /tmp/supabase.clean >> "$GITHUB_ENV"
 
-          test -n "${NEXT_PUBLIC_SUPABASE_URL:-}"
-          test -n "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}"
+          # Validate required variables exist and are non-empty
+          test -n "${NEXT_PUBLIC_SUPABASE_URL:-}" || { echo "::error::NEXT_PUBLIC_SUPABASE_URL is empty"; exit 1; }
+          test -n "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}" || { echo "::error::NEXT_PUBLIC_SUPABASE_ANON_KEY is empty"; exit 1; }
 
           case "$NEXT_PUBLIC_SUPABASE_URL" in
             http://*|https://*) ;;
             *)
-              echo "::error::Invalid NEXT_PUBLIC_SUPABASE_URL: $NEXT_PUBLIC_SUPABASE_URL"
+              echo "::error::Invalid NEXT_PUBLIC_SUPABASE_URL: [$NEXT_PUBLIC_SUPABASE_URL]"
               exit 1
               ;;
           esac
