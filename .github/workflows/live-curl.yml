@@ -104,6 +104,17 @@ jobs:
       #   auth.anon_key      -> NEXT_PUBLIC_SUPABASE_ANON_KEY
       #   auth.service_role_key -> SUPABASE_SERVICE_ROLE_KEY
       #   db.port            -> SUPABASE_DB_PORT
+      #
+      # CRITICAL — quote stripping: `supabase status -o env` emits
+      # `export KEY="value"` lines. A naive `sed 's/^export //'` leaves the
+      # surrounding double-quotes in place, so $GITHUB_ENV ends up with
+      # NEXT_PUBLIC_SUPABASE_URL="http://..." (literal quotes). Next.js then
+      # rejects it at build/runtime as "Invalid supabaseUrl: Must be a valid
+      # HTTP or HTTPS URL". The loop below strips BOTH the `export ` prefix and
+      # the wrapping quotes before anything reaches $GITHUB_ENV.
+      # File redirection (not a pipe) is used so the sourced values remain
+      # visible to the validation tests in THIS step — a piped `while` would
+      # run in a subshell and silently empty them.
       - name: Export Local Supabase Keys to Environment
         shell: bash
         run: |
@@ -114,17 +125,24 @@ jobs:
             --override-name auth.anon_key=NEXT_PUBLIC_SUPABASE_ANON_KEY \
             --override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY \
             --override-name db.port=SUPABASE_DB_PORT \
-            > /tmp/supabase.env
+            > /tmp/supabase.raw
 
-          # `supabase status -o env` emits `export KEY="value"` lines, which
-          # are not valid entries in $GITHUB_ENV. Strip the `export ` prefix so
-          # the file ends up with plain KEY=value lines.
-          sed -E 's/^export //' /tmp/supabase.env >> "$GITHUB_ENV"
+          while IFS='=' read -r key val; do
+            # Strip 'export ' prefix if present on the key
+            key="${key#export }"
+            # Strip leading and trailing double-quotes from the value
+            val="${val%\"}"
+            val="${val#\"}"
+            echo "$key=$val" >> /tmp/supabase.clean
+          done < /tmp/supabase.raw
 
-          # Make the values available to this step as well.
+          # Source the cleaned file so the validation tests below can see the
+          # values, then promote it to $GITHUB_ENV for downstream steps.
           set -a
-          source /tmp/supabase.env
+          source /tmp/supabase.clean
           set +a
+
+          cat /tmp/supabase.clean >> "$GITHUB_ENV"
 
           test -n "${NEXT_PUBLIC_SUPABASE_URL:-}"
           test -n "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}"
