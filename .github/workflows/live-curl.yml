@@ -49,7 +49,7 @@ jobs:
           for f in $(ls supabase/migrations/*.sql | sort); do
             case "$(basename "$f")" in
               012_create_booking_bridge_schema.sql) echo "SKIP (out of scope): $f";;
-              *) echo "APPLY: $f"; psql "$CI_SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f "$f";;
+              *) echo "APPLY: $f"; psql -h 127.0.0.1 "$CI_SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f "$f";;
             esac
           done
 
@@ -58,7 +58,7 @@ jobs:
           CI_SUPABASE_DB_URL: ${{ secrets.CI_SUPABASE_DB_URL }}
         run: |
           set -euo pipefail
-          psql "$CI_SUPABASE_DB_URL" -v ON_ERROR_STOP=1 <<SQL
+          psql -h 127.0.0.1 "$CI_SUPABASE_DB_URL" -v ON_ERROR_STOP=1 <<SQL
             INSERT INTO tenants (tenant_id, name, branding_color, voice_id, system_prompt)
             VALUES ('${CI_TENANT_SLUG}', 'CI Live-Curl Tenant', '#0097b2', 'hannah', 'CI tenant for live-curl regression gate.')
             ON CONFLICT (tenant_id) DO NOTHING;
@@ -149,7 +149,7 @@ jobs:
           # Confirm the route produced a booking capture payload
           echo "$resp" | jq -e '.payload.phone' >/dev/null || { echo "BOOK: no phone captured"; exit 1; }
           # Read back the real LEAD row written by supabaseAdmin
-          lead=$(psql "$CI_SUPABASE_DB_URL" -t -A -c "SELECT status FROM tenant_appointments WHERE tenant_id=(SELECT id FROM tenants WHERE tenant_id='${CI_TENANT_SLUG}') ORDER BY created_at DESC LIMIT 1;")
+          lead=$(psql -h 127.0.0.1 "$CI_SUPABASE_DB_URL" -t -A -c "SELECT status FROM tenant_appointments WHERE tenant_id=(SELECT id FROM tenants WHERE tenant_id='${CI_TENANT_SLUG}') ORDER BY created_at DESC LIMIT 1;")
           echo "latest tenant_appointments.status = [$lead]"
           [ "$lead" = "LEAD" ] || { echo "BOOK: expected LEAD row, got [$lead]"; exit 1; }
 
@@ -203,7 +203,7 @@ jobs:
           CI_SUPABASE_DB_URL: ${{ secrets.CI_SUPABASE_DB_URL }}
         run: |
           set -euo pipefail
-          psql "$CI_SUPABASE_DB_URL" -v ON_ERROR_STOP=1 <<SQL
+          psql -h 127.0.0.1 "$CI_SUPABASE_DB_URL" -v ON_ERROR_STOP=1 <<SQL
             DELETE FROM rate_limits WHERE key LIKE 't:${CI_TENANT_SLUG}|%' OR key = 't:${CI_TENANT_SLUG}';
             DELETE FROM tenant_appointments WHERE tenant_id = (SELECT id FROM tenants WHERE tenant_id='${CI_TENANT_SLUG}');
           SQL
