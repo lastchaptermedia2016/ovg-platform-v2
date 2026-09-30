@@ -1,0 +1,59 @@
+# Supabase local stack configuration for the OVG Platform v2.
+#
+# This file is REQUIRED by `supabase start` / `supabase db reset`. Without it the
+# CLI exits with "config.toml not found" (exit code 1), which is why the
+# "Start Local Supabase Stack" step fails on CI.
+#
+# The CLI regenerates the anon + service role keys on first start and persists
+# them to supabase/.temp/, so the values below are placeholders that get
+# overwritten. They are committed so the file is always present.
+project_id = "ovg-platform-v2"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "auth"]
+extra_search_path = ["public", "auth"]
+
+[api.keys]
+# These are placeholders; `supabase start` overwrites them on first boot.
+anon_key = "placeholder-anon-key-regenerated-on-start"
+service_role_key = "placeholder-service-role-key-regenerated-on-start"
+
+[db]
+port = 54322
+image = "supabase/postgres:15.8.082"
+major_version = 15
+
+[db.seed]
+# Seeds run after `supabase start` and before `supabase db reset`.
+# The order matters: tenant/reseller rows must exist before the link rows.
+sql_paths = [
+  "supabase/seeds/001_demo_tenant.sql",
+  "supabase/seeds/003_test_reseller.sql",
+  "supabase/seeds/004_link_test_user.sql",
+  "supabase/seeds/005_confirm_test_user.sql",
+]
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+enabled = true
+
+[auth.email]
+# Auth is disabled in CI; no SMTP needed.
+double_confirm_change_enabled = false
+enable_signups = false
+enable_confirm_emails = false
+
+[storage]
+enabled = true
+
+[metrics]
+enabled = true
+port = 54324
+
+[logs]
+enabled = true
