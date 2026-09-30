@@ -15,13 +15,25 @@
 --     required for the upload/serve flow to function.
 
 -- Create the bucket (idempotent; safe to re-run).
-insert into storage.buckets (id, name, public, file_size_limit)
-values (
-  'brand-logos',
-  'brand-logos',
-  true,
-  5242880                               -- 5 MB hard cap (mirrors the API route gate)
-)
-on conflict (id) do update
-  set public = true,
-      file_size_limit = excluded.file_size_limit;
+-- When storage-api is excluded (e.g. CI), the storage schema does not exist and
+-- storage.buckets is absent. Guard the insert so the migration is a no-op in
+-- that case instead of failing with "relation does not exist".
+DO $guard$
+BEGIN
+  IF to_regclass('storage.buckets') IS NULL THEN
+    RAISE NOTICE 'storage.buckets not present (storage-api excluded); skipping 20260713_create_brand_logos_bucket';
+    RETURN;
+  END IF;
+
+  insert into storage.buckets (id, name, public, file_size_limit)
+  values (
+    'brand-logos',
+    'brand-logos',
+    true,
+    5242880                               -- 5 MB hard cap (mirrors the API route gate)
+  )
+  on conflict (id) do update
+    set public = true,
+        file_size_limit = excluded.file_size_limit;
+END
+$guard$;
