@@ -86,17 +86,62 @@ jobs:
       #   auth.anon_key      -> NEXT_PUBLIC_SUPABASE_ANON_KEY
       #   auth.service_role_key -> SUPABASE_SERVICE_ROLE_KEY
       - name: Export Local Supabase Keys to Environment
+        shell: bash
         run: |
+          set -euo pipefail
+
           supabase status -o env \
             --override-name api.url=NEXT_PUBLIC_SUPABASE_URL \
             --override-name auth.anon_key=NEXT_PUBLIC_SUPABASE_ANON_KEY \
-            --override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY >> $GITHUB_ENV
+            --override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY \
+            > /tmp/supabase.env
+
+          # `supabase status -o env` emits `export KEY="value"` lines, which
+          # are not valid entries in $GITHUB_ENV. Strip the `export ` prefix so
+          # the file ends up with plain KEY=value lines.
+          sed -E 's/^export //' /tmp/supabase.env >> "$GITHUB_ENV"
+
+          # Make the values available to this step as well.
+          set -a
+          source /tmp/supabase.env
+          set +a
+
+          test -n "${NEXT_PUBLIC_SUPABASE_URL:-}"
+          test -n "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}"
+
+          case "$NEXT_PUBLIC_SUPABASE_URL" in
+            http://*|https://*) ;;
+            *)
+              echo "::error::Invalid NEXT_PUBLIC_SUPABASE_URL: $NEXT_PUBLIC_SUPABASE_URL"
+              exit 1
+              ;;
+          esac
+
+          echo "Supabase URL: $NEXT_PUBLIC_SUPABASE_URL"
+          echo "Supabase environment variables validated."
 
       - name: Run Schema Migrations Verification
         run: supabase db reset
 
       - name: Execute Vitest Engine
         run: npm test
+
+      - name: Validate Supabase Build Environment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$NEXT_PUBLIC_SUPABASE_URL" =~ ^https?:// ]]; then
+            echo "::error::NEXT_PUBLIC_SUPABASE_URL must be an HTTP or HTTPS URL"
+            exit 1
+          fi
+
+          if [ -z "${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}" ]; then
+            echo "::error::NEXT_PUBLIC_SUPABASE_ANON_KEY is empty"
+            exit 1
+          fi
+
+          echo "Supabase build environment is valid."
 
       - name: Validate Next.js Compilation Build
         run: npm run build
