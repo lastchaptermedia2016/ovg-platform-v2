@@ -64,8 +64,26 @@ jobs:
           fi
           echo "Supabase config.toml present."
 
+      # `supabase start` pulls its container images from the Amazon ECR Public
+      # registry by default. GitHub-hosted runners share massive public IP
+      # ranges across thousands of concurrent builds, so anonymous pulls from
+      # ECR Public routinely hit IP-based rate limits ("toomanyrequests:
+      # Data limit exceeded"). Routing pulls to Docker Hub via
+      # SUPABASE_INTERNAL_IMAGE_REGISTRY lifts the anonymous quota and is the
+      # canonical fix (confirmed in supabase/cli#3361 and the CLI source in
+      # internal/utils/docker.go).
+      #
+      # --exclude trims the pull footprint for a migration/seed/API gate that
+      # does not need Studio, Storage, Realtime, Edge Runtime, Vector, Logflare,
+      # Supavisor, ImgProxy, or Mailpit. Note: the schema-init path can still
+      # pull gotrue/realtime/storage-api images even when excluded, so those
+      # three services are also disabled in supabase/config.toml to guarantee
+      # the exclusion actually reduces pulls.
       - name: Start Local Supabase Stack
-        run: supabase start
+        env:
+          SUPABASE_INTERNAL_IMAGE_REGISTRY: docker.io
+        run: |
+          supabase start --exclude storage-api,realtime,studio,edge-runtime,vector,logflare,supavisor,imgproxy,mailpit
 
       # ── Provision dedicated CI Supabase ────────────────────────────────────
       - name: Apply migrations (exclude 012) to CI project

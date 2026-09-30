@@ -33,8 +33,18 @@ sql_paths = [
 enabled = true
 port = 54323
 
+# Auth, Realtime, and Storage are disabled in CI to align with the
+# `--exclude` list passed to `supabase start`. The Supabase CLI's schema-init
+# path can still pull the gotrue/realtime/storage-api images even when those
+# containers are excluded (supabase/cli#4088, #4194), so disabling them here
+# guarantees the exclusion actually reduces the pull footprint. The
+# /api/client/process-command scenarios exercised by live-curl only need the
+# Postgres + PostgREST + Kong + Auth (JWT verification) stack, which stays up.
 [auth]
-enabled = true
+enabled = false
+
+[realtime]
+enabled = false
 
 [storage]
-enabled = true
+enabled = false
