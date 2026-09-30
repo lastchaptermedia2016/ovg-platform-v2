@@ -224,6 +224,18 @@ jobs:
           echo "App will use NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}"
           echo "Service role key length: ${#SUPABASE_SERVICE_ROLE_KEY}"
 
+      - name: Probe PostgREST with the service key
+        run: |
+          set -uo pipefail
+          echo "--- key role claim ---"
+          printf '%s' "$SUPABASE_SERVICE_ROLE_KEY" | cut -d. -f2 | tr '_-' '/+' | { read -r p; printf '%s' "$p" | base64 -d 2>/dev/null || true; }
+          echo
+          echo "--- PostgREST lookup ---"
+          curl -sS -w '\nHTTP %{http_code}\n' \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            "$NEXT_PUBLIC_SUPABASE_URL/rest/v1/tenants?select=id,tenant_id&tenant_id=eq.${CI_TENANT_SLUG}"
+
       # ── Boot app pointing at the local stack ───────────────────────────────
       - name: Start next dev
         run: npm run dev > /tmp/next-dev.log 2>&1 &
