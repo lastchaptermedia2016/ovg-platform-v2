@@ -53,6 +53,15 @@ jobs:
           fi
           echo "Supabase config.toml present."
 
+      # `supabase start` pulls its container images from the Amazon ECR Public
+      # registry. Anonymous pulls are rate-limited and fail with
+      # "toomanyrequests: Data limit exceeded", so authenticate first to lift
+      # the anonymous quota.
+      - name: Login to Amazon ECR Public
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: public
+
       - name: Start Local Supabase Stack
         run: supabase start
 
