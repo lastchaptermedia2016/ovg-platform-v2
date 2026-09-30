@@ -118,23 +118,22 @@ jobs:
           echo "=== Raw Supabase Status Output ===" >&2
           cat /tmp/supabase.raw >&2
 
-          while IFS='=' read -r key val; do
-            # Skip empty lines — a stray blank line would otherwise write a
-            # `=value` entry with an empty key into $GITHUB_ENV.
-            [ -z "$key" ] && continue
-            # Strip 'export ' prefix if present on the key
-            key="${key#export }"
-            # Strip leading and trailing double-quotes from the value
-            val="${val%\"}"
-            val="${val#\"}"
-            echo "$key=$val" >> /tmp/supabase.clean
-          done < /tmp/supabase.raw
+          # Extract each variable with grep + cut -f2- (everything after the
+          # first `=`, so values containing `=` survive) and strip wrapping
+          # quotes with sed. Per-variable extraction is more robust than an
+          # IFS loop: a blank line or a value with an embedded `=` can't
+          # corrupt the key/value split.
+          NEXT_PUBLIC_SUPABASE_URL=$(grep '^export NEXT_PUBLIC_SUPABASE_URL=' /tmp/supabase.raw | cut -d'=' -f2- | sed 's/^"//;s/"$//')
+          NEXT_PUBLIC_SUPABASE_ANON_KEY=$(grep '^export NEXT_PUBLIC_SUPABASE_ANON_KEY=' /tmp/supabase.raw | cut -d'=' -f2- | sed 's/^"//;s/"$//')
+          SUPABASE_SERVICE_ROLE_KEY=$(grep '^export SUPABASE_SERVICE_ROLE_KEY=' /tmp/supabase.raw | cut -d'=' -f2- | sed 's/^"//;s/"$//')
+
+          echo "NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL" >> /tmp/supabase.clean
+          echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY" >> /tmp/supabase.clean
+          echo "SUPABASE_SERVICE_ROLE_KEY=$SUPABASE_SERVICE_ROLE_KEY" >> /tmp/supabase.clean
 
           echo "=== Cleaned Environment ===" >&2
           cat /tmp/supabase.clean >&2
 
-          # Source the cleaned file so the validation tests below can see the
-          # values, then promote it to $GITHUB_ENV for downstream steps.
           set -a
           source /tmp/supabase.clean
           set +a
