@@ -224,6 +224,16 @@ jobs:
           echo "App will use NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}"
           echo "Service role key length: ${#SUPABASE_SERVICE_ROLE_KEY}"
 
+      - name: Grant service_role privileges on public schema (CI)
+        run: |
+          set -euo pipefail
+          psql -h 127.0.0.1 "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 <<'SQL'
+            GRANT USAGE ON SCHEMA public TO service_role;
+            GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+            GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
+            GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO service_role;
+          SQL
+
       - name: Probe PostgREST with the service key
         run: |
           set -uo pipefail
