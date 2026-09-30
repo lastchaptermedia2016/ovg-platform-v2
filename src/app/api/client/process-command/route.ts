@@ -572,6 +572,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
       .select('id')
       .eq('tenant_id', key)
       .maybeSingle();
+    if (byTenantId.error) console.warn('[process-command] tenant lookup error:', byTenantId.error.message);
     const found = byTenantId.data ?? (await supabaseAdmin.from('tenants').select('id').eq('id', key).maybeSingle()).data;
     resolvedTenantId = (found?.id as string | undefined) ?? null;
     if (!resolvedTenantId) {

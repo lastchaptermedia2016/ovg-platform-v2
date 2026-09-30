@@ -213,6 +213,17 @@ jobs:
             ON CONFLICT (tenant_id) DO NOTHING;
           SQL
 
+      # Diagnose why CHAT/BOOK/HELP might resolve "Unknown tenant": confirm the
+      # seeded row is queryable via the same direct Postgres URL the seed step
+      # used, and confirm the app-side env vars are non-empty. The key length
+      # is printed, never the key value.
+      - name: Diagnose seeded CI tenant
+        run: |
+          set -euo pipefail
+          psql -h 127.0.0.1 "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -c "SELECT id, tenant_id, is_active FROM tenants WHERE tenant_id = '${CI_TENANT_SLUG}';"
+          echo "App will use NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}"
+          echo "Service role key length: ${#SUPABASE_SERVICE_ROLE_KEY}"
+
       # ── Boot app pointing at the local stack ───────────────────────────────
       - name: Start next dev
         run: npm run dev > /tmp/next-dev.log 2>&1 &
