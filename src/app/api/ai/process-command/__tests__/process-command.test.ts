@@ -9,7 +9,7 @@ process.env.GROQ_API_KEY = process.env.GROQ_API_KEY || 'test-groq-key';
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
-import { POST } from '../route';
+import { POST, AIResponseSchema } from '../route';
 import * as fixtures from './process-command.fixtures';
 
 const TENANT_ID = 'eca76a5b-de2a-41c9-b5e0-5ae7412ef835';
@@ -196,5 +196,69 @@ describe('AI Process-Command Comprehensive Action Audit Suite', () => {
       expect(body.actionType).toBe('SYSTEM_APPLY_BRANDING_THEME');
       expect(body.payload.theme).toBe('legal');
     });
+  });
+});
+// ── Regression: contextKey contract ─────────────────────────────────────────
+// The system prompt (src/core/ai/system-prompts.ts) EXPLICITLY instructs the
+// model to emit `"contextKey": null` when a capability question does not map to
+// a specific command key. The schema previously used a strict
+// `z.string().optional()`, which rejected that documented output shape and
+// surfaced as a 500 on an otherwise valid SYSTEM_EXPLAIN / conversational
+// response.
+//
+// These cases pin BOTH halves of the contract: the mandated null must be
+// accepted, and genuinely wrong types must still be rejected — so this cannot
+// be "fixed" later by loosening the field into `z.any()`.
+describe('AIResponseSchema — contextKey contract', () => {
+  const base = { actionType: 'SYSTEM_EXPLAIN', summary: 'A sufficiently long summary.' };
+
+  it('accepts contextKey: null (explicitly mandated by the system prompt)', () => {
+    const result = AIResponseSchema.safeParse({ ...base, contextKey: null });
+    expect(result.success, 'null must validate').toBe(true);
+  });
+
+  it('accepts an omitted contextKey', () => {
+    const result = AIResponseSchema.safeParse(base);
+    expect(result.success, 'omitted must validate').toBe(true);
+  });
+
+  it('accepts an explicit undefined contextKey', () => {
+    const result = AIResponseSchema.safeParse({ ...base, contextKey: undefined });
+    expect(result.success, 'undefined must validate').toBe(true);
+  });
+
+  it('accepts a string contextKey', () => {
+    const result = AIResponseSchema.safeParse({ ...base, contextKey: 'DELETE_CLIENT' });
+    expect(result.success, 'string must validate').toBe(true);
+  });
+
+  it('preserves the supplied string contextKey', () => {
+    const result = AIResponseSchema.safeParse({ ...base, contextKey: 'SYSTEM_FILTER_GRID' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.contextKey).toBe('SYSTEM_FILTER_GRID');
+    }
+  });
+
+  // The guard against over-correcting: accepting null must NOT degrade into
+  // accepting any type.
+  it('rejects a non-string, non-null contextKey (e.g. a number)', () => {
+    const result = AIResponseSchema.safeParse({ ...base, contextKey: 42 });
+    expect(result.success, 'number must be rejected').toBe(false);
+  });
+
+  it('rejects an object contextKey', () => {
+    const result = AIResponseSchema.safeParse({ ...base, contextKey: { key: 'DELETE_CLIENT' } });
+    expect(result.success, 'object must be rejected').toBe(false);
+  });
+
+  it('attributes a bad contextKey to the contextKey path, not an unrelated field', () => {
+    // Asserting only `success === false` would pass even if the schema failed
+    // for an unrelated reason (e.g. a too-short summary), so pin the path.
+    const result = AIResponseSchema.safeParse({ ...base, contextKey: 42 });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.map((issue) => issue.path)).toContainEqual(['contextKey']);
+    }
   });
 });

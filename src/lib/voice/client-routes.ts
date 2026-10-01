@@ -177,6 +177,24 @@ const TAB_KEYWORDS: Readonly<Record<ClientStudioTab, readonly string[]>> = {
 /** Dashboard landing aliases, e.g. "take me to my dashboard". */
 const DASHBOARD_ALIAS = /\b(dashboard|main\s+page|overview|home|main\s+dashboard)\b/i;
 
+/**
+ * True when the utterance names the dashboard landing route.
+ *
+ * Exposed separately from {@link resolveNavigationTarget} because that function
+ * *always* returns the dashboard href (it is a total function with a dashboard
+ * fallback), which makes it unusable as a "did the user actually ask for the
+ * dashboard?" predicate. Callers that need to distinguish an explicit dashboard
+ * request from the fallback must use this.
+ *
+ * The alias list is intentionally word-bounded, so conversational filler is
+ * handled by construction rather than by stripping: "please take me back to the
+ * dashboard" matches on the noun, and the surrounding politeness ("please",
+ * "take me back to") never has to be removed first.
+ */
+export function isDashboardAlias(text: string): boolean {
+  return DASHBOARD_ALIAS.test(text);
+}
+
 interface KeywordMatch {
   tab: ClientStudioTab;
   index: number;
@@ -278,7 +296,7 @@ export interface ClientNavigationTarget {
  * that whatever it returns is routable.
  */
 export function resolveNavigationTarget(text: string): ClientNavigationTarget {
-  if (DASHBOARD_ALIAS.test(text)) {
+  if (isDashboardAlias(text)) {
     return { tab: null, href: CLIENT_DASHBOARD_HREF };
   }
   const tab = resolveClientStudioTab(text);

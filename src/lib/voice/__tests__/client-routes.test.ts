@@ -13,6 +13,7 @@ import {
   hasNavigationIntent,
   resolveClientStudioTab,
   resolveNavigationTarget,
+  isDashboardAlias,
   type ClientStudioTab,
 } from '../client-routes';
 
@@ -179,6 +180,61 @@ describe('resolveNavigationTarget', () => {
       const target = resolveNavigationTarget(`open the ${tab} page`);
       expect(target.tab, tab).toBe(tab);
       expect(target.href, tab).toBe(clientStudioHref(tab));
+    }
+  });
+
+  // Regression: dashboard phrases used to bypass this module entirely. The
+  // route gated on `resolveClientStudioTab(...) !== null`, so a dashboard
+  // request (a REAL route, but with no Studio tab) fell through to the LLM,
+  // which replied SYSTEM_NAVIGATE with an empty payload. `useZeederVoice` then
+  // logged `had no usable target (tab="undefined", href="undefined")`.
+  it('resolves conversational dashboard phrasings with filler and politeness', () => {
+    for (const text of [
+      'Please take me back to the dashboard',
+      'take me to dashboard',
+      'take me back to the dashboard',
+      'please take me back to the dashboard',
+      'can you take me back to the dashboard please',
+      'go to my dashboard',
+      'show my home page',
+      'take me to the overview',
+      'open the main dashboard',
+    ]) {
+      const target = resolveNavigationTarget(text);
+      expect(target.tab, text).toBeNull();
+      expect(target.href, text).toBe(CLIENT_DASHBOARD_HREF);
+      // The consumer's contract: href must be non-empty and inside /client/.
+      expect(target.href.startsWith('/client/'), text).toBe(true);
+    }
+  });
+});
+
+describe('isDashboardAlias', () => {
+  it('is true for every dashboard noun', () => {
+    for (const text of [
+      'take me to the dashboard',
+      'go to dashboard',
+      'show my home page',
+      'take me to the overview',
+      'open the main page',
+      'open the main dashboard',
+    ]) {
+      expect(isDashboardAlias(text), text).toBe(true);
+    }
+  });
+
+  it('is false for Studio utterances and for unrelated speech', () => {
+    // Guards the `hasStudioTab || isDashboardAlias(...)` short-circuit in the
+    // route: if this ever returned true for "show me the analytics", the user
+    // would be silently dumped on the dashboard.
+    for (const text of [
+      'open the branding page',
+      'where do I find my CRM',
+      'show me the analytics',
+      'make me a sandwich',
+      'how is the weather',
+    ]) {
+      expect(isDashboardAlias(text), text).toBe(false);
     }
   });
 });
