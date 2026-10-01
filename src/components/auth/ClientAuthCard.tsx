@@ -122,10 +122,35 @@ export default function ClientAuthCard() {
 
   return (
     <div className="w-full max-w-md mx-auto bg-slate-950/15 backdrop-blur-xl border border-white/10 shadow-[0_0_50px_rgba(0,229,255,0.1)] rounded-2xl p-6 shadow-2xl relative overflow-hidden font-agrandir">
-      {/* Top Terminal Status Indicator — Ticker Tape */}
+      {/* Top Terminal Status Indicator
+          Clipping fix: this was a marquee (`animate-marquee` +
+          `translateX(-50%)`) inside `overflow-hidden`. The duplicated string was
+          ~80 chars at `whitespace-nowrap`, far wider than the `max-w-md` card, so
+          the animation permanently sheared the leading "Sy" off the left edge —
+          the text was never fully readable at any point in the loop.
+
+          Three compounding causes, all fixed here:
+            1. The duplicate copy existed only to feed the -50% scroll loop.
+               Removing the animation makes it redundant, so the string is now
+               emitted ONCE.
+            2. `whitespace-nowrap` forced a single line even when the card is
+               narrower than the text. The string is ~302px at 10px mono, but
+               the card's inner width is only ~272px on a 320px viewport — so a
+               nowrap line would clip STATICALLY instead of scrolling. Wrapping
+               is allowed below `sm`, and nowrap is restored from `sm` up where
+               the card is always wide enough (>=347px inner at 375px viewport).
+            3. `text-balance` keeps the wrapped line visually centred rather
+               than left-ragged, so the wrap reads as intentional.
+
+          `animate-marquee` remains in globals.css — it is a shared theme
+          primitive and may be used elsewhere. */}
       <div className="text-center mb-5 border-b border-cyan-950/60 pb-3 overflow-hidden">
-        <span className="block whitespace-nowrap text-[10px] font-mono text-cyan-400 tracking-widest animate-marquee">
-          System Ready: ZEEDER AI client platform | System Ready: ZEEDER AI client platform |
+        {/* Legibility: this string sat at text-[10px] with no explicit weight,
+            so it rendered hairline-thin against the busy matrix background and
+            was effectively unreadable. Bumped to font-medium + a lighter cyan
+            (cyan-300) so it holds contrast without competing with the H2. */}
+        <span className="block px-4 text-balance text-[10px] sm:whitespace-nowrap md:text-[11px] font-mono font-medium text-cyan-300 tracking-[0.18em] leading-relaxed">
+          System Ready: ZEEDER AI client platform
         </span>
       </div>
 
@@ -171,11 +196,17 @@ export default function ClientAuthCard() {
         </div>
 
         {/* OAuth Providers */}
+        {/* Button geometry is shared across the OAuth and primary actions:
+            `w-full h-12 px-5 rounded-xl` gives every button the same height,
+            horizontal padding and corner radius. Previously the primary
+            gradient button used `py-2 rounded-lg` while the OAuth buttons used
+            `h-12 rounded-lg`, so the two stacked adjacent to each other with
+            visibly different heights and corner curves. */}
         <div className="space-y-4 mb-6">
           <button
             onClick={() => handleOAuthSignIn('google')}
             disabled={isSubmitting}
-            className="w-full h-12 flex items-center justify-center gap-4 px-5 bg-white/5 border border-cyan-500/40 rounded-lg text-white text-sm font-medium tracking-wide hover:border-cyan-400 hover:bg-white/10 hover:shadow-[0_0_15px_rgba(0,229,255,0.2)] transition-all duration-200 disabled:opacity-50"
+            className="w-full h-12 px-5 flex items-center justify-center gap-4 bg-white/5 border border-cyan-500/40 rounded-xl text-white text-sm font-medium tracking-wide hover:border-cyan-400 hover:bg-white/10 hover:shadow-[0_0_15px_rgba(0,229,255,0.2)] transition-all duration-200 disabled:opacity-50 disabled:pointer-events-none"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
               <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.03 2.53-2.16 3.31v2.77h3.49c2.04-1.88 3.24-4.64 3.24-7.89z" fill="#4285F4"/>
@@ -189,7 +220,7 @@ export default function ClientAuthCard() {
             <button
               onClick={() => handleOAuthSignIn('apple')}
               disabled={isSubmitting}
-              className="w-full h-12 flex items-center justify-center gap-4 px-5 bg-white/5 border border-cyan-500/40 rounded-lg text-white text-sm font-medium tracking-wide hover:border-cyan-400 hover:bg-white/10 hover:shadow-[0_0_15px_rgba(0,229,255,0.2)] transition-all duration-200 disabled:opacity-50"
+              className="w-full h-12 px-5 flex items-center justify-center gap-4 bg-white/5 border border-cyan-500/40 rounded-xl text-white text-sm font-medium tracking-wide hover:border-cyan-400 hover:bg-white/10 hover:shadow-[0_0_15px_rgba(0,229,255,0.2)] transition-all duration-200 disabled:opacity-50 disabled:pointer-events-none"
             >
               <svg className="w-5 h-5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="currentColor">
                 <path d="M17.05 20.28c-.98.95-2.05.88-3.08.4-1.09-.5-2.08-.48-3.24 0-1.44.62-2.2.44-3.06-.4C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/>
@@ -273,7 +304,7 @@ export default function ClientAuthCard() {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white font-semibold text-[11px] md:text-xs py-2 rounded-lg mt-2 shadow-lg shadow-cyan-500/10 hover:shadow-cyan-500/20 transition-all duration-300 disabled:opacity-50 disabled:pointer-events-none"
+            className="w-full h-12 px-5 bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white font-semibold text-[11px] md:text-xs rounded-xl mt-2 shadow-lg shadow-cyan-500/10 hover:shadow-cyan-500/20 transition-all duration-300 disabled:opacity-50 disabled:pointer-events-none"
           >
             {isSubmitting
               ? authMode === 'signin'
