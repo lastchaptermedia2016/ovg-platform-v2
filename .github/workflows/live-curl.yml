@@ -331,7 +331,7 @@ jobs:
       - name: Scenario — HELP (restricted SYSTEM_HELP)
         run: |
           set -euo pipefail
-          body=$(jq -n --arg t "$CI_TENANT_SLUG" '{tenantId:$t, text:"What can you help me with?"}')
+          body=$(jq -n --arg t "$CI_TENANT_SLUG" '{tenantId:$t, text:"What can you do?"}')
           resp=$(curl -sS -X POST "$APP_URL/api/client/process-command" \
             -H "Content-Type: application/json" \
             -H "X-Forwarded-For: $CI_FIXED_IP" \
