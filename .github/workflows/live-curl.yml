@@ -248,6 +248,12 @@ jobs:
 
       # ── Boot app pointing at the local stack ───────────────────────────────
       - name: Start next dev
+        # The dev server must hold the real Groq key itself: the CHAT/BOOK/HELP
+        # scenarios only export GROQ_API_KEY into the *curl* step's shell, which
+        # does not reach the already-running Next process. Without this, the API
+        # route falls back to the local stub and the "real LLM path" is a lie.
+        env:
+          GROQ_API_KEY: ${{ secrets.CI_GROQ_API_KEY }}
         run: npm run dev > /tmp/next-dev.log 2>&1 &
 
       - name: Wait for server
