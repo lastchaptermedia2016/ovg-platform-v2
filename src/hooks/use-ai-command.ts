@@ -159,13 +159,20 @@ export function useAICommand(): UseAICommandReturn {
       }
 
       if (!response.ok) {
-        const diagnostic = {
-          status: response.status,
-          statusText: response.statusText,
-          rawBody: rawBody.trim() || 'EMPTY',
-          bodyPreview: rawBody.slice(0, 200) || 'EMPTY',
-        };
-        console.error('%c[useAICommand] ❌ Transport failure:', 'color: #dc2626; font-weight: bold;', JSON.stringify(diagnostic, null, 2));
+        // `rawBody` is the raw server response and can embed PII (client names,
+        // emails, booking details). Gated so it is not echoed into production
+        // browser/session logs. The ERROR EXTRACTION below is functional, not
+        // diagnostic, so it is deliberately NOT gated — it is what the user
+        // actually sees in the error toast.
+        if (process.env.NODE_ENV !== 'production') {
+          const diagnostic = {
+            status: response.status,
+            statusText: response.statusText,
+            rawBody: rawBody.trim() || 'EMPTY',
+            bodyPreview: rawBody.slice(0, 200) || 'EMPTY',
+          };
+          console.error('%c[useAICommand] ❌ Transport failure:', 'color: #dc2626; font-weight: bold;', JSON.stringify(diagnostic, null, 2));
+        }
         // Attempt to extract a structured error message if the body is JSON
         let errorMessage = `HTTP ${response.status} ${response.statusText}`;
         try {

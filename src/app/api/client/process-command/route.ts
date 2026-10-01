@@ -29,7 +29,7 @@ import { CLIENT_SYSTEM_REGISTRY, type ClientSystemItem } from '@/lib/client-syst
 import { extractPersonaMode, hasPersonaModeIntent } from '@/lib/ai/extract-persona-mode';
 import { buildSystemPrompt, type KnowledgeEntry } from '@/lib/ai/system-prompt-builder';
 import { buildActionSummary, buildNavigationSummary, humanizeSummary } from '@/lib/ai/conversational-voice';
-import { clientStudioHref, hasNavigationIntent, resolveClientStudioTab, resolveNavigationTarget } from '@/lib/voice/client-routes';
+import { hasNavigationIntent, isDashboardAlias, resolveClientStudioTab, resolveNavigationTarget } from '@/lib/voice/client-routes';
 import { getTenantKnowledgeContext, type KnowledgeItem } from '@/lib/reseller/tenant-knowledge-engine';
 import { getClientMemories, extractAndStoreMemories, type ClientMemoryMap } from '@/lib/ai/memory-service';
 import { getVisitorMemories, extractAndStoreVisitorMemories, touchVisitorMemory, normalizeVisitorPhone, normalizeVisitorEmail, type VisitorIdentityType } from '@/lib/ai/memory-service';
@@ -509,11 +509,16 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
     parsed = CommandRequestSchema.parse(raw);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Invalid request parameters.';
-    console.error('[CLIENT_PROCESS_COMMAND] Schema validation failed:', {
-      message,
-      rawBody: JSON.stringify(raw).substring(0, 200),
-      error: err,
-    });
+    // `rawBody` is the client's VERBATIM request payload and can contain PII
+    // (name, email, phone). Field paths and codes are enough to diagnose a
+    // schema mismatch, so the payload itself is dev-only.
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('[CLIENT_PROCESS_COMMAND] Schema validation failed:', {
+        message,
+        rawBody: JSON.stringify(raw).substring(0, 200),
+        error: err,
+      });
+    }
     return corsJson(
       {
         success: false,
@@ -826,9 +831,22 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
   // has to guess and can never fall back to Branding for a Knowledge or
   // Integrations request.
   if (!isAnon && hasNavigationIntent(text.trim()) && !CLIENT_HOWTO_INTENT_REGEX.test(text.trim())) {
-    const navTab = resolveClientStudioTab(text.trim());
-    if (navTab) {
-      const href = clientStudioHref(navTab);
+    // A dashboard alias ("take me back to the dashboard", "show my home page")
+    // resolves to a REAL route but carries NO Studio tab, so the old
+    // `resolveClientStudioTab(...)`-only check bailed out here and let the
+    // utterance fall through to the LLM. The model then answered with
+    // SYSTEM_NAVIGATE and an empty payload, and `useZeederVoice` logged
+    // `had no usable target (tab="undefined", href="undefined")` and refused
+    // to navigate. Resolve through the dashboard-aware helper instead.
+    //
+    // The explicit alias check is load-bearing: `resolveNavigationTarget` is a
+    // total function that FALLS BACK to the dashboard, so calling it
+    // unconditionally would navigate to the dashboard for any stray navigation
+    // verb ("show me the analytics"). Only an explicit Studio keyword or an
+    // explicit dashboard alias may short-circuit.
+    const hasStudioTab = resolveClientStudioTab(text.trim()) !== null;
+    if (hasStudioTab || isDashboardAlias(text.trim())) {
+      const { tab: navTab, href } = resolveNavigationTarget(text.trim());
       const data: ClientCommandResponse = {
         success: true,
         actionType: 'SYSTEM_NAVIGATE',
@@ -1211,7 +1229,11 @@ async function runSemanticFallback(
     const tenantDetails = await fetchTenantDetails(tenantClient, persistCtx?.tenantId ?? null);
 
     // ── KB-RAG-TRACE: incoming tenant identity ──────────────────────────
-    console.log('[KB-RAG-TRACE] incoming tenantId:', persistCtx?.tenantId ?? null, 'isAnon:', isAnon, 'query:', text);
+    // Gated: `text` is the client's VERBATIM free-text command (may contain a
+    // name, email or phone number) and tenantId identifies the account.
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[KB-RAG-TRACE] incoming tenantId:', persistCtx?.tenantId ?? null, 'isAnon:', isAnon, 'query:', text);
+    }
 
         // ── Knowledge Base context fetch ─────────────────────────────────────
     // Pull active tenant_knowledge entries via the dedicated retrieval engine
@@ -1227,8 +1249,13 @@ async function runSemanticFallback(
       );
 
       if (kbError) {
+        // Operational signal, kept in production: an unexpected failure is
+        // exactly what a log aggregator should capture. The Supabase error
+        // object carries no tenant content, so this is safe to emit.
         console.warn('[KB-RAG-TRACE] Knowledge retrieval error (non-blocking):', kbError);
-      } else {
+      } else if (process.env.NODE_ENV !== 'production') {
+        // Gated: `kbItems` is raw tenant knowledge-base CONTENT (products,
+        // pricing, service descriptions) — proprietary customer data.
         console.log('[KB-RAG-TRACE] KB query tenant_id:', persistCtx.tenantId, 'results:', kbItems);
       }
 
@@ -1247,7 +1274,8 @@ async function runSemanticFallback(
           return true;
         });
 
-      if (knowledgeEntries.length > 0) {
+      if (knowledgeEntries.length > 0 && process.env.NODE_ENV !== 'production') {
+        // Gated: titles are customer-authored KB entry names.
         console.log('[KB-RAG-TRACE] KB entries after dedup:', knowledgeEntries.map(e => ({ title: e.title, contentLen: e.content.length, category: e.category })));
       }
     }
@@ -1265,16 +1293,21 @@ async function runSemanticFallback(
     );
 
     // ── Log system prompt for debugging ─────────────────────────────────
-    console.log('[KB-RAG-TRACE] System prompt length:', hydratedSystemPrompt.length, 'KB entries:', knowledgeEntries.length);
-    
-    // Check if KB section is actually in the prompt
-    const kbSectionFound = hydratedSystemPrompt.includes('=== CUSTOM PRODUCT & SERVICE CATALOG ===');
-    console.log('[KB-RAG-TRACE] KB section in prompt?', kbSectionFound);
-    if (kbSectionFound) {
-      const kbStart = hydratedSystemPrompt.indexOf('=== CUSTOM PRODUCT & SERVICE CATALOG ===');
-      const kbEnd = hydratedSystemPrompt.indexOf('===', kbStart + 50);
-      const kbSection = hydratedSystemPrompt.substring(kbStart, kbEnd > 0 ? Math.min(kbEnd, kbStart + 600) : kbStart + 600);
-      console.log('[KB-RAG-TRACE] KB section content:', kbSection);
+    // Gated: `hydratedSystemPrompt` embeds tenant branding, persona, memories
+    // and the full KB catalog. Only lengths/booleans are emitted in production,
+    // and only where they are genuinely operational.
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[KB-RAG-TRACE] System prompt length:', hydratedSystemPrompt.length, 'KB entries:', knowledgeEntries.length);
+
+      // Check if KB section is actually in the prompt
+      const kbSectionFound = hydratedSystemPrompt.includes('=== CUSTOM PRODUCT & SERVICE CATALOG ===');
+      console.log('[KB-RAG-TRACE] KB section in prompt?', kbSectionFound);
+      if (kbSectionFound) {
+        const kbStart = hydratedSystemPrompt.indexOf('=== CUSTOM PRODUCT & SERVICE CATALOG ===');
+        const kbEnd = hydratedSystemPrompt.indexOf('===', kbStart + 50);
+        const kbSection = hydratedSystemPrompt.substring(kbStart, kbEnd > 0 ? Math.min(kbEnd, kbStart + 600) : kbStart + 600);
+        console.log('[KB-RAG-TRACE] KB section content:', kbSection);
+      }
     }
 
     // ── Dynamic integration tool injection ──────────────────────────
@@ -1319,17 +1352,44 @@ const completion = await groq.chat.completions.create({
     });
 
     const content = completion.choices[0]?.message?.content;
-    console.log('[KB-RAG-TRACE] Groq call completed. Response status:', completion.usage?.prompt_tokens, 'output tokens:', completion.usage?.completion_tokens);
-    console.log('[KB-RAG-TRACE] LLM raw response:', content?.substring(0, 300));
-    console.log('[KB-RAG-TRACE] Query was:', text, '| KB entries available:', knowledgeEntries.map(e => e.title).join(', '));
+    // ── Trace logging: NON-PRODUCTION ONLY ─────────────────────────────────
+    // These three traces echo the raw LLM response AND the user's verbatim
+    // command into the log stream. The user command is free-text PII (a client
+    // may say "email me at jane@acme.com"), and the model response can echo it
+    // back. Gated so production aggregators never receive either.
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[KB-RAG-TRACE] Groq call completed. Response status:', completion.usage?.prompt_tokens, 'output tokens:', completion.usage?.completion_tokens);
+      console.log('[KB-RAG-TRACE] LLM raw response:', content?.substring(0, 300));
+      console.log('[KB-RAG-TRACE] Query was:', text, '| KB entries available:', knowledgeEntries.map(e => e.title).join(', '));
+    }
     let llmParsed: { actionType?: string; summary?: string; payload?: unknown } = {};
     if (content) {
       try {
         const maybe = JSON.parse(content);
         if (maybe && typeof maybe === 'object' && !Array.isArray(maybe)) {
           llmParsed = maybe as { actionType?: string; summary?: string; payload?: unknown };
+        } else if (process.env.NODE_ENV !== 'production') {
+          // Valid JSON, but not a plain object (null / array / scalar). This
+          // degrades to CLIENT_NOP silently — the same failure class as a
+          // schema mismatch on the reseller route, so it is logged the same way.
+          console.error(
+            '[ClientProcessCommand] LLM JSON was not a plain object (type:',
+            Array.isArray(maybe) ? 'array' : typeof maybe,
+            ') — degrading to CLIENT_NOP. Raw:',
+            JSON.stringify(maybe),
+          );
         }
-      } catch {
+      } catch (parseErr) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.error(
+            '[ClientProcessCommand] LLM response failed JSON.parse (degrading to CLIENT_NOP):',
+            parseErr instanceof Error ? parseErr.message : String(parseErr),
+          );
+          console.error(
+            '[ClientProcessCommand] Unparseable raw content (first 500 chars):',
+            content.slice(0, 500),
+          );
+        }
         llmParsed = {};
       }
     }
@@ -1344,7 +1404,22 @@ const completion = await groq.chat.completions.create({
         ? rawAction
         : 'CLIENT_NOP';
 
-    console.log('[KB-RAG-TRACE] LLM parsed actionType:', llmParsed.actionType, '| Final actionType:', actionType, '| Summary:', llmParsed.summary?.substring(0, 100));
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[KB-RAG-TRACE] LLM parsed actionType:', llmParsed.actionType, '| Final actionType:', actionType, '| Summary:', llmParsed.summary?.substring(0, 100));
+    }
+
+    // A model actionType outside the allowlist silently degrades to CLIENT_NOP.
+    // That is the client-surface equivalent of a schema mismatch on the reseller
+    // route, so it gets the same gated diagnostic — otherwise a drifting model
+    // (or a prompt/allowlist mismatch) is invisible in production.
+    if (process.env.NODE_ENV !== 'production' && actionType === 'CLIENT_NOP' && rawAction !== 'CLIENT_NOP') {
+      console.error(
+        '[ClientProcessCommand] Model actionType not in allowlist — degraded to CLIENT_NOP. Parsed actionType:',
+        llmParsed.actionType,
+        '| allowed:',
+        JSON.stringify(Array.from(allowedActions(isAnon))),
+      );
+    }
 
     const detectedPersonaMode = extractPersonaMode(text);
     let responsePayload = capabilityPayload;
@@ -1452,12 +1527,17 @@ const completion = await groq.chat.completions.create({
     }
     return NextResponse.json(data);
   } catch (err) {
-    console.error('[process-command] Semantic fallback catch triggered:', {
-      error: err instanceof Error ? err.message : JSON.stringify(err),
-      stack: err instanceof Error ? err.stack : undefined,
-      hasApiKey: Boolean(process.env.GROQ_API_KEY),
-      text,
-    });
+    // `text` is the client's VERBATIM free-text utterance (may contain a name,
+    // email or phone number), so it is dev-only. The error, stack and
+    // hasApiKey flag are genuine operational signals and stay in production.
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('[process-command] Semantic fallback catch triggered:', {
+        error: err instanceof Error ? err.message : JSON.stringify(err),
+        stack: err instanceof Error ? err.stack : undefined,
+        hasApiKey: Boolean(process.env.GROQ_API_KEY),
+        text,
+      });
+    }
     // Resilient fallback: if the LLM is unreachable we still answer
     // informational add-on questions from the static catalog so the user
     // never hears a generic snag for "What is smart booking?".
