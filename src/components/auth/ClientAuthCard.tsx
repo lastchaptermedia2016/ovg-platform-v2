@@ -155,14 +155,23 @@ export default function ClientAuthCard() {
       </div>
 
       <div className="flex flex-col items-center">
-        {/* Compact Logo Capsule */}
-        <div className="bg-slate-900/60 border border-slate-800 rounded-full px-4 py-1.5 flex items-center gap-1.5 mb-6 shadow-inner">
-          <span className="font-agrandir font-black text-xs tracking-wider text-white">ZEEDER</span>
-          <span className="font-agrandir font-light text-xs text-blue-400 tracking-wide animate-pulse lowercase">engage</span>
-        </div>
+        {/* Compact Logo Capsule — REMOVED.
+            The card previously repeated the `ZEEDER engage` wordmark that the
+            page header already renders 40px above (page.tsx:36-41). Three brand
+            impressions in one viewport was redundant, and the card's pill used
+            blue-400 for `engage` while the header used cyan-400 — the same word
+            in two different hues, which read as a rendering bug rather than
+            deliberate emphasis. `ZEEDER engage` now appears exactly once, in
+            the header, as the single brand anchor.
+
+            Spacing: the pill carried `mb-6`, so removing it would have pulled
+            the H2 up against the status divider's `pb-3`+`mb-5` (20px) and
+            crowded the section start. `mt-6` on the H2 reinstates the 24px
+            breathing room, so the flow from the terminal status strip down to
+            "Client Portal" is unchanged from before. */}
 
         {/* Scaled-down Headers */}
-        <h2 className="font-agrandir font-black text-lg md:text-xl text-white tracking-wide text-center mb-1.5">
+        <h2 className="font-agrandir font-black text-lg md:text-xl text-white tracking-wide text-center mt-6 mb-1.5">
           Client Portal
         </h2>
         <p className="font-agrandir font-light text-[11px] md:text-xs text-zinc-300/90 text-center max-w-xs mb-6 leading-relaxed">
