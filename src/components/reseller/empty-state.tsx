@@ -106,7 +106,7 @@ export function EmptyState({
       </p>
 
       {/* Features Preview */}
-      <div className="grid grid-cols-3 gap-4 mb-8 max-w-lg">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8 max-w-lg">
         <FeaturePreview 
           icon={Bot}
           label="AI Agents"

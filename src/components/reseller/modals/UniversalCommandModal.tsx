@@ -1148,7 +1148,7 @@ export function UniversalCommandModal({ onClose, resellerSlug, onClientCreated, 
   // =================================================================
   return (
     <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <div className="w-full max-w-[600px] mx-4 backdrop-blur-2xl bg-white/[0.02] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+      <div className="w-full max-w-[600px] mx-4 backdrop-blur-2xl bg-white/[0.02] border border-white/10 rounded-2xl shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="px-6 py-4 border-b border-white/10 bg-white/[0.01]">
           <h2 className="text-lg font-light tracking-widest text-white uppercase">

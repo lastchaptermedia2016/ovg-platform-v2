@@ -196,14 +196,16 @@ export function MasterpieceHeader({
 
         {/* Center: Voice Status Indicator - PTT Mic Button with Locked Geometry */}
         <SystemHelpTooltip>
-          <div 
+          <button
+            type="button"
+            aria-label="Push to talk"
             onMouseDown={handleMicMouseDown}
             onMouseUp={handleMicMouseUp}
             onMouseLeave={handleMicMouseLeave}
             onTouchStart={handleMicMouseDown}
             onTouchEnd={handleMicMouseUp}
             onTouchCancel={handleMicMouseLeave}
-            className={`relative flex items-center justify-center gap-2 w-48 flex-shrink-0 px-3 py-1.5 rounded-full pointer-events-auto cursor-pointer touch-none select-none active:scale-95 duration-75 transition-transform overflow-hidden ${
+            className={`relative flex items-center justify-center gap-2 w-48 flex-shrink-0 px-3 py-2 rounded-full pointer-events-auto cursor-pointer touch-none select-none active:scale-95 duration-75 transition-transform overflow-hidden min-h-[44px] ${
               isAwaitingVoiceConfirm ? 'bg-emerald-500/10 border border-emerald-500/30' : ''
             } ${
               isMicActive ? 'bg-[#0097b2]/20 border border-[#0097b2]/40' : ''
@@ -254,7 +256,7 @@ export function MasterpieceHeader({
                   ? 'HOLD TO RECORD...' 
                   : 'SYSTEM'}
             </span>
-          </div>
+          </button>
         </SystemHelpTooltip>
 
         {/* Right Side */}

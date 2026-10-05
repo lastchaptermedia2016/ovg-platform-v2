@@ -629,7 +629,7 @@ export function LiveChatInbox({ tenantId, accessToken }: LiveChatInboxProps) {
 
         {expanded && (
           <div className="flex">
-            <div className="w-80 border-r border-white/10 flex-shrink-0">
+            <div className="w-full sm:w-80 border-r border-white/10 flex-shrink-0 min-w-0">
               <div className="px-3 py-2 border-b border-white/5">
                 <div className="text-[10px] font-semibold tracking-widest text-zinc-500 uppercase">Conversations</div>
               </div>

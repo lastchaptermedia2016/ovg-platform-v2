@@ -227,7 +227,7 @@ export function SignalConsole({
     <div className="w-full space-y-6 transition-all duration-300 ease-in-out">
       {/* Header */}
       <div>
-        <div className="flex items-center gap-3 mb-1">
+        <div className="flex flex-wrap items-center gap-3 mb-1">
           <h1 className="text-xl font-bold text-[#00e5ff] tracking-tight uppercase drop-shadow-[0_0_8px_rgba(0,229,255,0.4)] flex items-center gap-3">
             <span className="relative flex h-2.5 w-2.5">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#00e5ff] opacity-75"></span>
@@ -389,8 +389,10 @@ export function SignalConsole({
 
       {/* Signal List */}
       <div className="rounded-xl backdrop-blur-md bg-white/5 border border-white/10 overflow-hidden">
-        {/* Table Header */}
-        <div className="grid grid-cols-4 gap-4 px-5 py-3 border-b border-white/10 text-[10px] tracking-[0.2em] uppercase text-white/40 font-medium">
+        <div className="overflow-x-auto">
+          <div className="min-w-[640px]">
+            {/* Table Header */}
+            <div className="grid grid-cols-4 gap-4 px-5 py-3 border-b border-white/10 text-[10px] tracking-[0.2em] uppercase text-white/40 font-medium">
           <span>Timestamp</span>
           <span>Tenant</span>
           <span>Event Type</span>
@@ -433,7 +435,7 @@ export function SignalConsole({
                 <button
                   type="button"
                   onClick={() => toggleExpand(signal.id)}
-                  className="w-full grid grid-cols-4 gap-4 px-5 py-3 text-left text-sm border-b border-white/5 hover:bg-white/[0.03] transition-all duration-200 ease-out"
+                  className="w-full grid grid-cols-4 gap-4 px-5 py-3 text-left text-sm border-b border-white/5 hover:bg-white/[0.03] transition-all duration-200 ease-out min-w-0"
                 >
                   <span className="text-white/40 text-xs">
                     {signal.created_at.slice(0, 16).replace("T", " ")}
@@ -475,7 +477,9 @@ export function SignalConsole({
               </div>
             );
           })}
+        </div>
       </div>
     </div>
-  );
+  </div>
+);
 }

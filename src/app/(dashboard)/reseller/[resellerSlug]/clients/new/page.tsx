@@ -88,7 +88,7 @@ export default async function ClientNewPage({
   }
 
   return (
-    <div className="min-h-screen p-6">
+    <div className="min-h-screen p-4 sm:p-6">
       <div className="max-w-3xl mx-auto">
         {/* Back to Clients */}
         <Link

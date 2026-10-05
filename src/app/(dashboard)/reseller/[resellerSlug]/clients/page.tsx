@@ -588,8 +588,8 @@ export default function ClientsPage() {
         
         {/* Main Navigation Tabs - Compact Grid Layout */}
         <div className="w-full">
-          <div className="px-6">
-            <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 py-2 mb-2">
+          <div className="px-4 sm:px-6">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 py-2 mb-2">
               {(() => {
                 const pathSegments = typeof window !== 'undefined' ? window.location.pathname.split('/') : [];
                 const resellerIdx = pathSegments.indexOf('reseller');
@@ -615,8 +615,8 @@ export default function ClientsPage() {
                         router.push(item.path);
                       }
                     }}
-                    style={{ display: 'inline-flex', width: '100%', padding: '4px 8px' }}
-                    className={`relative rounded-lg text-[10px] font-bold tracking-wider uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden
+                    style={{ display: 'inline-flex', width: '100%', padding: '8px 12px' }}
+                    className={`relative rounded-lg text-[10px] font-bold tracking-wider uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden min-h-[44px] items-center
                       backdrop-blur-md bg-black/10 border border-white/10
                       hover:-translate-y-1 hover:backdrop-blur-xl hover:border-white/20 transition-colors duration-200
                       ${item.active
@@ -642,12 +642,12 @@ export default function ClientsPage() {
         
         {/* Hannah Mode Toggle */}
         <div className="w-full">
-          <div className="px-6">
+          <div className="px-4 sm:px-6">
             <div className="flex items-center justify-between w-full my-2 px-2">
               <span className="text-[10px] font-bold text-white/70 tracking-widest uppercase">Hannah Mode</span>
               <button
                 onClick={() => setAgentMode(agentMode === 'executor' ? 'conversational' : 'executor')}
-                className={`px-3 py-1.5 rounded-lg border text-[10px] font-semibold tracking-wider uppercase transition-all duration-200 ${
+                className={`px-4 py-2 rounded-lg border text-[10px] font-semibold tracking-wider uppercase transition-all duration-200 min-h-[44px] ${
                   agentMode === 'executor'
                     ? 'border-emerald-500 text-emerald-300 bg-emerald-500/10'
                     : 'border-cyan-500 text-cyan-300 bg-cyan-500/10'
@@ -661,7 +661,7 @@ export default function ClientsPage() {
 
         {/* Industry Filter Tabs - Compact Grid Layout */}
         <div className="w-full">
-          <div className="px-6">
+          <div className="px-4 sm:px-6">
             <div className="flex flex-wrap gap-2 items-center w-full my-3 px-2">
               {(() => {
                 const FILTER_LABELS = Object.entries(CATEGORY_MAP)
@@ -674,8 +674,8 @@ export default function ClientsPage() {
                 <button
                     key={value}
                     onClick={() => handleFilterChange(value)}
-                    style={{ display: 'inline-flex', padding: '4px 8px' }}
-                    className={`relative rounded-lg text-[10px] font-medium tracking-wider uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden
+                    style={{ display: 'inline-flex', padding: '8px 12px' }}
+                    className={`relative rounded-lg text-[10px] font-medium tracking-wider uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden min-h-[44px] items-center
                       backdrop-blur-md bg-black/10 border border-white/10
                       hover:-translate-y-0.5 hover:backdrop-blur-xl hover:border-white/20 transition-colors duration-200
                       ${activeFilter === value.toUpperCase()
@@ -691,8 +691,8 @@ export default function ClientsPage() {
 
               <button
                 onClick={toggleOfflineOnly}
-                style={{ display: 'inline-flex', padding: '4px 8px' }}
-                className={`relative rounded-lg text-[10px] font-medium tracking-wider uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden
+                style={{ display: 'inline-flex', padding: '8px 12px' }}
+                className={`relative rounded-lg text-[10px] font-medium tracking-wider uppercase transition-all duration-300 ease-out whitespace-nowrap overflow-hidden min-h-[44px] items-center
                   backdrop-blur-md bg-black/10 border border-white/10
                   hover:-translate-y-0.5 hover:backdrop-blur-xl hover:border-white/20 transition-colors duration-200
                   ${showOfflineOnly
@@ -763,7 +763,7 @@ export default function ClientsPage() {
                   <button
                     onClick={handleCommandExecute}
                     disabled={isAnalyzing || !selectedTenantId || !commandInput.trim()}
-                    className={`px-6 py-3 rounded-lg backdrop-blur-xl border text-xs tracking-widest uppercase transition-all duration-300 font-medium whitespace-nowrap ${
+                    className={`px-6 py-3 rounded-lg backdrop-blur-xl border text-xs tracking-widest uppercase transition-all duration-300 font-medium whitespace-nowrap min-h-[44px] ${
                       isAnalyzing || !selectedTenantId || !commandInput.trim()
                         ? 'border-white/10 bg-white/5 text-white/30 cursor-not-allowed'
                         : 'border-green-500 bg-green-500/20 text-green-400 hover:bg-green-500/30 hover:shadow-[0_0_20px_rgba(34,197,94,0.5)] hover:text-white'
@@ -784,7 +784,7 @@ export default function ClientsPage() {
                 </div>
 
                 {/* Status Line */}
-                <div className="mt-3 flex items-center gap-3">
+                <div className="mt-3 flex flex-wrap items-center gap-3">
                   {isDeleting ? (
                     <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-red-500/10 backdrop-blur-md border-t border-white/20 border-b border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.3)] transition-all duration-300">
                       <span className="text-[10px] font-black text-red-400 tracking-tighter animate-pulse">
@@ -914,8 +914,8 @@ export default function ClientsPage() {
 
       {/* Bulk Confirmation Banner */}
       {bulkConfirmation?.show && (
-        <div className="fixed top-32 md:top-36 left-1/2 -translate-x-1/2 z-[60] px-6 py-4 rounded-xl bg-black/90 backdrop-blur-xl border border-emerald-500/50 shadow-[0_0_30px_rgba(16,185,129,0.3)]">
-          <div className="flex items-center gap-4">
+        <div className="fixed top-32 md:top-36 left-1/2 -translate-x-1/2 z-[60] px-6 py-4 rounded-xl bg-black/90 backdrop-blur-xl border border-emerald-500/50 shadow-[0_0_30px_rgba(16,185,129,0.3)] max-w-[calc(100vw-2rem)]">
+          <div className="flex flex-wrap items-center gap-3">
             <span className="text-emerald-400 font-bold text-sm">
               BULK ACTION: Update {bulkConfirmation.count} clients?
             </span>

@@ -228,11 +228,11 @@ export function ClientCard({
             />
           </div>
 
-          <div className="grid grid-cols-[1fr_auto] gap-3 items-center">
-            <span className={`px-2 py-1 text-[10px] tracking-[0.1em] rounded uppercase min-w-[120px] w-fit text-center ${industryStyle.bg} ${industryStyle.border} ${industryStyle.text}`}>
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 items-center">
+            <span className={`px-2 py-1 text-[10px] tracking-[0.1em] rounded uppercase w-full text-center sm:w-fit sm:text-center ${industryStyle.bg} ${industryStyle.border} ${industryStyle.text}`}>
               {displayIndustry}
             </span>
-            <div className="flex items-center gap-2 w-[104px] justify-end">
+            <div className="flex items-center gap-2 justify-end">
               <button
                 onClick={() => onDiagnosticClick(tenant.id)}
                 className="!opacity-100 !mix-blend-normal backdrop-blur-none min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg bg-white/[0.02] border border-white/20 hover:bg-white/5 hover:border-[#00E5FF] transition-all duration-300 shadow-[0_0_10px_rgba(0,229,255,0.3)]"
@@ -296,11 +296,11 @@ export function ClientCard({
         <div className="text-xs text-white/40 truncate">{tenant.email}</div>
         <ClientMiniAnalytics tenant={tenant} />
 
-        <div
-          className="flex items-center gap-3"
-          onClick={(e) => e.stopPropagation()}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
+          <div
+            className="flex flex-wrap items-center gap-3"
+            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
           {(['ai', 'sms', 'vin', 'signal'] as const).map((feature) => {
             const featureMapping: Record<string, string> = {
               ai: 'ai_omni_chat',

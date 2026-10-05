@@ -52,7 +52,7 @@ export function AddClientModal({ onClose }: { onClose: () => void }) {
                 <label className="block text-xs font-light tracking-[0.2em] text-white/60 uppercase mb-3">
                   Select Industry
                 </label>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {INDUSTRY_OPTIONS.map((industry) => (
                     <button
                       key={industry.id}

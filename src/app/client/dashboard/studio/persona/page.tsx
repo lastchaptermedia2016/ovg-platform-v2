@@ -287,7 +287,7 @@ export default function PersonaPage() {
           </div>
           <button
             onClick={clearFeedback}
-            className="text-lg leading-none hover:opacity-70 transition-opacity"
+            className="text-lg leading-none hover:opacity-70 transition-opacity min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg"
             aria-label="Dismiss message"
           >
             ×

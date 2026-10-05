@@ -1215,7 +1215,7 @@ const ChatWidget = ({
             >
               <div className="flex items-center gap-3 mb-4">
                 <div
-                  className="h-10 w-10 rounded-full flex items-center justify-center"
+                  className="h-11 w-11 rounded-full flex items-center justify-center"
                   style={{
                     backgroundColor: "color-mix(in srgb, var(--w-accent, #D4AF37) 22%, transparent)",
                     border: "1px solid color-mix(in srgb, var(--w-accent, #D4AF37) 45%, transparent)",
@@ -1533,7 +1533,7 @@ const ChatWidget = ({
                     else abortRecording();
                   }}
                   aria-label={isRecording ? "Release to stop listening" : "Hold to talk"}
-                  className={`shrink-0 h-10 w-10 flex items-center justify-center rounded-full ${isRecording ? "text-blue-500 animate-pulse scale-110" : "text-pink-500 hover:text-pink-600"}`}
+                  className={`shrink-0 h-11 w-11 flex items-center justify-center rounded-full ${isRecording ? "text-blue-500 animate-pulse scale-110" : "text-pink-500 hover:text-pink-600"}`}
                 >
                    {isRecording ? <MicOff className="h-5 w-5 flex-shrink-0" /> : <Mic className="h-5 w-5 flex-shrink-0" />}
                 </Button>
@@ -1554,7 +1554,7 @@ const ChatWidget = ({
                 onClick={() => sendMessageDirect(input)}
                 aria-label="Send message"
                 style={{ backgroundColor: "var(--w-primary, #0097b2)" }}
-                className="text-white h-10 w-10 flex items-center justify-center rounded-full shrink-0"
+                className="text-white h-11 w-11 flex items-center justify-center rounded-full shrink-0"
               >
                 <Send className="h-4 w-4" />
               </Button>

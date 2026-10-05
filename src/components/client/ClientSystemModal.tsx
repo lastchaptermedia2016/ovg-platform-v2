@@ -110,7 +110,7 @@ export function ClientSystemModal({
         </div>
 
         {/* Tabs */}
-        <div role="tablist" className="mt-4 flex gap-1 rounded-lg border border-white/10 bg-slate-950/40 p-1">
+        <div role="tablist" className="mt-4 flex flex-wrap gap-1 rounded-lg border border-white/10 bg-slate-950/40 p-1">
           {CLIENT_SYSTEM_TABS.map((tab) => (
             <button
               key={tab.id}
@@ -118,7 +118,7 @@ export function ClientSystemModal({
               role="tab"
               aria-selected={active === tab.id}
               onClick={() => setActive(tab.id)}
-              className={`flex-1 rounded-md px-3 py-1.5 text-[11px] font-semibold transition-colors font-agrandir ${
+              className={`flex-1 rounded-md px-2 sm:px-3 py-1.5 text-[11px] font-semibold transition-colors font-agrandir min-h-[44px] ${
                 active === tab.id ? 'bg-cyan-500/15 text-cyan-300' : 'text-zinc-400 hover:text-white'
               }`}
             >

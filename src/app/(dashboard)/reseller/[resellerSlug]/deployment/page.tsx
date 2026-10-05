@@ -114,7 +114,7 @@ export default async function DeploymentPage({
   const tenants = await fetchTenants(resellerId);
 
   return (
-    <div className="min-h-screen p-6">
+    <div className="min-h-screen p-4 sm:p-6">
       <div className="max-w-5xl mx-auto">
         {/* Back to Clients */}
         <Link

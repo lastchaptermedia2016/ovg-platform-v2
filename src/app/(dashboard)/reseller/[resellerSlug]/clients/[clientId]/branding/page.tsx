@@ -166,7 +166,7 @@ export default function ClientBrandingPage() {
   }
 
   return (
-    <div className="min-h-screen p-6">
+    <div className="min-h-screen p-4 sm:p-6">
       <div className="max-w-7xl mx-auto">
         <div className="relative overflow-hidden rounded-xl mb-8 min-h-[120px]">
           {/* Background Image */}
@@ -182,7 +182,7 @@ export default function ClientBrandingPage() {
           {/* High-Performance Contrast Shield Layer */}
           <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-950/60 to-transparent pointer-events-none" />
           {/* Foreground Typography */}
-          <div className="relative z-10 p-6">
+          <div className="relative z-10 p-4 sm:p-6">
             <h1 className="text-2xl font-bold text-white mb-2">Branding Studio</h1>
             <p className="text-white/90">Customize widget appearance for {clientData?.name}</p>
           </div>

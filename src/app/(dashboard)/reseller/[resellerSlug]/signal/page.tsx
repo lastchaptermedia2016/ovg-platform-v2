@@ -114,7 +114,7 @@ export default async function SignalPage({
   const tenants = await fetchTenants(resellerId);
 
   return (
-    <div className="min-h-screen p-6">
+    <div className="min-h-screen p-4 sm:p-6">
       <div className="max-w-7xl mx-auto">
         {/* Back to Clients Navigation */}
         <Link
