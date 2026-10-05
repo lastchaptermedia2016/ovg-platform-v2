@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import { isInvalidSlug } from '@/lib/utils/guard';
+import { resolveResellerNavigationTarget, describeResellerTarget } from '@/lib/voice/reseller-routes';
 import { ClientsGrid } from '@/components/reseller/ClientsGrid';
 import { DeploymentModal } from '@/components/ai-intelligence/DeploymentModal';
 import { MasterpieceHeader } from '@/components/reseller/MasterpieceHeader';
@@ -354,7 +355,34 @@ export default function ClientsPage() {
           // ── STRICT PTT: No auto-re-listen. User must re-press the mic button to confirm. ──
           // This is deliberate: it forces an explicit confirm/cancel gesture from the user.
           return;
-        } else if (response?.success) {
+        }
+
+        // 🔷 SYSTEM_RESELLER_NAVIGATE: Voice request to move between reseller views.
+        // The model is an untrusted producer of URLs, so the destination is never built
+        // from `response.payload` here: resolveResellerNavigationTarget is the single gate
+        // that admits only same-origin paths under /reseller/<this slug>/, and answers null
+        // for anything unknown, off-surface, or aimed at another tenant.
+        if (response?.actionType === 'SYSTEM_RESELLER_NAVIGATE') {
+          const target = resolveResellerNavigationTarget(response.payload ?? {}, resellerSlug);
+
+          if (!target) {
+            // Rejected: unknown view, wrong scope, or another tenant. Speak the correction
+            // and return — falling through would claim "Update applied successfully."
+            console.warn('%c[Pierre] ⛔ SYSTEM_RESELLER_NAVIGATE: rejected target.', 'color: #e05252; font-weight: bold;', { resellerSlug });
+            speakVoiceRef.current("I couldn't find that section.");
+            return;
+          }
+
+          console.log('%c[Pierre] 🎯 SYSTEM_RESELLER_NAVIGATE: resolved href:', 'color: #0097b2; font-weight: bold;', target.href);
+          const spoken = response.summary || `Sure, taking you to ${describeResellerTarget(target.tab)}.`;
+          // Speak BEFORE pushing: router.push unmounts this page, so navigating first
+          // can cut the confirmation off mid-sentence.
+          speakVoiceRef.current(spoken);
+          router.push(target.href);
+          return;
+        }
+
+        if (response?.success) {
           setSuccessRipple(true);
           setTimeout(() => setSuccessRipple(false), 1000);
           speakVoiceRef.current('Update applied successfully.');
