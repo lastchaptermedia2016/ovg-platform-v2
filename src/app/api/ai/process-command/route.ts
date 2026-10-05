@@ -107,6 +107,11 @@ const StructuredPayloadSchema = z.object({
     tone: z.string().optional(),
   }).optional(),
   category_filter: z.string().optional(),
+  // SYSTEM_RESELLER_NAVIGATE payload fields — declared explicitly so the contract is typed.
+  // Previously .passthrough() allowed these untyped; explicit declaration makes it intentional.
+  tab: z.string().optional(),
+  href: z.string().optional(),
+  view: z.string().optional(),
 }).passthrough(); // Allow additional unknown keys for forward-compatibility
 
 // Response schema for AI output - supports SINGLE, BULK, NO_MATCH, and SYSTEM_ macro commands
@@ -700,7 +705,7 @@ Output ONLY valid JSON.`;
     // These are emitted by the MACRO COMMAND DICTIONARY in DEPLOYMENT_OFFICER when the user
     // speaks confirmation ("yes", "confirm"), cancellation ("no", "cancel"), or grid filter intents.
     // They carry empty targetIds and must NOT reach the DB update layer.
-    if (actionType === 'SYSTEM_BULK_CONFIRM' || actionType === 'SYSTEM_BULK_CANCEL' || actionType === 'SYSTEM_FILTER_GRID' || actionType === 'SYSTEM_HELP' || actionType === 'SYSTEM_NOTE' || actionType === 'SYSTEM_DISARM' || actionType === 'SYSTEM_APPLY_BRANDING_THEME' || actionType === 'SYSTEM_EXECUTE_BUILD' || actionType === 'SYSTEM_SYNC_CRM' || actionType === 'SYSTEM_RELOAD_ASSETS') {
+    if (actionType === 'SYSTEM_BULK_CONFIRM' || actionType === 'SYSTEM_BULK_CANCEL' || actionType === 'SYSTEM_FILTER_GRID' || actionType === 'SYSTEM_RESELLER_NAVIGATE' || actionType === 'SYSTEM_HELP' || actionType === 'SYSTEM_NOTE' || actionType === 'SYSTEM_DISARM' || actionType === 'SYSTEM_APPLY_BRANDING_THEME' || actionType === 'SYSTEM_EXECUTE_BUILD' || actionType === 'SYSTEM_SYNC_CRM' || actionType === 'SYSTEM_RELOAD_ASSETS') {
       console.log('%c[ProcessCommand] 🔷 SYSTEM_ macro command recognized:', 'color: #3b82f6; font-weight: bold;', { actionType, payload, contextKey });
       return NextResponse.json({
         success: true,

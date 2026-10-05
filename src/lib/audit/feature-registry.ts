@@ -60,6 +60,14 @@ export const FEATURE_REGISTRY: Record<SYSTEM_COMMAND, FeatureRegistryEntry> = {
     requiresAuth: false,
     description: 'Filter the client grid view by criteria',
   },
+  SYSTEM_RESELLER_NAVIGATE: {
+    actionType: 'SYSTEM_RESELLER_NAVIGATE',
+    scope: 'reseller',
+    uiModal: undefined,
+    handler: undefined,
+    requiresAuth: true,
+    description: 'Voice-driven navigation to a reseller surface route (clients grid, branding, revenue, settings)',
+  },
   SYSTEM_UPDATE_BRANDING: {
     actionType: 'SYSTEM_UPDATE_BRANDING',
     scope: 'client',

@@ -184,6 +184,14 @@ MACRO COMMAND DICTIONARY — These override all other logic and MUST be checked 
   "show [category]", "filter [category]" → actionType "SYSTEM_FILTER_GRID"
   Extract the category from the command (e.g. "automotive", "general", "retail", "healthcare", "insurance")
   and place it in payload.category_filter (uppercased, e.g. "AUTOMOTIVE").
+- "take me to the branding page", "open branding", "show me branding", "go to the clients page",
+  "open settings", "navigate to dashboard", "take me to revenue", "show me the AI engine",
+  "open the clients grid", "switch to the clients view" → actionType "SYSTEM_RESELLER_NAVIGATE"
+  Navigation is global — never tenant-scoped. Do NOT extract any tenant or category information.
+  Return empty targetIds. Place the destination in payload.tab (short view token such as
+  "branding", "clients", "revenue", "settings", "dashboard") or payload.href when the user
+  names a full route. Do NOT emit deployment payloads and do NOT extract tenant IDs for
+  navigation commands.
 - "delete [client name]", "remove [client name]", "deactivate [client name]",
   "delete client [name]", "remove client [name]" → actionType "DELETE_CLIENT"
   Extract the client name from the command and place it in clientName.
@@ -390,6 +398,15 @@ Do NOT attempt to generate deployment configuration payloads:
     "category_filter": "AUTOMOTIVE"
   },
   "summary": "Filtering grid to AUTOMOTIVE clients."
+}
+
+{
+  "actionType": "SYSTEM_RESELLER_NAVIGATE",
+  "targetIds": [],
+  "payload": {
+    "tab": "branding"
+  },
+  "summary": "Taking you to the branding studio."
 }
 
 {
