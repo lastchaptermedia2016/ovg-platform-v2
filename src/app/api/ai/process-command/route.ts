@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import Groq from 'groq-sdk';
 import { z } from 'zod';
 import { createClient as createSupabaseClient } from '@/lib/supabase/server';
@@ -33,7 +33,9 @@ export interface HybridVoiceResponse {
     actionType: string;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     payload: Record<string, any>;
-    contextKey?: string;
+    // Mirrors AIResponseSchema: the model is instructed to emit `null` when no
+    // capability key applies, so this must stay nullable alongside the schema.
+    contextKey?: string | null;
   };
   conversationPayload?: {
     responseText: string;
@@ -113,11 +115,24 @@ const StructuredPayloadSchema = z.object({
 import { SYSTEM_COMMANDS } from '@/lib/audit/command-types';
 export type { SYSTEM_COMMAND } from '@/lib/audit/command-types';
 
-const AIResponseSchema = z.object({
+export const AIResponseSchema = z.object({
   actionType: z.enum(SYSTEM_COMMANDS),
   targetIds: z.array(z.string().uuid()).optional(),
   clientName: z.string().optional(),
-  contextKey: z.string().optional(), // Relevant capability key for SYSTEM_EXPLAIN
+  // Relevant capability key for SYSTEM_EXPLAIN.
+  //
+  // `.nullable()` is REQUIRED, not defensive: the system prompt explicitly
+  // instructs the model to emit `contextKey: null` when a capability question
+  // does not map to a specific command key (see SYSTEM_PROMPT in
+  // src/core/ai/system-prompts.ts). A strict `z.string().optional()` rejected
+  // that documented output shape and surfaced as a 500 on an otherwise valid
+  // SYSTEM_EXPLAIN / conversational response.
+  //
+  // Consumers are null-safe: the reseller client page reads this through a
+  // truthy guard (`if (contextKey && SYSTEM_CAPABILITIES[contextKey])`), so
+  // `null`, `undefined` and `''` all fall through to the general capability
+  // list identically.
+  contextKey: z.string().nullable().optional(),
   payload: StructuredPayloadSchema.optional().default({}),
   summary: z.string().min(3).max(500), // For TTS confirmation
   confidenceScore: z.number().min(0).max(1).optional().default(0.9),
@@ -221,8 +236,13 @@ export async function POST(request: NextRequest) {
     const validationResult = ProcessCommandSchema.safeParse(body);
 
     if (!validationResult.success) {
+      // Gated: `body` is the reseller's verbatim request payload (client names,
+      // tenant config) and is dev-diagnostics only. The 400 response below still
+      // returns `flatten()` to the CALLER — that is the API contract, not a log.
+      if (process.env.NODE_ENV !== 'production') {
       console.error('%c[ProcessCommand:Exception] âŒ Zod validation error:', 'color: #dc2626; font-weight: bold;', validationResult.error.flatten());
       console.error('%c[ProcessCommand] ðŸ”· Request body:', 'color: #0097b2; font-weight: bold;', body);
+      }
       return NextResponse.json(
         { error: 'Invalid request parameters', details: validationResult.error.flatten() },
         { status: 400 }
@@ -521,6 +541,50 @@ Output ONLY valid JSON.`;
     const aiValidation = AIResponseSchema.safeParse(parsedResponse);
 
     if (!aiValidation.success) {
+      // ── Structural diagnostics (NON-PRODUCTION ONLY) ──────────────────────
+      // A bare `throw` here made model payload rejection completely opaque: the
+      // 500 told us only that the schema check failed, never WHICH field drifted.
+      //
+      // WHY THE ENV GATE IS MANDATORY, NOT COSMETIC:
+      //   `parsedResponse` is the RAW model output. It can echo tenant names,
+      //   client names and free-text user commands straight into a production
+      //   log aggregator. Zod `message` strings can also embed received values
+      //   (e.g. `received 'acme-corp-private-tenant'`), so even the "structured"
+      //   issues are not guaranteed PII-free. Only field PATHS and codes are
+      //   emitted in production.
+      const issuePaths = aiValidation.error.issues.map((issue) => issue.path.join('.') || '(root)');
+      const issueCodes = aiValidation.error.issues.map((issue) => issue.code);
+
+      if (process.env.NODE_ENV !== 'production') {
+        console.error(
+          '[ProcessCommand] Zod Validation Failed Details:',
+          JSON.stringify(aiValidation.error.format(), null, 2),
+        );
+        console.error(
+          '[ProcessCommand] Flattened Zod Issues:',
+          JSON.stringify(
+            aiValidation.error.issues.map((issue) => ({
+              path: issue.path.join('.'),
+              code: issue.code,
+              message: issue.message,
+            })),
+            null,
+            2,
+          ),
+        );
+        console.error(
+          '[ProcessCommand] Raw Payload Received from LLM:',
+          JSON.stringify(parsedResponse, null, 2),
+        );
+      } else {
+        console.error(
+          '[ProcessCommand] AI schema mismatch (prod, payload withheld) — field paths:',
+          JSON.stringify(issuePaths),
+          '| codes:',
+          JSON.stringify(issueCodes),
+        );
+      }
+
       throw new Error('AI response does not match required schema');
     }
 
@@ -680,8 +744,13 @@ Output ONLY valid JSON.`;
       }
 
       const { studioConfig } = translateVoicePayloadToStudioConfig(payload);
-      console.log('%c[ProcessCommand] 🔍 Raw AI payload:', 'color: #f59e0b; font-weight: bold;', JSON.stringify(payload, null, 2));
-      console.log('%c[ProcessCommand] 🔍 Translated studioConfig:', 'color: #f59e0b; font-weight: bold;', JSON.stringify(studioConfig, null, 2));
+      // Gated: `payload` is the RAW model payload and `studioConfig` is the
+      // tenant's branding/persona config. Both are proprietary customer data
+      // and must not reach a production log aggregator.
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('%c[ProcessCommand] 🔍 Raw AI payload:', 'color: #f59e0b; font-weight: bold;', JSON.stringify(payload, null, 2));
+        console.log('%c[ProcessCommand] 🔍 Translated studioConfig:', 'color: #f59e0b; font-weight: bold;', JSON.stringify(studioConfig, null, 2));
+      }
 
       if (Object.keys(studioConfig).length === 0) {
         return NextResponse.json({ success: false, error: 'No valid branding configuration extracted from voice command', actionType, targetIds }, { status: 400 });

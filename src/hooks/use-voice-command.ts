@@ -274,8 +274,14 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     };
 
     recognition.onerror = (event) => {
+      // 'aborted' is SELF-INITIATED — `stopSpeechRecognition` calls abort() on
+      // teardown, and 'no-speech' is a normal idle timeout. Neither is a fault,
+      // so they must not produce a warning; doing so trains the reader to ignore
+      // red lines and hides genuine errors (e.g. 'not-allowed', 'network').
+      // Interim state is already cleared by stopSpeechRecognition(), so
+      // returning here cannot strand a stale transcript.
+      if (event.error === 'aborted' || event.error === 'no-speech') return;
       console.warn('[VoiceCommand] 🚫 Speech recognition error:', event.error ?? 'unknown');
-      if (event.error === 'no-speech' || event.error === 'aborted') return;
       setInterimTranscript('');
       interimTranscriptRef.current = '';
     };
