@@ -1,7 +1,14 @@
 'use client';
 
 import { useState, useRef, useCallback, useEffect, type MutableRefObject } from 'react';
+import { useRouter } from 'next/navigation';
 import { isInvalidSlug } from '@/lib/utils/guard';
+import {
+  describeResellerTarget,
+  resolveResellerNavigationTarget,
+  type ResellerNavigationTarget,
+  type ResellerViewTab,
+} from '@/lib/voice/reseller-routes';
 import { useCommandDeck } from '@/contexts/CommandDeckContext';
 import { transcodeBlobToWav } from '@/utils/audio/transcode-to-wav';
 import { createClient as createBrowserClient } from '@/lib/supabase/client';
@@ -80,6 +87,40 @@ interface ProcessResponse {
   hasAudio?: boolean;
 }
 
+/**
+ * The `SYSTEM_RESELLER_NAVIGATE` payload fields this hook reads.
+ *
+ * Every field stays `unknown`: the values are model-authored and must be
+ * narrowed by {@link resolveResellerNavigationTarget}, never asserted into a
+ * trusted type on the way in.
+ */
+interface ResellerNavigationPayload {
+  tab?: unknown;
+  href?: unknown;
+  view?: unknown;
+}
+
+/**
+ * Narrow an untyped AI `payload` to the navigation fields.
+ *
+ * Returns `{}` for anything that is not a plain object (including `null`,
+ * arrays, and primitives) so a malformed payload resolves to "do not navigate"
+ * rather than throwing inside the pipeline. `unknown` is narrowed here, not
+ * loosened to `any` — house rules forbid `any` at trust boundaries.
+ */
+function readResellerNavigationPayload(payload: unknown): ResellerNavigationPayload {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return {};
+  const record = payload as Record<string, unknown>;
+  return { tab: record.tab, href: record.href, view: record.view };
+}
+
+/**
+ * Spoken when a navigation request resolves to nothing safe. Deliberately
+ * static: it is asserted at runtime, and the model's own summary for the failed
+ * request ("Taking you to the settings page.") would be a lie we must not speak.
+ */
+const RESELLER_NAVIGATION_UNRESOLVED_SPEECH = "I couldn't find that section.";
+
 export type IncomingAIAction =
   | { type: 'TOGGLE_INSIGHTS';      payload: { enabled: boolean } }
   | { type: 'TOGGLE_DESIGN_MIRROR'; payload: { enabled: boolean } }
@@ -88,7 +129,8 @@ export type IncomingAIAction =
   | { type: 'UPDATE_THEME_COLORS';  payload: { theme: Record<string, unknown>; header?: Record<string, unknown>; footer?: Record<string, unknown>; widget?: Record<string, unknown> } }
   | { type: 'APPLY_BRAND_VIBE';     payload: { vibeText?: string } }
   | { type: 'SAVE_STUDIO_CONFIG';   payload?: Record<string, never> }
-  | { type: 'TRIGGER_AI_MAGIC';     payload?: Record<string, never> };
+  | { type: 'TRIGGER_AI_MAGIC';     payload?: Record<string, never> }
+  | { type: 'NAVIGATE_RESELLER';    payload: { href: string; tab?: ResellerViewTab | null } };
 
 interface SttResponse {
   text: string;
@@ -127,6 +169,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
     agentMode: _agentMode,
   } = options;
   const { setCommandDeckOpen } = useCommandDeck();
+  const router = useRouter();
 
   // ─── Refs for dynamic options ────────────────────────────────────────
   const resellerIdRef = useRef(options.resellerId);
@@ -611,7 +654,40 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       if (parsedResponse?.actionType === 'SYSTEM_HELP') {
         setCommandDeckOpen(true);
       }
-      const aiText = parsedResponse?.response || parsedResponse?.summary;
+
+      // ── SYSTEM_RESELLER_NAVIGATE: voice-driven navigation ──────────────────
+      // The model is an untrusted producer of destinations here, so the payload
+      // is handed to the gate in `reseller-routes` before anything is read as a
+      // route. `null` means DO NOT NAVIGATE: we keep the user where they are
+      // and speak a short correction instead.
+      let aiText: string | undefined = parsedResponse?.response || parsedResponse?.summary;
+      const navigationActions: IncomingAIAction[] = [];
+      let pendingResellerNavigation: ResellerNavigationTarget | null = null;
+
+      if (parsedResponse?.actionType === 'SYSTEM_RESELLER_NAVIGATE') {
+        const navPayload = readResellerNavigationPayload(parsedResponse?.payload);
+        const target = resolveResellerNavigationTarget(navPayload, currentResellerId);
+        if (target) {
+          pendingResellerNavigation = target;
+          navigationActions.push({
+            type: 'NAVIGATE_RESELLER',
+            payload: { href: target.href, tab: target.tab },
+          });
+          console.log('[VoiceCommand] 🧭 SYSTEM_RESELLER_NAVIGATE resolved:', target);
+          // Guarantee the user hears where they are going, even if the macro
+          // short-circuit returned no summary at all.
+          if (!aiText?.trim()) aiText = `Taking you to ${describeResellerTarget(target.tab)}.`;
+        } else {
+          console.warn(
+            '[VoiceCommand] 🚫 SYSTEM_RESELLER_NAVIGATE rejected — no safe reseller target for payload:',
+            navPayload,
+          );
+          // Overwrite the model's summary: it describes a trip that is not
+          // happening, and speaking it would be the one real lie in the loop.
+          aiText = RESELLER_NAVIGATION_UNRESOLVED_SPEECH;
+        }
+      }
+
       if (!aiText || !aiText.trim()) {
         console.warn('[VoiceHook] Aborting internal TTS: No text or fallback summary available.');
         return;
@@ -621,7 +697,10 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
 
       try {
         const explicit = Array.isArray(parsedResponse?.actions) ? (parsedResponse!.actions as IncomingAIAction[]) : null;
-        const actions = explicit ?? deriveActionsFromPayload(parsedResponse?.payload, parsedResponse?.actionType);
+        const derived = explicit ?? deriveActionsFromPayload(parsedResponse?.payload, parsedResponse?.actionType);
+        // NAVIGATE_RESELLER rides the same dispatch seam as every other action,
+        // so component consumers observe navigation exactly like a theme change.
+        const actions = [...derived, ...navigationActions];
         if (actions.length > 0) onActionsReceivedRef.current?.(actions);
       } catch (actionErr) {
         console.warn('[VoiceCommand] ⚠️ onActionsReceived threw — action dispatcher error:', actionErr);
@@ -637,7 +716,17 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       // meaningful help text that Hannah must read aloud. Without this carve-out,
       // the voice pipeline's hasAudio gate silently swallows the TTS call,
       // causing Hannah to remain silent when the user asks "what can you do?".
-      const VOICE_TTS_ALLOWLIST = new Set(['SYSTEM_HELP', 'SYSTEM_EXPLAIN', 'SYSTEM_NOTE']);
+      //
+      // SYSTEM_RESELLER_NAVIGATE needs the identical carve-out for a stronger
+      // reason: the backend short-circuits ALL macro commands with
+      // `hasAudio: false` (there is no model audio for a structural payload), so
+      // without this entry the user hears nothing at all after saying "take me
+      // to branding" — the page silently changes under them with no
+      // confirmation, which reads as a broken microphone rather than a
+      // successful navigation.
+      const VOICE_TTS_ALLOWLIST = new Set([
+        'SYSTEM_HELP', 'SYSTEM_EXPLAIN', 'SYSTEM_NOTE', 'SYSTEM_RESELLER_NAVIGATE',
+      ]);
 
       if (
         parsedResponse?.actionType && SYSTEM_MACRO_NO_AUDIO.has(parsedResponse.actionType)
@@ -713,6 +802,20 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
         ttsAudioSourceRef.current = null;
       }, playbackMs);
 
+      // ── Navigation happens LAST, on purpose ────────────────────────────────
+      // `router.push` to another route can unmount whatever owns this hook. If
+      // the push ran before the speech, the unmount cleanup would
+      // `abortController.abort()` the in-flight `/api/ai/speech` fetch and
+      // close the TTS AudioContext, so the user would be teleported in silence.
+      // By this point the audio is fetched, decoded, and playing, and the push
+      // is a soft navigation inside `/reseller/<same slug>/…`, which the
+      // layout-level provider survives — so the confirmation keeps speaking
+      // while the new page renders behind it.
+      if (pendingResellerNavigation) {
+        console.log('[VoiceCommand] 🧭 Navigating after TTS started:', pendingResellerNavigation.href);
+        router.push(pendingResellerNavigation.href);
+      }
+
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') {
         console.log('Voice command aborted');
@@ -726,7 +829,7 @@ export function useVoiceCommand(options: VoiceCommandOptions = {}): UseVoiceComm
       setIsProcessing(false);
       broadcastStatus("online");
     }
-  }, [onTranscript, onAIResponse, onError, skipAIPipeline, _currentConfig, deriveActionsFromPayload, validateAudioResponse, setCommandDeckOpen, broadcastStatus]);
+  }, [onTranscript, onAIResponse, onError, skipAIPipeline, _currentConfig, deriveActionsFromPayload, validateAudioResponse, setCommandDeckOpen, broadcastStatus, router]);
 
   // ─── STRICT PTT: startListening — mousedown / touchstart handler ────────
   // Alias: startRecording is exposed on the return as startRecording for UI compatibility.
