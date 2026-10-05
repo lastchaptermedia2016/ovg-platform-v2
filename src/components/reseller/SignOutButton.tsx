@@ -39,7 +39,7 @@ export function SignOutButton() {
     <button 
       onClick={handleSignOut}
       disabled={isSigningOut}
-      className={`px-3 py-1 text-[9px] font-medium tracking-wider uppercase transition-all duration-300 rounded-lg backdrop-blur-md border ${
+      className={`px-4 py-2 min-h-[44px] text-[9px] font-medium tracking-wider uppercase transition-all duration-300 rounded-lg backdrop-blur-md border ${
         isSigningOut
           ? 'text-white/40 border-white/10 bg-white/5 cursor-not-allowed'
           : 'text-gray-300 hover:text-white border-white/10 hover:border-white/20 hover:bg-white/10'

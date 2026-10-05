@@ -102,7 +102,7 @@ export function TenantKnowledgeList({
             <button
               type="button"
               onClick={onRetry}
-              className="mt-1 inline-flex min-h-[40px] items-center gap-2 rounded-lg bg-white/10 px-4 text-sm font-medium text-white transition-colors hover:bg-white/20"
+              className="mt-1 inline-flex min-h-[44px] items-center gap-2 rounded-lg bg-white/10 px-4 text-sm font-medium text-white transition-colors hover:bg-white/20"
             >
               <RotateCw className="h-4 w-4" />
               Try again
@@ -124,7 +124,7 @@ export function TenantKnowledgeList({
             <button
               type="button"
               onClick={onAdd}
-              className="mt-1 min-h-[40px] rounded-lg bg-white/10 px-4 text-sm font-medium text-white transition-colors hover:bg-white/20"
+              className="mt-1 min-h-[44px] rounded-lg bg-white/10 px-4 text-sm font-medium text-white transition-colors hover:bg-white/20"
             >
               Add your first entry
             </button>

@@ -89,7 +89,7 @@ export function TenantKnowledgeToolbar({
             onClick={onRefresh}
             disabled={loading}
             aria-label="Refresh entries"
-            className="inline-flex min-h-[40px] items-center gap-2 rounded-lg border border-white/10 px-3 text-sm font-medium text-white/70 transition-colors hover:bg-white/5 hover:text-white disabled:opacity-50"
+            className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-white/10 px-3 text-sm font-medium text-white/70 transition-colors hover:bg-white/5 hover:text-white disabled:opacity-50"
           >
             <RotateCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             <span className="hidden sm:inline">Refresh</span>
@@ -97,7 +97,7 @@ export function TenantKnowledgeToolbar({
           <button
             type="button"
             onClick={onAdd}
-            className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-5 text-sm font-semibold text-white shadow-lg shadow-cyan-500/15 transition-all hover:from-blue-500 hover:to-cyan-400"
+            className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-5 text-sm font-semibold text-white shadow-lg shadow-cyan-500/15 transition-all hover:from-blue-500 hover:to-cyan-400"
           >
             <Plus className="h-4 w-4" />
             Add Entry
@@ -125,7 +125,7 @@ export function TenantKnowledgeToolbar({
             type="button"
             onClick={onDismissNotice}
             aria-label="Dismiss message"
-            className="ml-auto rounded p-0.5 opacity-70 transition-opacity hover:opacity-100"
+            className="ml-auto rounded p-1 opacity-70 transition-opacity hover:opacity-100 min-h-[44px] min-w-[44px] flex items-center justify-center"
           >
             <X className="h-3.5 w-3.5" />
           </button>

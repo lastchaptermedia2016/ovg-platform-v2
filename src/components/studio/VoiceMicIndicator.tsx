@@ -45,7 +45,7 @@ export function VoiceMicIndicator() {
         type="button"
         aria-label={isListening ? 'Stop push-to-talk' : 'Start push-to-talk (Space)'}
         onClick={handleToggle}
-        className={`flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-semibold backdrop-blur-xl transition-colors ${
+        className={`flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-semibold backdrop-blur-xl transition-colors min-h-[44px] ${
           isListening
             ? 'border-cyan-400/60 bg-cyan-500/20 text-cyan-200'
             : 'border-white/10 bg-slate-950/40 text-white hover:border-white/20'

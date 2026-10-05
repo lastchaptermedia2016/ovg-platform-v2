@@ -45,7 +45,7 @@ export default function ClientIntegrationsPage() {
   }
 
   return (
-    <div className="min-h-screen p-6">
+    <div className="min-h-screen p-4 sm:p-6">
       <div className="max-w-7xl mx-auto">
         <div className="relative overflow-hidden rounded-xl mb-8 min-h-[120px]">
           <Image
@@ -58,7 +58,7 @@ export default function ClientIntegrationsPage() {
             className="object-cover"
           />
           <div className="absolute inset-0 bg-gradient-to-r from-slate-950 via-slate-950/60 to-transparent pointer-events-none" />
-          <div className="relative z-10 p-6">
+          <div className="relative z-10 p-4 sm:p-6">
             <h1 className="text-2xl font-bold text-white mb-2">Integrations Manager</h1>
             <p className="text-white/90">
               Configure premium add-ons for {clientName || 'this client'}

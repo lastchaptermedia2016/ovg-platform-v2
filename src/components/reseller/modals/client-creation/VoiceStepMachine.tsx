@@ -96,7 +96,7 @@ export function VoiceStepMachine({
           </div>
 
           {/* Real-time Field Highlighting — reads from voiceEntryData (preview) */}
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <CaptureFieldCard label="Name" value={voiceEntryData.name} active={highlightedField === 'name'} />
             <CaptureFieldCard label="Industry" value={voiceEntryData.industry} active={highlightedField === 'industry'} />
             <CaptureFieldCard label="Category" value={voiceEntryData.category} active={highlightedField === 'category'} accent="amber" />
@@ -133,6 +133,8 @@ export function VoiceStepMachine({
         }`}>
           <div className="flex items-start gap-4">
             <button
+              type="button"
+              aria-label="Push to talk"
               onClick={onToggleListening}
               onMouseDown={onPTTStart}
               onMouseUp={onPTTStop}

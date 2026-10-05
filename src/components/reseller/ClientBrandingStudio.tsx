@@ -1975,7 +1975,7 @@ export function ClientBrandingStudio({
       <div className="space-y-6">
         {/* Client Switcher Header */}
         <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-xl p-4">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <h2 className="text-lg font-bold text-white flex items-center gap-2">
               <span className="text-[#FFD700]">◆</span>
               Studio Controls
@@ -1985,7 +1985,7 @@ export function ClientBrandingStudio({
                   studio.isLoading (the latter was a permanent ghost state).
                   The fixed-width container locks the layout so the
                   "Back to Clients" button and mic icon never shift. */}
-              <div className="w-[68px] flex items-center justify-end">
+              <div className="hidden sm:flex items-center justify-end">
                 {isProcessing && (
                   <span className="text-xs text-slate-400 animate-pulse">Loading...</span>
                 )}

@@ -131,7 +131,7 @@ export function ResellerKnowledgeManager({
             <button
               type="button"
               aria-label="Refresh entries"
-              className="inline-flex min-h-[40px] items-center gap-2 rounded-lg border border-white/10 px-3 text-sm font-medium text-white/70 transition-colors hover:bg-white/5 hover:text-white"
+              className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-white/10 px-3 text-sm font-medium text-white/70 transition-colors hover:bg-white/5 hover:text-white"
             >
               <RotateCw className="h-4 w-4" />
               <span className="hidden sm:inline">Refresh</span>
@@ -139,7 +139,7 @@ export function ResellerKnowledgeManager({
             {/* + Add Entry Button */}
             <button
               type="button"
-              className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-5 text-sm font-semibold text-white shadow-lg shadow-cyan-500/15 transition-all hover:from-blue-500 hover:to-cyan-400"
+              className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-5 text-sm font-semibold text-white shadow-lg shadow-cyan-500/15 transition-all hover:from-blue-500 hover:to-cyan-400"
             >
               <Plus className="h-4 w-4" />
               Add Entry

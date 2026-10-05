@@ -133,7 +133,7 @@ export default async function AIEnginePage({
   const tenants = await fetchTenants(resellerId);
 
   return (
-    <div className="min-h-screen p-6">
+    <div className="min-h-screen p-4 sm:p-6">
       <div className="max-w-5xl mx-auto">
         {/* Back to Clients Navigation */}
         <Link

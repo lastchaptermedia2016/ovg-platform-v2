@@ -853,7 +853,7 @@ export function ClientsGridInternal({
 
         if (loading) {
           return (
-            <div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(300px,1fr))] w-full px-4 sm:px-0">
+            <div className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(min(300px,100%),1fr))] w-full px-4 sm:px-0">
               {[...Array(6)].map((_, i) => (
                 <div key={i} className="backdrop-blur-xl bg-white/[0.02] border border-white/10 rounded-lg p-6">
                   <div className="animate-pulse">
@@ -917,7 +917,7 @@ export function ClientsGridInternal({
           );
         }
         return (
-          <div ref={gridContainerRef} className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(300px,1fr))] w-full px-4 sm:px-0 transition-all duration-200 ease-out">
+            <div ref={gridContainerRef} className="grid gap-3 grid-cols-[repeat(auto-fill,minmax(min(300px,100%),1fr))] w-full px-4 sm:px-0 transition-all duration-200 ease-out">
             {visibleClients.map((tenant) => (
               <div
                 key={tenant.id}

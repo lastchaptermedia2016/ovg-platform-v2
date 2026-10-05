@@ -190,7 +190,7 @@ export function TenantKnowledgeEntryDialog({
           <button
             type="button"
             onClick={onClose}
-            className="min-h-[40px] flex-1 rounded-lg border border-white/10 text-sm font-medium text-white transition-colors hover:bg-white/5"
+            className="min-h-[44px] flex-1 rounded-lg border border-white/10 text-sm font-medium text-white transition-colors hover:bg-white/5"
           >
             Cancel
           </button>
@@ -199,7 +199,7 @@ export function TenantKnowledgeEntryDialog({
             onClick={onSubmit}
             disabled={busy}
             aria-busy={busy}
-            className="inline-flex min-h-[40px] flex-1 items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-blue-600 to-cyan-500 text-sm font-semibold text-white shadow-lg shadow-cyan-500/10 transition-all hover:from-blue-500 hover:to-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-blue-600 to-cyan-500 text-sm font-semibold text-white shadow-lg shadow-cyan-500/10 transition-all hover:from-blue-500 hover:to-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" />}
             {editing ? 'Update entry' : 'Create entry'}

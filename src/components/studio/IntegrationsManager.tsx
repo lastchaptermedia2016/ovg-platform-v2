@@ -332,7 +332,7 @@ export function IntegrationsManager({ targetClientId, role }: IntegrationsManage
 
                 <button
                   onClick={() => setActiveId(item.id)}
-                  className="mt-4 w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/10 hover:border-white/25 text-white text-xs font-medium py-2.5 transition-colors min-h-[40px]"
+                  className="mt-4 w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/10 hover:border-white/25 text-white text-xs font-medium py-2.5 transition-colors min-h-[44px]"
                 >
                   <Sparkles className="h-3.5 w-3.5" />
                   {item.cta}
@@ -412,7 +412,7 @@ export function IntegrationsManager({ targetClientId, role }: IntegrationsManage
                   setActiveId(null);
                   setStatus(null);
                 }}
-                className="flex-1 py-2.5 rounded-lg border border-white/10 text-zinc-300 hover:bg-white/5 text-sm font-medium transition-colors min-h-[40px]"
+                className="flex-1 py-2.5 rounded-lg border border-white/10 text-zinc-300 hover:bg-white/5 text-sm font-medium transition-colors min-h-[44px]"
               >
                 Cancel
               </button>
@@ -420,7 +420,7 @@ export function IntegrationsManager({ targetClientId, role }: IntegrationsManage
                 onClick={handleSave}
                 disabled={savingId === active.id}
                 aria-busy={savingId === active.id}
-                className="flex-1 py-2.5 rounded-lg bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white font-semibold text-sm transition-all duration-200 shadow-lg shadow-cyan-500/10 min-h-[40px] disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
+                className="flex-1 py-2.5 rounded-lg bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white font-semibold text-sm transition-all duration-200 shadow-lg shadow-cyan-500/10 min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
               >
                 {savingId === active.id ? (
                   <>

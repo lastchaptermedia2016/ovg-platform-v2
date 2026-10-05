@@ -48,7 +48,7 @@ export default function ClientDashboardPage() {
   }, [tenantId]);
 
   return (
-    <main className="flex flex-col gap-6">
+    <main className="flex flex-col gap-6 w-full max-w-7xl mx-auto px-4 sm:px-6">
       <TelemetryGrid tenantId={tenantId} />
       <SystemStatusMonitor statusItems={[]} />
       <ControlPanel pipelineLayers={[]} autoSync={false} realtimeUpdates={false} />
