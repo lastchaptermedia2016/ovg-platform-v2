@@ -233,7 +233,7 @@ function StudioShell({ pathname, children }: { pathname: string; children: React
           </main>
 
           {/* Preview Sidebar */}
-          <aside className="w-full lg:w-80 xl:w-96 shrink-0">
+          <aside className="hidden lg:block w-80 xl:w-96 shrink-0">
             <WidgetPreview />
           </aside>
         </div>
