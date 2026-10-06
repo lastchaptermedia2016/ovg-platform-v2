@@ -282,7 +282,7 @@ export function ClientKnowledgeManager() {
           </button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
           {entries.map((entry) => (
             <div
               key={entry.id}

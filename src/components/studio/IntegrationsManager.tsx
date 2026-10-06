@@ -128,10 +128,144 @@ const INTEGRATION_PRICING: Record<string, IntegrationPricing> = {
   'whatsapp-sms': { setupUsd: 149, setupZar: 2450, monthlyUsd: 39, monthlyZar: 640 },
 };
 
+const INTEGRATION_THEMES: Record<
+  string,
+  {
+    gradient: string;
+    border: string;
+    text: string;
+    panel: string;
+    iconBg: string;
+    iconText: string;
+    inputFocus: string;
+    success: string;
+    cta: string;
+    ctaHover: string;
+    dragOver: string;
+    dragBase: string;
+    statusBadge: string;
+    glassGradient: string;
+    glow: string;
+  }
+> = {
+  'smart-booking': {
+    gradient: 'from-emerald-500/20 to-teal-500/10',
+    border: 'border-emerald-500/40',
+    text: 'text-emerald-150',
+    panel: 'bg-emerald-950/90',
+    iconBg: 'bg-emerald-500/10 border-emerald-500/20',
+    iconText: 'text-emerald-300',
+    inputFocus: 'focus:border-emerald-500',
+    success: 'bg-emerald-500/15 border-emerald-500/30 text-emerald-200',
+    cta: 'from-emerald-600 to-teal-500',
+    ctaHover: 'hover:from-emerald-500 hover:to-teal-400',
+    dragOver: 'border-emerald-400/60 bg-emerald-500/10',
+    dragBase: 'border-white/15 bg-slate-900/40',
+    statusBadge: 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30',
+    glassGradient: 'from-emerald-500/15 via-teal-950/40 to-slate-950/80',
+    glow: 'shadow-2xl shadow-emerald-950/50',
+  },
+  'live-inventory': {
+    gradient: 'from-amber-500/20 to-orange-500/10',
+    border: 'border-amber-500/40',
+    text: 'text-amber-150',
+    panel: 'bg-amber-950/90',
+    iconBg: 'bg-amber-500/10 border-amber-500/20',
+    iconText: 'text-amber-300',
+    inputFocus: 'focus:border-amber-500',
+    success: 'bg-amber-500/15 border-amber-500/30 text-amber-200',
+    cta: 'from-amber-600 to-orange-500',
+    ctaHover: 'hover:from-amber-500 hover:to-orange-400',
+    dragOver: 'border-amber-400/60 bg-amber-500/10',
+    dragBase: 'border-white/15 bg-slate-900/40',
+    statusBadge: 'bg-amber-500/15 text-amber-300 border border-amber-500/30',
+    glassGradient: 'from-amber-500/15 via-orange-950/40 to-slate-950/80',
+    glow: 'shadow-2xl shadow-amber-950/50',
+  },
+  'crm-sync': {
+    gradient: 'from-sky-500/20 to-blue-500/10',
+    border: 'border-sky-500/40',
+    text: 'text-blue-150',
+    panel: 'bg-blue-950/90',
+    iconBg: 'bg-sky-500/10 border-sky-500/20',
+    iconText: 'text-sky-300',
+    inputFocus: 'focus:border-sky-500',
+    success: 'bg-sky-500/15 border-sky-500/30 text-sky-200',
+    cta: 'from-sky-600 to-blue-500',
+    ctaHover: 'hover:from-sky-500 hover:to-blue-400',
+    dragOver: 'border-sky-400/60 bg-sky-500/10',
+    dragBase: 'border-white/15 bg-slate-900/40',
+    statusBadge: 'bg-sky-500/15 text-sky-300 border border-sky-500/30',
+    glassGradient: 'from-sky-500/15 via-blue-950/40 to-slate-950/80',
+    glow: 'shadow-2xl shadow-sky-950/50',
+  },
+  'vector-kb': {
+    gradient: 'from-violet-500/20 to-fuchsia-500/10',
+    border: 'border-violet-500/40',
+    text: 'text-purple-150',
+    panel: 'bg-purple-950/90',
+    iconBg: 'bg-violet-500/10 border-violet-500/20',
+    iconText: 'text-violet-300',
+    inputFocus: 'focus:border-violet-500',
+    success: 'bg-violet-500/15 border-violet-500/30 text-violet-200',
+    cta: 'from-violet-600 to-fuchsia-500',
+    ctaHover: 'hover:from-violet-500 hover:to-fuchsia-400',
+    dragOver: 'border-violet-400/60 bg-violet-500/10',
+    dragBase: 'border-white/15 bg-slate-900/40',
+    statusBadge: 'bg-violet-500/15 text-violet-300 border border-violet-500/30',
+    glassGradient: 'from-violet-500/15 via-fuchsia-950/40 to-slate-950/80',
+    glow: 'shadow-2xl shadow-violet-950/50',
+  },
+  'whatsapp-sms': {
+    gradient: 'from-green-500/20 to-emerald-500/10',
+    border: 'border-green-500/40',
+    text: 'text-teal-150',
+    panel: 'bg-teal-950/90',
+    iconBg: 'bg-green-500/10 border-green-500/20',
+    iconText: 'text-green-300',
+    inputFocus: 'focus:border-green-500',
+    success: 'bg-green-500/15 border-green-500/30 text-green-200',
+    cta: 'from-green-600 to-emerald-500',
+    ctaHover: 'hover:from-green-500 hover:to-emerald-400',
+    dragOver: 'border-green-400/60 bg-green-500/10',
+    dragBase: 'border-white/15 bg-slate-900/40',
+    statusBadge: 'bg-green-500/15 text-green-300 border border-green-500/30',
+    glassGradient: 'from-green-500/15 via-emerald-950/40 to-slate-950/80',
+    glow: 'shadow-2xl shadow-green-950/50',
+  },
+};
+
 const STATUS_META: Record<IntegrationStatus, { label: string; className: string }> = {
   active: { label: 'Active', className: 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30' },
   configure: { label: 'Configure', className: 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/30' },
   premium: { label: 'Premium Add-on', className: 'bg-amber-500/15 text-amber-300 border border-amber-500/30' },
+};
+
+/**
+ * Color palette for each integration card - unique vibrant shade per integration
+ * Each color uses higher saturation for clear visual distinction
+ */
+const INTEGRATION_COLOR_MAP: Record<string, { from: string; to: string }> = {
+  'smart-booking': {
+    from: 'rgba(0, 200, 255, 0.20)',    // Bright Cyan/Sky Blue
+    to: 'rgba(0, 150, 200, 0.10)',
+  },
+  'live-inventory': {
+    from: 'rgba(255, 150, 0, 0.20)',    // Bright Orange
+    to: 'rgba(255, 100, 0, 0.10)',
+  },
+  'crm-sync': {
+    from: 'rgba(255, 80, 120, 0.20)',   // Bright Red/Coral
+    to: 'rgba(255, 50, 80, 0.10)',
+  },
+  'vector-kb': {
+    from: 'rgba(200, 100, 255, 0.20)',  // Bright Magenta/Purple
+    to: 'rgba(150, 50, 255, 0.10)',
+  },
+  'whatsapp-sms': {
+    from: 'rgba(0, 255, 150, 0.20)',    // Bright Teal/Mint
+    to: 'rgba(0, 200, 100, 0.10)',
+  },
 };
 
 function secretDisplayValue(v: unknown): string {
@@ -269,7 +403,7 @@ export function IntegrationsManager({ targetClientId, role }: IntegrationsManage
           <Loader2 className="h-5 w-5 animate-spin" /> Loading integrations…
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div className="grid gap-4 items-start w-full" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))' }}>
           {INTEGRATIONS.map((item) => {
             const Icon = item.icon;
             const statusMeta = STATUS_META[item.status];
@@ -282,61 +416,79 @@ export function IntegrationsManager({ targetClientId, role }: IntegrationsManage
             return (
               <div
                 key={item.id}
-                className={`group relative flex flex-col rounded-2xl border bg-gradient-to-br ${item.accent} p-5 transition-all duration-200 hover:border-white/30 hover:shadow-lg hover:shadow-black/30`}
+                className="group relative flex flex-col rounded-3xl border border-white/10 backdrop-blur-xl shadow-2xl transition-all duration-200 hover:border-white/20 hover:shadow-[0_20px_50px_rgba(0,0,0,0.35)] w-full overflow-visible"
+                style={{
+                  background: `linear-gradient(135deg, ${INTEGRATION_COLOR_MAP[item.id].from}, ${INTEGRATION_COLOR_MAP[item.id].to})`,
+                }}
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/5 border border-white/10 backdrop-blur">
-                    <Icon className="h-5 w-5" />
+                <div className="px-6 pt-7 pb-6 flex flex-col gap-4 w-full">
+                  <div className="flex items-start justify-between w-full gap-2">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/5 border border-white/10 shrink-0">
+                      <Icon className="h-5 w-5" />
+                    </div>
+                    <span
+                      className={`inline-flex items-center whitespace-nowrap rounded-full px-2.5 py-1 text-[9px] tracking-widest uppercase font-semibold shrink-0 ${statusMeta.className}`}
+                    >
+                      {statusMeta.label}
+                    </span>
                   </div>
-                  <span
-                    className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase ${statusMeta.className}`}
-                  >
-                    {statusMeta.label}
-                  </span>
+
+                  <div className="flex flex-col gap-3 flex-grow w-full">
+                    <div className="w-full">
+                      <h3 className="text-base font-bold tracking-tight text-white font-agrandir break-words hyphens-auto">
+                        {item.name}
+                      </h3>
+                      <p className="text-[10px] tracking-wider text-white/50 uppercase mt-0.5 break-words hyphens-auto">
+                        {item.tagline}
+                      </p>
+                    </div>
+                    <p className="text-xs leading-5 text-zinc-300/80 break-words whitespace-normal hyphens-auto">
+                      {item.description}
+                    </p>
+
+                    {INTEGRATION_PRICING[item.id] && (
+                      (() => {
+                        const p = INTEGRATION_PRICING[item.id];
+                        return (
+                          <div className="space-y-2 bg-black/30 border border-white/5 rounded-2xl p-3.5 text-xs text-slate-300">
+                            <div className="space-y-1">
+                              <div className="font-medium">Once-off:</div>
+                              <div className="flex flex-wrap gap-1 text-white">
+                                <span>${p.setupUsd}</span>
+                                <span>/</span>
+                                <span>R{p.setupZar.toLocaleString('en-ZA')}</span>
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <div className="font-medium">Monthly:</div>
+                              <div className="flex flex-wrap gap-1 text-white">
+                                <span>${p.monthlyUsd}</span>
+                                <span>/</span>
+                                <span>R{p.monthlyZar.toLocaleString('en-ZA')}</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()
+                    )}
+
+                    {configured && (
+                      <p className="inline-flex items-center gap-1 text-[10px] text-emerald-300">
+                        <Check className="h-3 w-3" /> Connected
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="mt-auto">
+                    <button
+                      onClick={() => setActiveId(item.id)}
+                      className="w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/10 hover:border-white/25 text-white text-xs font-medium py-2.5 transition-all duration-200 min-h-[44px]"
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                      {item.cta}
+                    </button>
+                  </div>
                 </div>
-
-                <h3 className="mt-4 text-sm font-semibold text-white font-agrandir">
-                  {item.name}
-                </h3>
-                <p className="text-[10px] uppercase tracking-wider text-white/40 mt-0.5">
-                  {item.tagline}
-                </p>
-                <p className="mt-2 text-xs text-zinc-300/80 leading-relaxed flex-1">
-                  {item.description}
-                </p>
-
-                {INTEGRATION_PRICING[item.id] && (
-                  (() => {
-                    const p = INTEGRATION_PRICING[item.id];
-                    return (
-                      <div className="my-3 flex flex-wrap items-center justify-between gap-1.5 rounded-xl border border-white/5 bg-white/5 p-2.5 text-xs text-slate-300">
-                        <span className="font-medium">
-                          Once-off: <span className="text-white">${p.setupUsd}</span> /{' '}
-                          <span className="text-white">R{p.setupZar.toLocaleString('en-ZA')}</span>
-                        </span>
-                        <span className="font-medium">
-                          Monthly: <span className="text-white">${p.monthlyUsd}</span> /{' '}
-                          <span className="text-white">R{p.monthlyZar.toLocaleString('en-ZA')}</span>
-                        </span>
-                      </div>
-                    );
-                  })()
-                )}
-
-
-                {configured && (
-                  <p className="mt-3 inline-flex items-center gap-1 text-[10px] text-emerald-300">
-                    <Check className="h-3 w-3" /> Connected
-                  </p>
-                )}
-
-                <button
-                  onClick={() => setActiveId(item.id)}
-                  className="mt-4 w-full inline-flex items-center justify-center gap-1.5 rounded-lg bg-white/10 hover:bg-white/20 border border-white/10 hover:border-white/25 text-white text-xs font-medium py-2.5 transition-colors min-h-[44px]"
-                >
-                  <Sparkles className="h-3.5 w-3.5" />
-                  {item.cta}
-                </button>
               </div>
             );
           })}
@@ -344,96 +496,104 @@ export function IntegrationsManager({ targetClientId, role }: IntegrationsManage
       )}
 
       {/* Slide-over configuration drawer */}
-      {active && (
-        <div
-          className="fixed inset-0 z-[10003] flex justify-end"
-          role="dialog"
-          aria-modal="true"
-          aria-label={`${active.name} configuration`}
-        >
-          <button
-            type="button"
-            aria-label="Close configuration"
-            onClick={() => {
-              setActiveId(null);
-              setStatus(null);
-            }}
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-          />
-          <div className="relative w-full max-w-md h-full overflow-y-auto bg-slate-950 border-l border-white/10 shadow-2xl p-5 sm:p-6">
-            <div className="flex items-start justify-between gap-3 mb-5">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/5 border border-white/10">
-                  <active.icon className="h-5 w-5 text-cyan-300" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-semibold text-white font-agrandir">{active.name}</h3>
-                  <p className="text-[10px] uppercase tracking-wider text-white/40">{active.tagline}</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveId(null);
-                  setStatus(null);
-                }}
-                aria-label="Close"
-                className="flex items-center justify-center w-9 h-9 rounded-lg text-zinc-400 hover:bg-white/5 hover:text-white transition-colors shrink-0"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <p className="text-xs text-zinc-400 mb-5">{active.description}</p>
-
-            <IntegrationConfigForm
-              integration={active}
-              config={configs[active.id] ?? BLANK_CONFIG}
-              onField={(key, value) => updateField(active.id, key, value)}
+      {active && (() => {
+        const theme = INTEGRATION_THEMES[active.id] ?? INTEGRATION_THEMES['smart-booking'];
+        const cardColors = INTEGRATION_COLOR_MAP[active.id];
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-md p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${active.name} configuration`}
+          >
+            <button
+              type="button"
+              aria-label="Close configuration"
+              onClick={() => {
+                setActiveId(null);
+                setStatus(null);
+              }}
+              className="absolute inset-0"
             />
-
-            {status && (
-              <div
-                className={`mt-4 p-3 rounded-lg flex items-center gap-2 text-xs ${
-                  status.type === 'success'
-                    ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300'
-                    : 'bg-red-500/15 border border-red-500/30 text-red-300'
-                }`}
-                role="alert"
-              >
-                {status.type === 'error' && <AlertCircle className="h-4 w-4 shrink-0" />}
-                {status.message}
+            <div 
+              className={`relative w-full max-w-md max-h-[85vh] overflow-y-auto rounded-2xl border shadow-2xl backdrop-blur-2xl p-6 sm:p-7`}
+              style={{
+                background: `linear-gradient(135deg, ${cardColors.from.replace('0.20', '0.35')}, ${cardColors.to.replace('0.10', '0.15')}), rgba(10, 15, 30, 0.7)`,
+                backgroundBlendMode: 'screen',
+                borderColor: cardColors.from,
+              }}
+            >
+              <div className="flex items-start justify-between gap-3 mb-6">
+                <div className="flex items-center gap-3">
+                  <div className={`flex h-10 w-10 items-center justify-center rounded-xl border ${theme.iconBg}`}>
+                    <active.icon className={`h-5 w-5 ${theme.iconText}`} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-white font-agrandir">{active.name}</h3>
+                    <p className="text-[10px] uppercase tracking-wider text-white/40">{active.tagline}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveId(null);
+                    setStatus(null);
+                  }}
+                  aria-label="Close"
+                  className="flex items-center justify-center w-9 h-9 rounded-lg text-zinc-400 hover:bg-white/5 hover:text-white transition-colors shrink-0"
+                >
+                  <X className="h-5 w-5" />
+                </button>
               </div>
-            )}
 
-            <div className="mt-6 flex flex-col-reverse sm:flex-row gap-2">
-              <button
-                onClick={() => {
-                  setActiveId(null);
-                  setStatus(null);
-                }}
-                className="flex-1 py-2.5 rounded-lg border border-white/10 text-zinc-300 hover:bg-white/5 text-sm font-medium transition-colors min-h-[44px]"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={savingId === active.id}
-                aria-busy={savingId === active.id}
-                className="flex-1 py-2.5 rounded-lg bg-gradient-to-r from-blue-600 to-cyan-500 hover:from-blue-500 hover:to-cyan-400 text-white font-semibold text-sm transition-all duration-200 shadow-lg shadow-cyan-500/10 min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
-              >
-                {savingId === active.id ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" /> Saving…
-                  </>
-                ) : (
-                  'Save Configuration'
-                )}
-              </button>
+              <p className="text-xs text-zinc-400 mb-6">{active.description}</p>
+
+              <IntegrationConfigForm
+                integration={active}
+                config={configs[active.id] ?? BLANK_CONFIG}
+                theme={theme}
+                onField={(key, value) => updateField(active.id, key, value)}
+              />
+
+              {status && (
+                <div
+                  className={`mt-5 p-3 rounded-lg flex items-center gap-2 text-xs ${theme.success}`}
+                  role="alert"
+                >
+                  {status.type === 'error' && <AlertCircle className="h-4 w-4 shrink-0" />}
+                  {status.message}
+                </div>
+              )}
+
+              <div className="flex flex-col-reverse sm:flex-row items-center justify-end gap-3 pt-4 border-t border-white/10">
+                <button
+                  onClick={() => {
+                    setActiveId(null);
+                    setStatus(null);
+                  }}
+                  className="px-5 py-2.5 rounded-lg border border-white/10 text-zinc-300 hover:bg-white/5 text-sm font-medium transition-colors min-h-[44px]"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={savingId === active.id}
+                  aria-busy={savingId === active.id}
+                  className={`px-5 py-2.5 rounded-lg bg-gradient-to-r ${theme.cta} ${theme.ctaHover} text-white font-semibold text-sm transition-all duration-200 shadow-lg min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2`}
+                >
+                  {savingId === active.id ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" /> Saving…
+                    </>
+                  ) : (
+                    'Save Configuration'
+                  )}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
@@ -441,10 +601,28 @@ export function IntegrationsManager({ targetClientId, role }: IntegrationsManage
 function IntegrationConfigForm({
   integration,
   config,
+  theme,
   onField,
 }: {
   integration: Integration;
   config: IntegrationConfigState;
+  theme: {
+    gradient: string;
+    border: string;
+    text: string;
+    panel: string;
+    iconBg: string;
+    iconText: string;
+    inputFocus: string;
+    success: string;
+    cta: string;
+    ctaHover: string;
+    dragOver: string;
+    dragBase: string;
+    statusBadge: string;
+    glassGradient: string;
+    glow: string;
+  };
   onField: (key: string, value: unknown) => void;
 }) {
   const [files, setFiles] = useState<string[]>([]);
@@ -460,7 +638,7 @@ function IntegrationConfigForm({
   switch (integration.id) {
     case 'smart-booking':
       return (
-        <div className="space-y-4">
+        <div className="space-y-5">
           <ConfigField
             icon={Link2}
             label="Calendly / Calendar Link"
@@ -479,7 +657,7 @@ function IntegrationConfigForm({
       );
     case 'crm-sync':
       return (
-        <div className="space-y-4">
+        <div className="space-y-5">
           <ConfigSelect
             label="CRM Provider"
             value={config.crmProvider as string}
@@ -505,7 +683,7 @@ function IntegrationConfigForm({
       );
     case 'vector-kb':
       return (
-        <div className="space-y-4">
+        <div className="space-y-5">
           <div
             onDragOver={(e) => {
               e.preventDefault();
@@ -519,7 +697,7 @@ function IntegrationConfigForm({
               setFiles((prev) => [...prev, ...names]);
             }}
             className={`rounded-xl border-2 border-dashed p-6 text-center transition-colors ${
-              dragOver ? 'border-cyan-400/60 bg-cyan-500/10' : 'border-white/15 bg-slate-900/40'
+              dragOver ? theme.dragOver : theme.dragBase
             }`}
           >
             <UploadCloud className="h-7 w-7 mx-auto text-cyan-400 mb-2" />
@@ -533,7 +711,7 @@ function IntegrationConfigForm({
                   key={f}
                   className="flex items-center gap-2 text-xs text-zinc-300 bg-white/5 border border-white/10 rounded-lg px-3 py-2"
                 >
-                  <Check className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                  <Check className={`h-3.5 w-3.5 shrink-0 ${theme.iconText}`} />
                   <span className="truncate">{f}</span>
                 </li>
               ))}
@@ -543,7 +721,7 @@ function IntegrationConfigForm({
       );
     case 'live-inventory':
       return (
-        <div className="space-y-4">
+        <div className="space-y-5">
           <ConfigField
             icon={Link2}
             label="Catalog / Inventory API"
@@ -562,7 +740,7 @@ function IntegrationConfigForm({
       );
     case 'whatsapp-sms':
       return (
-        <div className="space-y-4">
+        <div className="space-y-5">
           <ConfigSelect
             label="Channel"
             value={config.messagingChannel as string}
@@ -609,7 +787,7 @@ function IntegrationConfigForm({
   }) {
     return (
       <div>
-        <label className="block text-sm font-medium text-zinc-300 mb-2 font-agrandir">{label}</label>
+        <label className={`block text-sm font-medium text-zinc-300 mb-2 font-agrandir`}>{label}</label>
         <div className="flex items-center gap-2">
           {Icon && (
             <span className="text-zinc-500 shrink-0">
@@ -621,7 +799,7 @@ function IntegrationConfigForm({
             value={fieldValue ?? ''}
             placeholder={placeholder}
             onChange={(e) => onChange?.(e.target.value)}
-            className="w-full px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm"
+            className={`w-full px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 ${theme.inputFocus} outline-none transition-colors text-sm`}
           />
         </div>
         {hint && <p className="text-xs text-zinc-500 mt-1">{hint}</p>}
@@ -642,11 +820,11 @@ function IntegrationConfigForm({
   }) {
     return (
       <div>
-        <label className="block text-sm font-medium text-zinc-300 mb-2 font-agrandir">{label}</label>
+        <label className={`block text-sm font-medium text-zinc-300 mb-2 font-agrandir`}>{label}</label>
         <select
           value={value ?? ''}
           onChange={(e) => onChange?.(e.target.value)}
-          className="w-full px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 focus:border-cyan-500 outline-none transition-colors text-sm"
+          className={`w-full px-3 py-2 rounded-lg bg-slate-900 text-white border border-white/10 ${theme.inputFocus} outline-none transition-colors text-sm`}
         >
           <option value="">Select…</option>
           {options.map((opt) => (
