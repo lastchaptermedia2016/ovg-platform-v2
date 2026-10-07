@@ -178,3 +178,106 @@ export function buildActionSummary(
     'On it! Taking care of that for you right now.',
   );
 }
+
+// ──────────────────────── Public Widget Lead-Capture Parsing ────────────────
+
+/**
+ * A parsed name/phone pair extracted from a visitor message during a
+ * booking-intake conversation.
+ *
+ * Both fields are nullable: a message may contain a phone but no name, or a
+ * name but no phone. Callers should only persist a lead when BOTH are present
+ * (the dashboard groups leads by phone, so a name-only row is noise).
+ */
+export interface ParsedContact {
+  name: string | null;
+  phone: string | null;
+}
+
+/**
+ * Match a phone number block inside a message.
+ *
+ * Accepts 7-15 digits with optional leading `+`, spaces, dashes, dots, and
+ * parentheses — the common formats a visitor might type or dictate. The
+ * stored value is canonical (digits only).
+ *
+ * Deliberately does NOT anchor to start/end of string: a phone can appear
+ * mid-sentence ("Call me at 082 123 4567 if that works"). The character class
+ * is bounded to digit/separator chars only, so a name's letters can never
+ * be swallowed into the match.
+ */
+const PHONE_BLOCK_REGEX = /\+?[\d\s\-().()]{6,}\d/g;
+
+/**
+ * Heuristic name extraction. After stripping the phone, what remains is the
+ * visitor's name — typically the first 1-4 words of the message, before any
+ * sentence boundary. We keep it short and reject obvious non-name signals
+ * (bot prompts, the intake script itself, common filler).
+ */
+const NON_NAME_PATTERNS = [
+  /^i can get that scheduled/i,
+  /^what is your name/i,
+  /^my name is/i,
+  /^call me at/i,
+  /^reach me on/i,
+  /^here if you/i,
+  /^i'm here/i,
+];
+
+/**
+ * Extract a visitor name and phone number from a free-text message.
+ *
+ * Pure and side-effect free. Designed for the public widget chat pipeline,
+ * where the AI concierge asks for name + phone and the visitor replies with
+ * both in a single message (e.g. "Peter, 8897897890" or "It's Sarah —
+ * 0825551212").
+ *
+ * @returns `{ name: null, phone: null }` when no usable contact is present.
+ */
+export function parseVisitorContact(message: string): ParsedContact {
+  if (!message || typeof message !== 'string') return { name: null, phone: null };
+  const text = message.trim();
+  if (!text) return { name: null, phone: null };
+
+  // 1. Extract the first phone block (canonical digits only).
+  PHONE_BLOCK_REGEX.lastIndex = 0;
+  const phoneMatch = PHONE_BLOCK_REGEX.exec(text);
+  const rawPhone = phoneMatch ? phoneMatch[0] : null;
+  const phone = rawPhone ? rawPhone.replace(/\D/g, '') : null;
+  if (!rawPhone || !phone || phone.length < 7) return { name: null, phone: null };
+
+  // 2. Strip the RAW phone block (with its formatting) to recover the name.
+  // Stripping the canonical digits alone would leave the separators behind,
+  // so we remove the exact matched substring instead.
+  const withoutPhone = text
+    .replace(rawPhone.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), '')
+    .replace(/[\s,;:—\-]+$/g, '')
+    .trim();
+
+  let name: string | null = null;
+  if (withoutPhone) {
+    // Take the first 1-4 words as the candidate name, dropping any pure-
+    // punctuation tokens (leftover separators like an em-dash that the
+    // phone regex skipped over because it isn't a digit/separator char).
+    const words = withoutPhone
+      .split(/\s+/)
+      .filter(Boolean)
+      .filter((w) => /[A-Za-z']/.test(w));
+    const candidate = words.slice(0, 4).join(' ');
+    const cleaned = candidate.replace(/^[^A-Za-z'']+/, '').trim();
+    if (cleaned && !NON_NAME_PATTERNS.some((p) => p.test(cleaned))) {
+      name = cleaned;
+    }
+  }
+
+  return { name, phone };
+}
+
+/**
+ * True when a message looks like it is answering the booking-intake question
+ * (i.e. it carries a phone number). Used by the widget pipeline to decide
+ * whether to persist a lead row.
+ */
+export function hasContactDetails(message: string): boolean {
+  return parseVisitorContact(message).phone !== null;
+}

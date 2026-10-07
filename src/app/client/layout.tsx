@@ -181,6 +181,13 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
             >
               Persona
             </Link>
+            <Link
+              href="/client/dashboard/appointments"
+              className="text-[8.5px] md:text-[9.5px] tracking-[0.18em] uppercase font-light text-zinc-400 hover:text-cyan-400 transition-colors"
+              aria-label="View Appointment Requests"
+            >
+              Appointments
+            </Link>
           </div>
 
           {/* System Mic Button — ZEEDER PTT trigger (always visible) */}
@@ -262,6 +269,13 @@ export default function ClientLayout({ children }: { children: ReactNode }) {
                 className="flex items-center min-h-[44px] px-4 rounded-xl text-xs tracking-[0.18em] uppercase font-light text-zinc-300 hover:text-cyan-400 hover:bg-white/5 transition-colors font-agrandir"
               >
                 Persona
+              </Link>
+              <Link
+                href="/client/dashboard/appointments"
+                onClick={() => setMobileMenuOpen(false)}
+                className="flex items-center min-h-[44px] px-4 rounded-xl text-xs tracking-[0.18em] uppercase font-light text-zinc-300 hover:text-cyan-400 hover:bg-white/5 transition-colors font-agrandir"
+              >
+                Appointments
               </Link>
             </nav>
 

@@ -3,6 +3,7 @@
 import { groq } from "@/lib/ai/config";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 import { getTenantId } from "@/core/tenant/tenant";
+import { buildSystemPrompt, type KnowledgeEntry } from "@/lib/ai/system-prompt-builder";
 
 type StreamChunk =
   | { type: "text"; content: string }
@@ -12,6 +13,7 @@ type StreamChunk =
 export async function* processUserMessage(
   userMessage: string,
   tenantId: string,
+  knowledgeEntries: KnowledgeEntry[] = [],
 ): AsyncGenerator<StreamChunk> {
   try {
     // === Zero-Leak Identity First ===
@@ -24,7 +26,9 @@ export async function* processUserMessage(
     // Fetch tenant-specific config using admin client
     const { data: tenant, error } = await supabaseAdmin
       .from("tenants")
-      .select("id, tenant_id, name, system_prompt, voice_id")
+      .select(
+        "id, tenant_id, name, system_prompt, voice_id, branding_colors, preferred_voice, pricing_tier_key, show_ovg_branding, widget_config"
+      )
       .eq("tenant_id", resolvedTenantId)
       .single();
 
@@ -33,8 +37,22 @@ export async function* processUserMessage(
       return;
     }
 
-    const systemPrompt =
-      tenant.system_prompt || "You are a helpful and friendly assistant.";
+    // Build system prompt using the public surface with tenant branding
+    const systemPrompt = buildSystemPrompt(
+      {
+        name: tenant.name,
+        system_prompt: tenant.system_prompt,
+        preferred_voice: tenant.preferred_voice,
+        pricing_tier_key: tenant.pricing_tier_key,
+        show_ovg_branding: tenant.show_ovg_branding,
+        branding_colors: tenant.branding_colors,
+        widget_config: tenant.widget_config,
+      } as Parameters<typeof buildSystemPrompt>[0],
+      {},
+      {},
+      "public",
+      knowledgeEntries
+    );
 
     // === Step 1: Stream text from Groq LLM ===
     const completion = await groq.completions.create({

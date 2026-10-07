@@ -314,6 +314,52 @@ function buildClientCapabilities(): string[] {
 }
 
 /**
+ * Count unhandled inbound leads on the tenant_appointments table for the
+ * resolved tenant. Used by the appointment-lead-query intent so the agent can
+ * answer "how many new leads do I have?" deterministically without an LLM
+ * round-trip.
+ *
+ * Matches the LEAD status (the canonical "unhandled inbound capture" value
+ * per the CHECK constraint in `20261007000001_tenant_appointments_crm_statuses.sql`).
+ * Also matches 'NEW' defensively: some legacy rows or alternate capture paths
+ * may have written that value, and `.in()` is a no-op for values that do not
+ * exist in the table. Failures degrade to 0 with a warning so the pipeline
+ * never blocks on a transient DB error — the caller still gets a briefing.
+ */
+async function countNewLeads(tenantId: string | null): Promise<number> {
+  if (!tenantId) return 0;
+  try {
+    const { count, error } = await supabaseAdmin
+      .from('tenant_appointments')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId)
+      .in('status', ['LEAD', 'NEW']);
+    if (error) {
+      console.warn('[process-command] countNewLeads query error:', error.message);
+      return 0;
+    }
+    return count ?? 0;
+  } catch (err) {
+    console.warn('[process-command] countNewLeads unexpected error:', err);
+    return 0;
+  }
+}
+
+/**
+ * Build the executive briefing for an appointment-lead-count query.
+ *
+ * Speaks to the business owner as their admin assistant: a crisp status line
+ * with the exact count, no customer-facing "book an appointment" prompt, and
+ * an offer to navigate to the queue for review.
+ */
+function buildLeadCountSummary(count: number): string {
+  if (count > 0) {
+    return `You have ${count} new appointment request${count === 1 ? '' : 's'} waiting in your queue. Would you like me to take you there to review them?`;
+  }
+  return 'You have zero new appointment requests right now—your queue is completely clear.';
+}
+
+/**
  * Render the active integration tools as an injection-safe "available
  * functions" contract appended to the system prompt. The LLM is instructed to
  * emit a `functionCall` object inside its JSON response when it decides to use
@@ -377,6 +423,47 @@ function parseFunctionCall(
  */
 const CLIENT_BOOKING_INTENT_REGEX =
   /(book|booking|appointment|schedule|reschedule|reserve|slot)/i;
+
+/**
+ * Navigation intent for the Appointment Requests dashboard
+ * (/client/dashboard/appointments). Matches explicit "show me my
+ * appointments", "open my leads", "take me to appointment requests", etc.
+ *
+ * Deliberately reuses the same verb set as {@link hasNavigationIntent} but
+ * narrows the target to appointment/lead vocabulary. It MUST run BEFORE the
+ * booking-intent check: both regexes contain the word "appointment", so
+ * without this deterministic branch "open my appointments" would be captured
+ * by the booking path and routed to the LLM as a booking capture.
+ *
+ * A booking-verb guard (`book`/`schedule`/`reserve`/`reschedule`) excludes
+ * hybrid phrasings like "take me to book an appointment", letting those fall
+ * through to the booking intent instead.
+ */
+const CLIENT_APPOINTMENT_NAV_TARGET_REGEX =
+  /\b(?:appointments?|appointment\s+requests?|leads?|lead\s+requests?)\b/i;
+
+/**
+ * Data-query intent for appointment lead counts. Matches "do I have any new
+ * appointments?", "how many new leads do I have?", "any new appointment
+ * requests?". Narrow by construction: it requires BOTH a query phrase AND an
+ * appointment/lead noun, so generic chatter ("any news?") never hijacks it.
+ *
+ * The gap between the query phrase and the noun uses `.{0,40}` (any char,
+ * including word chars like "new") rather than `[^\w]{0,40}` (non-word only):
+ * "how many NEW leads" must match, and "new" is composed of word chars.
+ */
+const CLIENT_APPOINTMENT_QUERY_INTENT_REGEX =
+  /\b(?:how many|do i have|any new|are there)\b.{0,40}\b(?:appointments?|leads?|appointment\s+requests?|lead\s+requests?)\b/i;
+
+/** True when the utterance names the appointments/leads dashboard. */
+function hasAppointmentTarget(text: string): boolean {
+  return CLIENT_APPOINTMENT_NAV_TARGET_REGEX.test(text);
+}
+
+/** True when the utterance contains an explicit booking verb. */
+function hasBookingVerb(text: string): boolean {
+  return /\b(book|schedule|reserve|reschedule)\b/i.test(text);
+}
 
 /**
  * Allowed actionTypes the semantic fallback may surface. Anonymous callers are
@@ -858,6 +945,42 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
       await tryPersistCommand(data, 'SYSTEM_NAVIGATE', data.payload);
       return response;
     }
+  }
+
+  // ── Appointment Requests dashboard navigation ───────────────────────────
+  // Runs BEFORE the booking-intent check: "open my appointments" contains
+  // the word "appointment", which would otherwise be captured by the booking
+  // path and routed to the LLM as a booking capture. Deterministic here.
+  if (!isAnon && hasNavigationIntent(text.trim()) && hasAppointmentTarget(text.trim()) && !hasBookingVerb(text.trim())) {
+    const data: ClientCommandResponse = {
+      success: true,
+      actionType: 'SYSTEM_NAVIGATE',
+      targetIds: [],
+      payload: { ...payloadOverrides, tab: 'appointments', href: '/client/dashboard/appointments' },
+      summary: buildNavigationSummary('/client/dashboard/appointments'),
+    };
+    const response = NextResponse.json(data);
+    await tryPersistCommand(data, 'SYSTEM_NAVIGATE', data.payload);
+    return response;
+  }
+
+  // ── Appointment lead count query ────────────────────────────────────────
+  // "do I have any new appointments?", "how many new leads do I have?".
+  // Deterministic: queries the tenant_appointments table directly and folds
+  // the count into a conversational summary. Blocked for anonymous visitors
+  // (no session => no tenant-scoped read).
+  if (!isAnon && CLIENT_APPOINTMENT_QUERY_INTENT_REGEX.test(text.trim())) {
+    const count = await countNewLeads(tenantId);
+    const data: ClientCommandResponse = {
+      success: true,
+      actionType: 'CLIENT_NOP',
+      targetIds: [],
+      payload: { leadCount: count },
+      summary: buildLeadCountSummary(count),
+    };
+    const response = NextResponse.json(data);
+    await tryPersistCommand(data, 'CLIENT_NOP', data.payload);
+    return response;
   }
 
   // ── Booking intent → semantic fallback (structured field capture) ──
