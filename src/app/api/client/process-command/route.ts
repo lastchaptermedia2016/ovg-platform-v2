@@ -23,6 +23,7 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 import { getTenantId } from '@/core/tenant/tenant';
 import { isAnonRateLimited } from '@/lib/rate-limit/tenant-rate-limit';
 import { buildBookingCapture } from '@/lib/booking/booking-capture';
+import { upsertAppointmentLead } from '@/lib/booking/lead-dedup';
 import { z } from 'zod';
 import { zeederActionRegistry, isZeederActionId, type ZeederActionId } from '@/lib/zeeder/action-registry';
 import { CLIENT_SYSTEM_REGISTRY, type ClientSystemItem } from '@/lib/client-system-registry';
@@ -1563,16 +1564,27 @@ const completion = await groq.chat.completions.create({
       const booking = buildBookingCapture(llmParsed.payload ?? {}, text, llmParsed.summary ?? null);
       if (booking && booking.hasContact && persistCtx?.tenantId) {
         try {
-          await supabaseAdmin.from('tenant_appointments').insert({
-            tenant_id: persistCtx.tenantId,
-            client_name: booking.firstName,
-            client_phone: booking.phone,
-            status: 'LEAD',
-            start_time: new Date().toISOString(),
-            end_time: new Date().toISOString(),
-          });
+          // Dedup: update the existing active LEAD for this tenant + phone
+          // (upgrading a fallback name to the newly provided real name)
+          // instead of inserting a duplicate dashboard row.
+          if (booking.phone) {
+            await upsertAppointmentLead({
+              tenantId: persistCtx.tenantId,
+              clientName: booking.firstName,
+              clientPhone: booking.phone,
+              initialIntent: booking.notes ?? booking.treatment,
+            });
+          }
+          // Name-only (no phone): intentionally no LEAD row. A phone-less row
+          // can never match the (tenant_id, client_phone) dedup key, so every
+          // repeat message would insert another duplicate. The dashboard
+          // groups leads by phone — a name-only row is noise. The visitor's
+          // name is still retained via visitor_memories / response payload.
         } catch (err) {
-          console.error('[process-command] Booking capture insert error:', err);
+          // Non-blocking for the command response, but a silent swallow here
+          // would leave the widget's "BOOKING SECURED" banner floating with no
+          // row behind it. Log loudly so the failure is visible in production.
+          console.error('[API_CLIENT_PROCESS_COMMAND_BOOKING_CAPTURE_ERROR]:', err);
         }
         responsePayload = {
           firstName: booking.firstName,

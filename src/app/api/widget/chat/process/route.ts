@@ -51,6 +51,58 @@ function sanitizeOngoingResponse(responseText: string, messageCount: number): st
   return responseText;
 }
 
+/**
+ * Booking-intent detection for the public widget surface.
+ *
+ * The widget client (ChatWidget.tsx) keys off `data.actionType ===
+ * 'SYSTEM_BOOKING_CAPTURE'` to show the booking intake UI and persist the
+ * lead. This runs BEFORE the Groq/LLM call in POST() — if it fires, the
+ * endpoint returns the deterministic intake script immediately and never
+ * touches the model. That avoids the failure mode where the LLM returns raw
+ * conversational analysis (e.g. "User wants to book an appointment. Must use
+ * booking intake script.") instead of the structured action, which triggers
+ * output_parse_failed / 500 errors and silently drops the capture.
+ *
+ * Intentionally conservative (only high-confidence phrases) to avoid false
+ * positives on casual mentions like "I booked a flight last week".
+ */
+const BOOKING_INTENT_PATTERNS = [
+  /\b(book|schedule|set up|arrange|make)\s+(an?\s+)?(appointment|booking|call|consultation|consult|demo|meeting)\b/i,
+  /\b(want|would like|need|like)\s+(to\s+)?(book|schedule|speak|talk|consult|meet)\b/i,
+  /\b(can we|could we|let'?s)\s+(schedule|book|set up|arrange)\b/i,
+  /\b(appointment|booking|consultation|demo)\s+(request|booking|inquiry|intent)\b/i,
+];
+
+function detectBookingIntent(message: string): boolean {
+  return BOOKING_INTENT_PATTERNS.some((re) => re.test(message));
+}
+
+/**
+ * Build the deterministic booking-capture response payload for the public
+ * widget surface. Mirrors the shape the widget client expects (see
+ * ChatWidget.tsx "Jill capture" branch) so the UI renders the intake prompt
+ * and persists the lead even when the LLM returns unstructured text.
+ */
+function buildBookingCaptureResponse(): {
+  actionType: string;
+  summary: string;
+  payload: Record<string, null>;
+} {
+  return {
+    actionType: 'SYSTEM_BOOKING_CAPTURE',
+    summary:
+      'I can get that scheduled for you right away! What is your name and the best phone number to reach you on, and I\'ll have our team lock in your slot immediately.',
+    payload: {
+      firstName: null,
+      phone: null,
+      treatment: null,
+      preferredDate: null,
+      preferredTime: null,
+      notes: null,
+    },
+  };
+}
+
 export async function POST(request: NextRequest) {
   try {
     const apiKey = process.env.GROQ_API_KEY;
@@ -184,6 +236,29 @@ export async function POST(request: NextRequest) {
       // Non-blocking: message logging failure doesn't block AI response
     }
 
+    // ── Early Booking-Intent Detection (BEFORE the LLM call) ──────────
+    // The widget client keys off `actionType === 'SYSTEM_BOOKING_CAPTURE'`
+    // to show the booking intake UI and persist the lead. If we wait until
+    // after the LLM call, the model frequently returns raw conversational
+    // analysis (e.g. "User wants to book an appointment. Must use booking
+    // intake script.") instead of the structured action — which triggers
+    // output_parse_failed / 500 errors and silently drops the capture.
+    //
+    // Detecting intent deterministically on the visitor's input BEFORE
+    // spending a Groq call makes booking capture reliable and cheap: the
+    // intake script is returned immediately, with no model involvement.
+    // Non-booking messages still flow through the LLM below.
+    if (detectBookingIntent(userMessage.trim())) {
+      const bookingResponse = buildBookingCaptureResponse();
+      return NextResponse.json({
+        success: true,
+        response: bookingResponse.summary,
+        summary: bookingResponse.summary,
+        actionType: bookingResponse.actionType,
+        payload: bookingResponse.payload,
+      });
+    }
+
     // ── AI Completion (Groq) ───────────────────────────────────────────
     // Non-streaming completion using the PUBLIC system prompt.
     // Conversation history is included so the model maintains context across
@@ -238,6 +313,7 @@ export async function POST(request: NextRequest) {
       response: aiResponse.trim(),
       summary: aiResponse.trim(),
       actionType: 'CLIENT_NOP',
+      payload: {},
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Internal server error';

@@ -42,6 +42,11 @@ interface AppointmentRow {
   start_time: string;
   end_time: string;
   created_at: string | null;
+  // Lead-capture columns. The public widget chat pipeline writes an anonymous
+  // visitor's name/phone directly into the canonical client_name/client_phone
+  // columns during a booking-intent conversation, so the CRM dashboard renders
+  // the row immediately. initial_intent records the visitor's stated purpose.
+  initial_intent: string | null;
 }
 
 interface AppointmentsDashboardProps {
@@ -385,12 +390,12 @@ export function AppointmentsDashboard({ tenantId, accessToken }: AppointmentsDas
                     </div>
 
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-zinc-500 font-agrandir">
-                      {appt.client_phone && (
+                      {appt.client_phone ? (
                         <span className="flex items-center gap-1">
                           <Phone className="h-2.5 w-2.5" aria-hidden />
                           {appt.client_phone}
                         </span>
-                      )}
+                      ) : null}
                       <span className="flex items-center gap-1">
                         <Calendar className="h-2.5 w-2.5" aria-hidden />
                         {date}
@@ -423,20 +428,23 @@ export function AppointmentsDashboard({ tenantId, accessToken }: AppointmentsDas
                       />
                     )}
 
-                    {/* View in Chat — links to dashboard with conversation context */}
-                    <ActionButton
-                      onClick={() => {
-                        // Deep-link to the Live Chat Inbox on the main dashboard.
-                        // The inbox auto-selects conversations; we pass the phone
-                        // as a query hint so the dashboard can pre-filter if desired.
-                        const params = new URLSearchParams();
-                        if (appt.client_phone) params.set('visitorPhone', appt.client_phone);
-                        const qs = params.toString();
-                        router.push(`/client/dashboard${qs ? `?${qs}` : ''}#live-chat`);
-                      }}
-                      icon={<MessageSquare className="h-3 w-3" aria-hidden />}
-                      label="View in chat"
-                    />
+{/* View in Chat — links to dashboard with conversation context */}
+                      <ActionButton
+                        onClick={() => {
+                          // Deep-link to the Live Chat Inbox on the main dashboard.
+                          // The inbox auto-selects conversations; we pass the phone
+                          // as a query hint so the dashboard can pre-filter if desired.
+                          // Resolve across both lead-capture (visitor_*) and legacy
+                          // slot-booking (client_*) columns.
+                          const phone = appt.client_phone;
+                          const params = new URLSearchParams();
+                          if (phone) params.set('clientPhone', phone);
+                          const qs = params.toString();
+                          router.push(`/client/dashboard${qs ? `?${qs}` : ''}#live-chat`);
+                        }}
+                        icon={<MessageSquare className="h-3 w-3" aria-hidden />}
+                        label="View in chat"
+                      />
 
                     {/* Archive */}
                     {status !== 'ARCHIVED' && (
@@ -467,13 +475,17 @@ export function AppointmentsDashboard({ tenantId, accessToken }: AppointmentsDas
 
                 {/* Expanded detail row ─────────────────────────────── */}
                 {isExpanded && (
-                  <div className="border-t border-white/5 px-4 py-3 sm:px-5 sm:pb-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="border-t border-white/5 px-4 py-3 sm:px-5 sm:pb-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <DetailCell label="Appointment ID" value={appt.id.slice(0, 8) + '…'} />
                     <DetailCell label="Captured" value={`${date} · ${time}`} />
                     <DetailCell label="Status" value={appt.status ?? 'LEAD'} />
                     <DetailCell
                       label="Tenant"
                       value={appt.tenant_id ? appt.tenant_id.slice(0, 8) + '…' : '—'}
+                    />
+                    <DetailCell
+                      label="Visitor intent"
+                      value={appt.initial_intent?.trim() || '—'}
                     />
                   </div>
                 )}

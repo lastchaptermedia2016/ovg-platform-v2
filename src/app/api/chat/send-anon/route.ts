@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/supabase/admin';
 import { getTenantBySlug } from '@/core/tenant/db';
 import { NextResponse } from 'next/server';
 import { parseVisitorContact, hasContactDetails } from '@/lib/ai/conversational-voice';
+import { upsertAppointmentLead } from '@/lib/booking/lead-dedup';
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
@@ -78,22 +79,36 @@ export async function POST(request: Request) {
           message.trim(),
         );
         try {
-          await supabaseAdmin.from('tenant_appointments').insert({
-            tenant_id: tenant.id,
-            visitor_name: parsed.name,
-            visitor_phone: parsed.phone,
-            status: 'LEAD',
-            initial_intent: initialIntent,
-            start_time: new Date().toISOString(),
-            end_time: new Date().toISOString(),
+          // Dedup: update the existing active LEAD for this tenant + phone
+          // instead of inserting a duplicate row.
+          const { lead: upserted } = await upsertAppointmentLead({
+            tenantId: tenant.id,
+            clientName: parsed.name,
+            clientPhone: parsed.phone,
+            initialIntent,
           });
-        } catch {
-          // Non-blocking: lead capture failure doesn't block the response
+
+          return NextResponse.json({
+            success: true,
+            lead: upserted ?? null,
+          }, { status: 200 });
+        } catch (err) {
+          console.error('[API_CHAT_SEND_ANON_LEAD_CAPTURE_UNEXPECTED]:', err);
+          return NextResponse.json(
+            {
+              error: 'Lead capture failed',
+              detail: err instanceof Error ? err.message : JSON.stringify(err),
+            },
+            { status: 500 },
+          );
         }
       }
     }
 
-    return NextResponse.json({ success: true }, { status: 200 });
+    // No contact details in this message — nothing to persist, but the chat
+    // message itself was stored above. Signal success so the widget can
+    // optimistically render the user's message.
+    return NextResponse.json({ success: true, lead: null }, { status: 200 });
   } catch (error) {
     const raw = error instanceof Error ? error.message : JSON.stringify(error);
     const details = (error as { details?: string })?.details;

@@ -15,7 +15,27 @@ describe('parseVisitorContact', () => {
 
   it('parses "It is Sarah — 0825551212" with an em-dash separator', () => {
     const result = parseVisitorContact('It is Sarah — 0825551212');
-    expect(result.name).toBe('It is Sarah');
+    // "It is" is a conversational wrapper — collapse to the bare name so the
+    // lead's client_name is "Sarah", not "It is Sarah".
+    expect(result.name).toBe('Sarah');
+    expect(result.phone).toBe('0825551212');
+  });
+
+  it('collapses "My name is Jill" to the bare name', () => {
+    const result = parseVisitorContact('My name is Jill — 0825551212');
+    expect(result.name).toBe('Jill');
+    expect(result.phone).toBe('0825551212');
+  });
+
+  it('collapses "I\'m Carlos" to the bare name', () => {
+    const result = parseVisitorContact("I'm Carlos, 0825551212");
+    expect(result.name).toBe('Carlos');
+    expect(result.phone).toBe('0825551212');
+  });
+
+  it('collapses "Call me at Priya" to the bare name', () => {
+    const result = parseVisitorContact('Call me at Priya — 0825551212');
+    expect(result.name).toBe('Priya');
     expect(result.phone).toBe('0825551212');
   });
 
