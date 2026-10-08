@@ -744,17 +744,15 @@ const ChatWidget = ({
         /* non-blocking best-effort sync */
       });
 
-      console.log("💬 [ChatWidget] Routing client chat payload to client-isolated orchestration endpoint");
-      const response = await fetch("/api/client/process-command", {
+      console.log("💬 [ChatWidget] Routing public widget chat to public surface endpoint");
+      const response = await fetch("/api/widget/chat/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text: userInputText,
           tenantId,
           conversationId,
-          context: {
-            surface: "chat-widget-embed",
-          },
+          messages, // conversation history for turn-aware sanitization
         }),
       });
 

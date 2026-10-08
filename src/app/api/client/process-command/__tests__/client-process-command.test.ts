@@ -4,7 +4,7 @@
 // Auth is mocked via getAuthenticatedUser; the registry + intent parser are
 // exercised with real code so the surface-isolation contract is verified.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { POST, OPTIONS } from '../route';
 import { supabaseAdmin } from '@/lib/supabase/admin';
@@ -731,6 +731,157 @@ describe('POST /api/client/process-command - Studio viewport navigation', () => 
   });
 });
 
+describe('POST /api/client/process-command - Appointment Requests Dashboard', () => {
+  let savedFrom: unknown;
+
+  beforeEach(() => {
+    mockAuth.mockResolvedValue({
+      user: null,
+      userId: 'client-user',
+      email: 'client@example.com',
+      error: null,
+    });
+    // Capture the default from mock before any test overrides it, so
+    // afterEach can restore it and prevent leaks into later suites.
+    savedFrom = vi.mocked(supabaseAdmin).from;
+  });
+
+  afterEach(() => {
+    // `from` is a vi.fn mock whose TS type is a complex MockInstance union;
+    // we round-trip it through `unknown` to avoid a type-annotation fight.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    vi.mocked(supabaseAdmin).from = savedFrom as any;
+  });
+
+  const NAV_VARIANTS: Array<[string, string]> = [
+    ['take me to my appointments', 'appointments'],
+    ['open appointments', 'appointments'],
+    ['show my leads', 'appointments'],
+    ['go to my appointment requests', 'appointments'],
+    ['jump to my leads', 'appointments'],
+    ['where is my appointments', 'appointments'],
+  ];
+
+  it('routes each appointment-nav utterance to the appointments dashboard deterministically', async () => {
+    for (const [text, tab] of NAV_VARIANTS) {
+      const res = await post(text);
+      const body = await res.json();
+
+      expect(res.status, text).toBe(200);
+      expect(body.actionType, text).toBe('SYSTEM_NAVIGATE');
+      expect(body.payload.tab, text).toBe(tab);
+      expect(body.payload.href, text).toBe('/client/dashboard/appointments');
+      // Conversational confirmation, never a raw path or ellipsis.
+      expect(body.summary, text).not.toMatch(/\/client\//);
+      expect(body.summary, text).not.toMatch(/\.{2,}/);
+    }
+  });
+
+  it('does NOT hijack "take me to book an appointment" — the booking verb routes it to booking intent', async () => {
+    cannedGroqResponse = { actionType: 'CLIENT_NOP', summary: 'Sure, let me help you book that.' };
+
+    const res = await post('take me to book an appointment');
+    const body = await res.json();
+
+    expect(body.actionType).not.toBe('SYSTEM_NAVIGATE');
+    expect(body.payload.tab).toBeUndefined();
+    expect(body.payload.href).toBeUndefined();
+  });
+
+  it('answers lead-count queries deterministically without an LLM round-trip', async () => {
+    // Override the admin client so the LEAD-count query returns a known value.
+    // The count query destructures `{ count, error }` off the awaited chain,
+    // which is distinct from the `{ data, error }` shape used elsewhere.
+    const leadChain = createMockChain();
+    leadChain.then = (onFulfilled: (v: { count: number; error: null }) => unknown) =>
+      Promise.resolve({ count: 3, error: null }).then(onFulfilled);
+    vi.mocked(supabaseAdmin).from = vi.fn().mockReturnValue(leadChain);
+
+    const res = await post('how many new leads do I have?');
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.actionType).toBe('CLIENT_NOP');
+    expect(body.payload.leadCount).toBe(3);
+    // Executive admin briefing: exact count, queue framing, no "book an appointment" prompt.
+    expect(body.summary).toMatch(/3 new appointment requests/);
+    expect(body.summary).toMatch(/waiting in your queue/);
+    expect(body.summary).toMatch(/take you there to review them/);
+    expect(body.summary).not.toMatch(/book an appointment/i);
+  });
+
+  it('answers "do I have any new appointments?" with the same deterministic path', async () => {
+    const leadChain = createMockChain();
+    leadChain.then = (onFulfilled: (v: { count: number; error: null }) => unknown) =>
+      Promise.resolve({ count: 1, error: null }).then(onFulfilled);
+    vi.mocked(supabaseAdmin).from = vi.fn().mockReturnValue(leadChain);
+
+    const res = await post('do I have any new appointments?');
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.payload.leadCount).toBe(1);
+    // Singular form: "1 new appointment request" (no trailing s).
+    expect(body.summary).toMatch(/1 new appointment request\b/);
+    expect(body.summary).not.toMatch(/1 new appointment requests/);
+  });
+
+  it('reports a clear queue with zero leads (no customer-facing booking prompt)', async () => {
+    const leadChain = createMockChain();
+    leadChain.then = (onFulfilled: (v: { count: number; error: null }) => unknown) =>
+      Promise.resolve({ count: 0, error: null }).then(onFulfilled);
+    vi.mocked(supabaseAdmin).from = vi.fn().mockReturnValue(leadChain);
+
+    const res = await post('how many new appointment requests do I have?');
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.payload.leadCount).toBe(0);
+    // Executive briefing: "zero new appointment requests right now—your queue is completely clear."
+    expect(body.summary).toMatch(/zero new appointment requests/);
+    expect(body.summary).toMatch(/queue is completely clear/);
+    expect(body.summary).not.toMatch(/book an appointment/i);
+  });
+
+  it('degrades to 0 leads when the count query errors (non-blocking)', async () => {
+    const leadChain = createMockChain();
+    leadChain.then = (onFulfilled: (v: { count: null; error: Error }) => unknown) =>
+      Promise.resolve({ count: null, error: new Error('connection refused') }).then(onFulfilled);
+    vi.mocked(supabaseAdmin).from = vi.fn().mockReturnValue(leadChain);
+
+    const res = await post('how many new leads do I have?');
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.payload.leadCount).toBe(0);
+  });
+
+  it('blocks appointment queries for anonymous visitors (no session)', async () => {
+    mockAuth.mockResolvedValue({
+      user: null,
+      userId: null,
+      email: null,
+      error: new Error('Unauthorized'),
+    });
+
+    const res = await post('how many new leads do I have?', { tenantId: 'public-tenant-key' });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    // Must NOT expose a leadCount to an anonymous caller.
+    expect(body.payload.leadCount).toBeUndefined();
+  });
+
+  it('does not match generic chatter as an appointment query', async () => {
+    cannedGroqResponse = { actionType: 'CLIENT_NOP', summary: 'Sure, how can I help?' };
+
+    const res = await post('how are you doing?');
+    const body = await res.json();
+
+    expect(body.payload.leadCount).toBeUndefined();
+  });
+});
+
 describe('POST /api/client/process-command - Sandbox Test Mode (Studio Preview)', () => {
   beforeEach(() => {
     mockAuth.mockResolvedValue({
@@ -1090,10 +1241,55 @@ describe('POST /api/client/process-command - System Prompt Hydration', () => {
 
     expect(prompt).toMatch(/Demo Business/);
     expect(prompt).toMatch(/warm, friendly, and natural/);
-    expect(prompt).toMatch(/Never identify as ZEEDER/);
+    expect(prompt).toMatch(/NEVER say "I'm Zeeder's AI assistant"/);
     expect(prompt).toMatch(/You represent "Demo Business"/);
     expect(prompt).toMatch(/BEHAVIORAL BOUNDARIES/);
     expect(prompt).toMatch(/studio|dashboard|portal|branding studio|telemetry signals/);
+  });
+
+  it('buildSystemPrompt should embed the booking intake directive on the public surface', () => {
+    const prompt = buildSystemPrompt(
+      {
+        name: 'Demo Business',
+        branding_colors: { primary: '#111111', secondary: '#222222' },
+        preferred_voice: 'hannah',
+        pricing_tier_key: 'pro',
+        show_ovg_branding: true,
+      },
+      {},
+      {},
+      'public',
+    );
+
+    // The directive block is present.
+    expect(prompt).toMatch(/BOOKING INTAKE DIRECTIVE/);
+
+    // The exact intake script is mandated verbatim.
+    expect(prompt).toMatch(
+      /I can get that scheduled for you right away! What is your name and the best phone number to reach you on, and I'll have our team lock in your slot immediately\./,
+    );
+
+    // The directive explicitly forbids the anti-patterns (they appear inside
+    // the DO NOT list, so we assert their presence as forbidden instructions
+    // rather than asserting their absence from the prompt).
+    expect(prompt).toMatch(/DO NOT offer external calendar links/i);
+    expect(prompt).toMatch(/DO NOT present multiple-choice questions/i);
+    expect(prompt).toMatch(/DO NOT ask for a preferred date\/time before collecting/i);
+
+    // The directive must NOT leak into the client-surface prompt.
+    const clientPrompt = buildSystemPrompt(
+      {
+        name: 'Demo Business',
+        branding_colors: { primary: '#111111', secondary: '#222222' },
+        preferred_voice: 'hannah',
+        pricing_tier_key: 'pro',
+        show_ovg_branding: true,
+      },
+      {},
+      {},
+      'client',
+    );
+    expect(clientPrompt).not.toMatch(/BOOKING INTAKE DIRECTIVE/);
   });
 
   it('should inject tenant knowledge entries into the system prompt catalog section', async () => {

@@ -46,14 +46,14 @@ function buildMemories(data: { memory_key: string; memory_value: string }[] | nu
 }
 
 export async function POST(request: NextRequest) {
-  let body: { phone?: string; email?: string; tenantId?: string };
+  let body: { phone?: string; email?: string; tenantId?: string; visitorName?: string; initialIntent?: string };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { phone, email, tenantId } = body;
+  const { phone, email, tenantId, visitorName, initialIntent } = body;
 
   if (!tenantId || typeof tenantId !== 'string' || !isUuid(tenantId)) {
     return NextResponse.json({ error: 'Invalid tenantId' }, { status: 400 });
@@ -70,6 +70,44 @@ export async function POST(request: NextRequest) {
     const tenant = await resolveTenant(tenantId);
     if (!tenant) {
       return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+    }
+
+    // ── CRM Lead Capture ───────────────────────────────────────────────
+    // Every time a visitor's contact details are submitted through this
+    // endpoint, persist a LEAD row into tenant_appointments so the CRM
+    // dashboard (AppointmentsDashboard) picks it up immediately. The
+    // visitor_name prefers the stored client_name memory when available,
+    // falling back to the explicit body field, then to a generic label.
+    // Non-blocking: a DB failure never interrupts the memory read response.
+    if (normPhone) {
+      const identityValue = normPhone;
+      const { data: nameRow } = await supabaseAdmin
+        .from('visitor_memories')
+        .select('memory_value')
+        .eq('tenant_id', tenant.id)
+        .eq('identity_type', 'phone')
+        .eq('identity_value', identityValue)
+        .eq('memory_key', 'client_name')
+        .maybeSingle();
+
+      const resolvedName =
+        (nameRow?.memory_value as string | undefined)?.trim() ||
+        visitorName?.trim() ||
+        'Anonymous Visitor';
+
+      try {
+        await supabaseAdmin.from('tenant_appointments').insert({
+          tenant_id: tenant.id,
+          visitor_name: resolvedName,
+          visitor_phone: normPhone,
+          status: 'LEAD',
+          initial_intent: initialIntent?.trim() || 'Public widget inquiry',
+          start_time: new Date().toISOString(),
+          end_time: new Date().toISOString(),
+        });
+      } catch {
+        // Non-blocking: lead capture failure doesn't block the response
+      }
     }
 
     const identityType = normPhone ? 'phone' : 'email';
