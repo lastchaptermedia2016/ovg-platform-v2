@@ -28,8 +28,11 @@ function createMockChain(): Record<string, unknown> {
   }
   chain.maybeSingle = vi.fn().mockResolvedValue({ data: null, error: null });
   chain.single = vi.fn().mockResolvedValue({ data: null, error: null });
-  chain.insert = vi.fn().mockResolvedValue({ data: null, error: null });
-  chain.update = vi.fn().mockResolvedValue({ data: null, error: null });
+  // Chainable terminals: lead-dedup calls `.insert(...).select(...).maybeSingle()`
+  // and `.update(...).eq(...).select(...).maybeSingle()`, so insert/update must
+  // return the chain rather than a resolved value.
+  chain.insert = vi.fn().mockImplementation(() => chain);
+  chain.update = vi.fn().mockImplementation(() => chain);
   chain.then = (onFulfilled: (value: { data: unknown[]; error: null }) => unknown) =>
     Promise.resolve({ data: [], error: null }).then(onFulfilled);
   return chain;

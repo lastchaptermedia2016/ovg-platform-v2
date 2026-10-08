@@ -173,6 +173,16 @@ const ChatWidget = ({
   const lastSubmitRef = useRef<{ text: string; time: number } | null>(null);
   const optimisticIdsRef = useRef<Set<string>>(new Set());
   const fetchedRef = useRef(false);
+  // ── Visitor lead-sync guard ──────────────────────────────────────────
+  // The anonymous recognition effect below POSTs to /api/client/visitor-memories
+  // (which upserts a tenant_appointments LEAD) every time `messages` changes.
+  // Without a guard, a single contact message triggers one POST per render
+  // (optimistic set + capture response + AI reply), and a rapid name→phone
+  // follow-up races the in-flight send-anon upsert. Track the last synced
+  // phone per tenant so redundant background POSTs for the same contact are
+  // skipped; the authoritative send-anon capture still runs on every send.
+  // Never call setState synchronously in an effect body — refs only here.
+  const syncedVisitorContactRef = useRef<{ tenantId: string; contact: string } | null>(null);
 
   // ── Cognitive Memory (relational recognition) state ─────────────
   // Fetched from the client-safe /api/client/memories endpoint so the widget
@@ -736,13 +746,30 @@ const ChatWidget = ({
 
       localStorage.setItem(chatHistoryKey, JSON.stringify(newMsgs));
 
-      void fetch('/api/chat/send-anon', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tenantId, message: userInputText, conversationId }),
-      }).catch(() => {
-        /* non-blocking best-effort sync */
-      });
+      // ── Lead persistence (awaited, not fire-and-forget) ─────────────────
+      // The widget previously fired /api/chat/send-anon with `.catch(() => {})`
+      // and then showed the "VIP BOOKING SECURED" banner purely on the LLM's
+      // `payload` field — so the banner appeared even when no row was ever
+      // written. Now we await the capture response and only surface the
+      // success state when the server returns a verified lead record id.
+      let capturedLead: { id?: string; client_name?: string | null; client_phone?: string | null } | null = null;
+      try {
+        const captureRes = await fetch('/api/chat/send-anon', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tenantId, message: userInputText, conversationId }),
+        });
+        if (captureRes.ok) {
+          const captureData = await captureRes.json();
+          if (captureData?.success && captureData?.lead?.id) {
+            capturedLead = captureData.lead;
+          }
+        } else {
+          console.warn('[ChatWidget] Lead capture rejected:', captureRes.status);
+        }
+      } catch (captureErr) {
+        console.error('[ChatWidget] Lead capture request failed:', captureErr);
+      }
 
       console.log("💬 [ChatWidget] Routing public widget chat to public surface endpoint");
       const response = await fetch("/api/widget/chat/process", {
@@ -789,8 +816,12 @@ const ChatWidget = ({
         void playTts(aiText);
       }
 
-      if (data.payload && typeof data.payload === "object" && !isBrandingTheme) {
-        console.log("📦 [Jill Capture] Booking payload:", data.payload);
+      // ── Sync badge: only when a verified lead record exists ─────────────
+      // The banner is now gated on the server-returned lead id, never on the
+      // LLM's payload field. If capture failed or returned no lead, the badge
+      // stays hidden so the UI never advertises a booking that isn't real.
+      if (capturedLead?.id) {
+        console.log("📦 [Jill Capture] Verified booking payload:", capturedLead);
         setShowSyncBadge(true);
         setTimeout(() => setShowSyncBadge(false), 4500);
       }
@@ -970,6 +1001,15 @@ const ChatWidget = ({
         const phoneMatch = latestUserMsg.text.match(/\+?\d[\d ()-]{6,19}\d/);
         const emailMatch = latestUserMsg.text.match(/[^\s]+@[^\s]+\.[^\s]+/);
         if (!phoneMatch && !emailMatch) return;
+
+        // Skip redundant background syncs for an already-synced contact. The
+        // effect re-runs on every `messages` change, but re-POSTing the same
+        // phone only races the authoritative send-anon upsert. A new phone or
+        // tenant always syncs.
+        const contactKey = `${phoneMatch ? phoneMatch[0].replace(/\D/g, '') : ''}|${emailMatch ? emailMatch[0].trim().toLowerCase() : ''}`;
+        const lastSynced = syncedVisitorContactRef.current;
+        if (lastSynced && lastSynced.tenantId === tenantId && lastSynced.contact === contactKey) return;
+        syncedVisitorContactRef.current = { tenantId, contact: contactKey };
 
         const visitorRes = await fetch("/api/client/visitor-memories", {
           method: "POST",

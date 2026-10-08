@@ -7,7 +7,7 @@ let capturedInserts: Record<string, unknown>[] = [];
 
 function createMockChain() {
   const chain: Record<string, unknown> = {};
-  for (const m of ['from', 'select', 'eq', 'order', 'limit', 'maybeSingle']) {
+  for (const m of ['from', 'select', 'eq', 'in', 'order', 'limit', 'maybeSingle', 'update']) {
     chain[m] = vi.fn().mockImplementation(() => chain);
   }
   chain.insert = vi.fn().mockImplementation((payload: Record<string, unknown>) => {
@@ -59,8 +59,8 @@ describe('POST /api/chat/send-anon - Lead Capture', () => {
       (p) => p.tenant_id === 'tenant-internal' && p.status === 'LEAD',
     );
     expect(leadInsert).toBeTruthy();
-    expect(leadInsert?.visitor_name).toBe('Peter');
-    expect(leadInsert?.visitor_phone).toBe('8897897890');
+    expect(leadInsert?.client_name).toBe('Peter');
+    expect(leadInsert?.client_phone).toBe('8897897890');
     expect(leadInsert?.initial_intent).toBeTruthy();
   });
 

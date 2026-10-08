@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase/admin';
 import { NextRequest, NextResponse } from 'next/server';
 import { normalizeVisitorPhone, normalizeVisitorEmail } from '@/lib/ai/memory-service';
+import { upsertAppointmentLead } from '@/lib/booking/lead-dedup';
 
 const MEMORY_FALLBACK = {
   client_name: 'Unknown',
@@ -76,8 +77,10 @@ export async function POST(request: NextRequest) {
     // Every time a visitor's contact details are submitted through this
     // endpoint, persist a LEAD row into tenant_appointments so the CRM
     // dashboard (AppointmentsDashboard) picks it up immediately. The
-    // visitor_name prefers the stored client_name memory when available,
-    // falling back to the explicit body field, then to a generic label.
+    // client_name prefers the stored client_name memory when available,
+    // falling back to the explicit body field, then to a phone-derived label
+    // (e.g. "Visitor 5551212") so the dashboard row stays identifiable without
+    // a fake human name.
     // Non-blocking: a DB failure never interrupts the memory read response.
     if (normPhone) {
       const identityValue = normPhone;
@@ -93,20 +96,25 @@ export async function POST(request: NextRequest) {
       const resolvedName =
         (nameRow?.memory_value as string | undefined)?.trim() ||
         visitorName?.trim() ||
-        'Anonymous Visitor';
+        `Visitor ${normPhone.slice(-7)}`;
 
       try {
-        await supabaseAdmin.from('tenant_appointments').insert({
-          tenant_id: tenant.id,
-          visitor_name: resolvedName,
-          visitor_phone: normPhone,
-          status: 'LEAD',
-          initial_intent: initialIntent?.trim() || 'Public widget inquiry',
-          start_time: new Date().toISOString(),
-          end_time: new Date().toISOString(),
+        // Dedup: a repeat POST for the same phone updates the existing
+        // active LEAD (e.g. upgrading a `Visitor 123` fallback to a real
+        // name) instead of inserting a duplicate dashboard row.
+        await upsertAppointmentLead({
+          tenantId: tenant.id,
+          clientName: resolvedName,
+          clientPhone: normPhone,
+          initialIntent: initialIntent?.trim() || 'Public widget inquiry',
         });
-      } catch {
-        // Non-blocking: lead capture failure doesn't block the response
+      } catch (err) {
+        // Non-blocking for the memory read itself, but log loudly: a silent
+        // swallow here would leave the widget's "BOOKING SECURED" banner
+        // floating with no row behind it. Note the helper already converges
+        // 23505 race losers onto the winning row via re-query + upgrade, so
+        // a throw here is a genuine DB failure, not a lost race.
+        console.error('[API_CLIENT_VISITOR_MEMORIES_LEAD_CAPTURE_ERROR]:', err);
       }
     }
 

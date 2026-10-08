@@ -225,6 +225,33 @@ const NON_NAME_PATTERNS = [
 ];
 
 /**
+ * Structured name patterns — tried BEFORE the first-words heuristic so that
+ * conversational wrappers ("My name is Sarah", "I'm Jill", "this is Carlos")
+ * collapse to the bare name instead of being stored verbatim as the lead's
+ * client_name. Kept in sync with the patterns in booking-capture.ts; both
+ * modules are leaf modules with no shared server dependency, so the regexes
+ * are duplicated on purpose to keep each self-contained.
+ */
+const NAME_PATTERNS = [
+  /\b(?:i(?:'m| am)|my name is|this is|it is|name['’]?s)\s+([A-Z][a-z]{1,40})/i,
+  /\b(?:call me|reach me|contact me|find me)\s+at\s+([A-Z][a-z]{1,40})/i,
+  /\b(?:call me|reach me|contact me|find me)\s+([A-Z][a-z]{1,40})(?![\s\d])/i,
+  /\bit'?s\s+([A-Z][a-z]{1,40})\b/i,
+  /\b(?:i go by|i go by the name of|you can call me)\s+([A-Z][a-z]{1,40})/i,
+];
+
+function extractStructuredName(text: string): string | null {
+  for (const re of NAME_PATTERNS) {
+    const m = text.match(re);
+    if (m && m[1]) {
+      const name = m[1].trim().slice(0, 120);
+      if (name && !NON_NAME_PATTERNS.some((p) => p.test(name))) return name;
+    }
+  }
+  return null;
+}
+
+/**
  * Extract a visitor name and phone number from a free-text message.
  *
  * Pure and side-effect free. Designed for the public widget chat pipeline,
@@ -255,7 +282,10 @@ export function parseVisitorContact(message: string): ParsedContact {
     .trim();
 
   let name: string | null = null;
-  if (withoutPhone) {
+  // Prefer structured patterns ("My name is Sarah", "I'm Jill") over the
+  // first-words heuristic so conversational wrappers don't leak into client_name.
+  name = extractStructuredName(text);
+  if (!name && withoutPhone) {
     // Take the first 1-4 words as the candidate name, dropping any pure-
     // punctuation tokens (leftover separators like an em-dash that the
     // phone regex skipped over because it isn't a digit/separator char).
