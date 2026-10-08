@@ -21,4 +21,4 @@ COMMENT ON COLUMN tenant_appointments.visitor_phone IS
   'E.164-ish visitor phone captured during a booking-intake conversation; NULL for slot-booking rows.';
 
 COMMENT ON COLUMN tenant_appointments.initial_intent IS
-  'Verbatim copy of the visitor\'s original booking request (e.g. "book a massage on Friday").';
+  'Verbatim copy of the visitor''s original booking request (e.g. "book a massage on Friday").';
