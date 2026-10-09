@@ -9,6 +9,20 @@
 
 @font-face {
   font-family: 'AgrandirGrand';
+  src: url('/fonts/Agrandir - Free For Personal Use/Agrandir-Regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'AgrandirGrand';
+  src: url('/fonts/Agrandir - Free For Personal Use/Agrandir-TextBold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'AgrandirGrand';
   src: url('/fonts/Agrandir - Free For Personal Use/Agrandir-GrandHeavy.otf') format('opentype');
   font-weight: 900;
   font-style: normal;

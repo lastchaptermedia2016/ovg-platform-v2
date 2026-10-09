@@ -67,10 +67,10 @@ export function AppointmentDeleteDialog({
             <Trash2 className="h-5 w-5 text-red-400" aria-hidden />
           </div>
           <div className="min-w-0">
-            <h2 id="appointment-delete-title" className="text-base font-semibold text-white font-agrandir">
+            <h2 id="appointment-delete-title" className="text-base font-semibold tracking-normal text-white font-agrandir">
               Delete “{title}”?
             </h2>
-            <p id="appointment-delete-desc" className="mt-1 text-sm text-white/60 font-agrandir">
+            <p id="appointment-delete-desc" className="mt-1 text-sm leading-relaxed tracking-normal text-white/60 font-agrandir">
               This permanently removes the lead from your dashboard. It cannot be undone — if you
               only want to dismiss it, use Archive instead.
             </p>
@@ -82,7 +82,7 @@ export function AppointmentDeleteDialog({
             type="button"
             onClick={safeClose}
             disabled={busy}
-            className="min-h-[44px] flex-1 rounded-lg border border-white/10 text-sm font-medium text-white transition-colors hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50 font-agrandir"
+            className="min-h-[44px] flex-1 whitespace-nowrap rounded-lg border border-white/10 px-4 text-sm font-medium tracking-normal text-white transition-colors hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50 font-agrandir"
           >
             Cancel
           </button>
@@ -91,7 +91,7 @@ export function AppointmentDeleteDialog({
             onClick={onConfirm}
             disabled={busy}
             aria-busy={busy}
-            className="inline-flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-lg bg-red-600 text-sm font-semibold text-white transition-colors hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50 font-agrandir"
+            className="inline-flex min-h-[44px] flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-red-600 px-4 text-sm font-semibold tracking-normal text-white transition-colors hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50 font-agrandir"
           >
             {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
             Delete permanently
