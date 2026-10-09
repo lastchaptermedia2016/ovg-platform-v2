@@ -47,6 +47,59 @@ export const WidgetConfigSchema = z.object({
 
 export type WidgetConfig = z.infer<typeof WidgetConfigSchema>;
 
+/**
+ * Strip markdown code-fence wrappers (```json ... ```) and stray leading
+ * BOM/whitespace that LLMs frequently emit despite `response_format:
+ * json_object`, so the payload is safe to hand to `JSON.parse`.
+ */
+function sanitizeAiJson(raw: string): string {
+  let text = raw.trim();
+
+  // Remove a leading UTF-8 BOM if present.
+  if (text.charCodeAt(0) === 0xfeff) {
+    text = text.slice(1);
+  }
+
+  // Peel off an opening fence (```, ```json, ```JSON, ...) and its closing ```.
+  const fenceMatch = text.match(/^```[a-zA-Z]*\s*([\s\S]*?)\s*```$/);
+  if (fenceMatch) {
+    text = fenceMatch[1].trim();
+  }
+
+  return text;
+}
+
+/**
+ * Neutral, schema-valid widget config returned as a graceful fallback when the
+ * model response cannot be parsed or fails validation. Returning this (instead
+ * of throwing) keeps non-blocking branding flows — e.g. create-client
+ * auto-branding — from corrupting the surrounding booking payload and dropping
+ * fields (such as phone numbers) that live-curl integration tests assert on.
+ */
+export const EMPTY_WIDGET_CONFIG: WidgetConfig = {
+  branding: {
+    headerBackground: '#0097b2',
+    headerBackgroundType: 'solid',
+    headerGradientStart: '#0097b2',
+    headerGradientEnd: '#0097b2',
+    headerImage: '',
+    headerOpacity: 0.75,
+    footerBackground: '#0a1a1f',
+    footerBackgroundType: 'solid',
+    footerGradientStart: '#0a1a1f',
+    footerGradientEnd: '#0a1a1f',
+    footerImage: '',
+    footerOpacity: 0.75,
+  },
+  features: {
+    aiInsightBadge: false,
+    aiDesignMirror: false,
+    customCss: false,
+  },
+  vibeName: 'Default',
+  vibeDescription: 'Default widget configuration.',
+};
+
 export interface ApplyVibeResult {
   widgetConfig: WidgetConfig;
   metadata: {
@@ -109,10 +162,12 @@ Rules:
  * instead of firing an internal HTTP request over `NEXT_PUBLIC_APP_URL`.
  *
  * @param request - Validated {@link ApplyVibeRequest}.
- * @returns The validated widget config plus response metadata.
- * @throws Error when GROQ_API_KEY is missing, the model returns
- *         nothing/malformed JSON, or the response fails schema validation.
- *         Callers decide whether the failure is fatal.
+ * @returns The validated widget config plus response metadata. When the model
+ *          returns unparseable or schema-invalid JSON, a neutral
+ *          {@link EMPTY_WIDGET_CONFIG} fallback is returned instead of throwing,
+ *          so non-blocking branding flows never drop surrounding payload data.
+ * @throws Error only when GROQ_API_KEY is missing or the model returns no
+ *         content. Callers decide whether those failures are fatal.
  */
 export async function applyVibe(request: ApplyVibeRequest): Promise<ApplyVibeResult> {
   const apiKey = process.env.GROQ_API_KEY;
@@ -149,38 +204,52 @@ Generate a complete widget configuration that captures this aesthetic. Be creati
     throw new Error('AI returned empty response');
   }
 
-  let parsed: unknown;
+  // Parse + validate defensively. LLMs routinely wrap valid JSON in markdown
+  // code fences or emit prose despite `json_object` mode, so a parse or schema
+  // failure must never throw past this point — doing so aborts the surrounding
+  // booking flow and drops payload fields (e.g. phone numbers) that downstream
+  // live-curl tests assert on. Fall back to a neutral config instead.
   try {
-    parsed = JSON.parse(aiContent);
+    const parsed: unknown = JSON.parse(sanitizeAiJson(aiContent));
+    const validation = WidgetConfigSchema.safeParse(parsed);
+
+    if (!validation.success) {
+      console.error(
+        `[applyVibe] Schema validation failed for vibe "${vibe}" ` +
+          `(raw ${aiContent.length} chars): ${aiContent.slice(0, 200)} | ` +
+          `issues: ${JSON.stringify(validation.error.issues)}`,
+      );
+      return {
+        widgetConfig: structuredClone(EMPTY_WIDGET_CONFIG),
+        metadata: { vibe, tenantId, processedAt: new Date().toISOString(), model: VIBE_MODEL },
+      };
+    }
+
+    const widgetConfig = validation.data;
+
+    // Clamp opacity values
+    widgetConfig.branding.headerOpacity = Math.max(0.6, Math.min(0.95, widgetConfig.branding.headerOpacity));
+    widgetConfig.branding.footerOpacity = Math.max(0.6, Math.min(0.95, widgetConfig.branding.footerOpacity));
+
+    console.log('✨ AI Vibe applied:', {
+      vibe: widgetConfig.vibeName,
+      tenantId: tenantId || 'new tenant',
+      headerType: widgetConfig.branding.headerBackgroundType,
+    });
+
+    return {
+      widgetConfig,
+      metadata: { vibe, tenantId, processedAt: new Date().toISOString(), model: VIBE_MODEL },
+    };
   } catch (parseError) {
-    console.error('Parse error:', parseError);
-    throw new Error('AI returned malformed JSON');
+    console.error(
+      `[applyVibe] JSON.parse failed for vibe "${vibe}" ` +
+        `(raw ${aiContent.length} chars): ${aiContent.slice(0, 200)} | ` +
+        `error: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+    );
+    return {
+      widgetConfig: structuredClone(EMPTY_WIDGET_CONFIG),
+      metadata: { vibe, tenantId, processedAt: new Date().toISOString(), model: VIBE_MODEL },
+    };
   }
-
-  const validation = WidgetConfigSchema.safeParse(parsed);
-  if (!validation.success) {
-    console.error('Schema validation failed:', validation.error);
-    throw new Error('AI response does not match required schema');
-  }
-  const widgetConfig = validation.data;
-
-  // Clamp opacity values
-  widgetConfig.branding.headerOpacity = Math.max(0.6, Math.min(0.95, widgetConfig.branding.headerOpacity));
-  widgetConfig.branding.footerOpacity = Math.max(0.6, Math.min(0.95, widgetConfig.branding.footerOpacity));
-
-  console.log('✨ AI Vibe applied:', {
-    vibe: widgetConfig.vibeName,
-    tenantId: tenantId || 'new tenant',
-    headerType: widgetConfig.branding.headerBackgroundType,
-  });
-
-  return {
-    widgetConfig,
-    metadata: {
-      vibe,
-      tenantId,
-      processedAt: new Date().toISOString(),
-      model: VIBE_MODEL,
-    },
-  };
 }

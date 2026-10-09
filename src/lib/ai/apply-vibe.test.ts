@@ -10,7 +10,7 @@ vi.mock('groq-sdk', () => ({
 }));
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { applyVibe, ApplyVibeRequestSchema, WidgetConfigSchema } from './apply-vibe';
+import { applyVibe, ApplyVibeRequestSchema, WidgetConfigSchema, EMPTY_WIDGET_CONFIG } from './apply-vibe';
 
 const VALID_BRANDING = {
   branding: {
@@ -116,16 +116,39 @@ describe('applyVibe', () => {
     await expect(applyVibe({ vibe: 'x' })).rejects.toThrow('AI returned empty response');
   });
 
-  it('throws when the model returns malformed JSON', async () => {
+  it('falls back to EMPTY_WIDGET_CONFIG when the model returns malformed JSON', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     mockCompletion('{not-json');
-    await expect(applyVibe({ vibe: 'x' })).rejects.toThrow('AI returned malformed JSON');
+
+    const result = await applyVibe({ vibe: 'x' });
+
+    expect(result.widgetConfig).toEqual(EMPTY_WIDGET_CONFIG);
+    expect(WidgetConfigSchema.safeParse(result.widgetConfig).success).toBe(true);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
-  it('throws when the response fails the widget config schema', async () => {
+  it('falls back to EMPTY_WIDGET_CONFIG when the response fails the widget config schema', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     mockCompletion(JSON.stringify({ branding: {}, vibeName: 'broken' }));
-    await expect(applyVibe({ vibe: 'x' })).rejects.toThrow(
-      'AI response does not match required schema',
-    );
+
+    const result = await applyVibe({ vibe: 'x' });
+
+    expect(result.widgetConfig).toEqual(EMPTY_WIDGET_CONFIG);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it('strips markdown code fences (```json ... ```) before parsing', async () => {
+    const fenced = '```json\n' + JSON.stringify(VALID_BRANDING) + '\n```';
+    mockCompletion(fenced);
+
+    const result = await applyVibe({ vibe: 'cyberpunk neon' });
+
+    expect(WidgetConfigSchema.safeParse(result.widgetConfig).success).toBe(true);
+    expect(result.widgetConfig.vibeName).toBe('Cyber Neon');
+    expect(result.widgetConfig.branding.headerOpacity).toBe(0.95);
+    expect(result.widgetConfig.branding.footerOpacity).toBe(0.6);
   });
 
   it('throws AI service not configured when GROQ_API_KEY is missing', async () => {
