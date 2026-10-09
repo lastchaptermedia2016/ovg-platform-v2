@@ -53,6 +53,11 @@ import { TranscodeError, type TranscodeErrorCode } from '@/lib/voice/transcoder'
 import { buildNavigationSummary, humanizeSummary } from '@/lib/ai/conversational-voice';
 import { requestClientTranscription, transcribeWithFallback, describeSttError } from '@/lib/voice/stt-client';
 import { clientStudioHref, isClientStudioTab } from '@/lib/voice/client-routes';
+import {
+  isAffirmativeUtterance,
+  isNavigationOffer,
+  APPOINTMENTS_HREF,
+} from '@/lib/voice/affirmative-nav';
 import { getSpeechRecognition } from '@/types/voice-parser';
 import { useVoiceState } from '@/providers/voice-provider';
 
@@ -296,6 +301,14 @@ export function useZeederVoice({ tenantId, resellerSlug }: { tenantId?: string; 
   // non-offering response (or a consumed confirmation) drops the token.
   // Symbolic only (offerId + server-issued expiresAt) — never a URL.
   const pendingNavRef = useRef<{ offerId: string; expiresAt: number } | null>(null);
+
+  // ── Local pending-navigation target (client-side interception) ───────────
+  // Set to an href (e.g. '/client/dashboard/appointments') when the assistant's
+  // spoken reply is a navigation OFFER. The next bare affirmative is resolved
+  // HERE — router.push + TTS — without a backend round-trip, so "Yes, please."
+  // never dead-ends at CLIENT_NOP. Cleared the moment it is consumed or when a
+  // non-offer reply arrives (self-clearing, same discipline as pendingNavRef).
+  const pendingNavTargetRef = useRef<string | null>(null);
 
   // Ref bridge so recording callbacks can invoke the latest handleVoiceCommand
   // without capturing it in their dependency arrays (avoids ordering/TDZ issues).
@@ -639,6 +652,29 @@ export function useZeederVoice({ tenantId, resellerSlug }: { tenantId?: string; 
         return;
       }
 
+      // ── Local affirmative interception (no backend round-trip) ──────────
+      // If the previous assistant turn offered navigation and this utterance is
+      // a bare affirmative, resolve it here: mark the navigation, speak a short
+      // confirmation, push the route, and clear the pending target. This runs
+      // BEFORE the API call so "Yes, please." never degrades to CLIENT_NOP.
+      if (pendingNavTargetRef.current && isAffirmativeUtterance(text)) {
+        const target = pendingNavTargetRef.current;
+        pendingNavTargetRef.current = null;
+        console.log(`[ZEEDER-VOICE] Affirmative follow-up resolved locally → ${target}`);
+
+        processingRef.current = true;
+        setState((prev) => ({ ...prev, isProcessing: true, error: null }));
+        try {
+          markVoiceNavigation();
+          await speakSummary('Taking you there now!');
+          router.push(target);
+        } finally {
+          processingRef.current = false;
+          setState((prev) => ({ ...prev, isProcessing: false }));
+        }
+        return;
+      }
+
       // Deterministic override: when clientProfile has not yet hydrated,
       // poll for it instead of immediately rejecting.
       if (!clientProfileRef.current) {
@@ -708,6 +744,16 @@ export function useZeederVoice({ tenantId, resellerSlug }: { tenantId?: string; 
           typeof (nextPendingNav as { expiresAt?: unknown }).expiresAt === 'number'
             ? (nextPendingNav as { offerId: string; expiresAt: number })
             : null;
+
+        // ── Arm the LOCAL pending-nav target from the spoken reply ─────────
+        // Primary path: when the assistant's reply is a navigation OFFER, arm
+        // the href so the next bare affirmative is intercepted here (no backend
+        // call). Self-clearing: a non-offer reply — including an actual
+        // SYSTEM_NAVIGATE confirmation ("Taking you straight to …") — clears it,
+        // so a stale "yes" can never re-fire an old offer.
+        pendingNavTargetRef.current = isNavigationOffer(data.summary)
+          ? APPOINTMENTS_HREF
+          : null;
 
         // ── Step 2: Map client actionType to ZEEDER action ID ──────
         const mappedActionId = ACTION_TYPE_TO_ZEEDER_ID[data.actionType] ?? null;
