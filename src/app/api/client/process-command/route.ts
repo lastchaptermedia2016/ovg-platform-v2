@@ -509,6 +509,16 @@ const CLIENT_BOOKING_INTENT_REGEX =
   /(book|booking|appointment|schedule|reschedule|reserve|slot)/i;
 
 /**
+ * Defense-in-depth booking-recovery signals, used ONLY when the LLM round-trip
+ * fails (Groq `json_validate_failed` thrown by the json_object response format,
+ * a network error, or unparseable output). If the raw utterance still carries a
+ * booking intent AND a phone number, the lead is recovered deterministically
+ * from free text instead of being dropped into a dead-end CLIENT_NOP.
+ */
+const BOOKING_FALLBACK_INTENT_RE = /book|appointment|schedule|reserve/i;
+const PHONE_FALLBACK_RE = /\+?[\d\s\-()]{10,}/;
+
+/**
  * Navigation intent for the Appointment Requests dashboard
  * (/client/dashboard/appointments). Matches explicit "show me my
  * appointments", "open my leads", "take me to appointment requests", etc.
@@ -1585,7 +1595,8 @@ async function runSemanticFallback(
       '',
       '=== RESPONSE FORMAT (STRICT) ===',
       'You MUST respond with a SINGLE valid JSON object and nothing else — no markdown, no code fences, no prose outside the JSON.',
-      'The response MUST be valid JSON format.',
+      'The response MUST be valid JSON format. Output ONLY the JSON object; never wrap it in a code block and never add commentary before or after it.',
+      'For bookings, put the phone number in the payload as DIGITS ONLY (e.g. "0821234567"), never as prose.',
       `Allowed "actionType" values: ${[...allowedActions(isAnon)].join(' | ')} (use "CLIENT_NOP" for normal conversational replies).`,
       '  - "summary": the plain-text reply shown and read aloud to the user. Follow the ZEEDER PERSONA & CONVERSATIONAL VOICE GUIDELINES: contractions, a warm human opener, ONE punchy sentence for actions, and absolutely no trailing dots or ellipses (never "branding page........."). Never echo action identifiers or route paths.',
       '  - "payload": for bookings, include { "firstName": string|null, "phone": string|null, "treatment": string|null, "preferredDate": string|null, "preferredTime": string|null, "notes": string|null }.',
@@ -1620,8 +1631,17 @@ const completion = await groq.chat.completions.create({
     }
     let llmParsed: { actionType?: string; summary?: string; payload?: unknown } = {};
     if (content) {
+      // Strip stray markdown code-fence wrappers (```json … ```) and a leading
+      // BOM that the model sometimes emits despite the json_object directive,
+      // so JSON.parse sees clean JSON. This mirrors the sanitizer used by the
+      // apply-vibe path and prevents an otherwise-valid reply from failing.
+      const cleaned = content
+        .replace(/^\uFEFF/, '')
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/```\s*$/i, '')
+        .trim();
       try {
-        const maybe = JSON.parse(content);
+        const maybe = JSON.parse(cleaned);
         if (maybe && typeof maybe === 'object' && !Array.isArray(maybe)) {
           llmParsed = maybe as { actionType?: string; summary?: string; payload?: unknown };
         } else if (process.env.NODE_ENV !== 'production') {
@@ -1805,6 +1825,72 @@ const completion = await groq.chat.completions.create({
         text,
       });
     }
+    // ── BOOK-as-LEAD defense-in-depth recovery ──────────────────────
+    // A Groq `json_validate_failed` (or any throw) lands here BEFORE the
+    // booking payload is assembled. If the raw utterance still carries a
+    // booking intent AND a phone number, recover the lead deterministically
+    // from free text and return a valid SYSTEM_BOOKING_CAPTURE instead of a
+    // dead-end CLIENT_NOP — otherwise the phone number is silently dropped.
+    if (
+      (bookingIntent || BOOKING_FALLBACK_INTENT_RE.test(text)) &&
+      PHONE_FALLBACK_RE.test(text)
+    ) {
+      const booking = buildBookingCapture({}, text, null);
+      if (booking.phone && persistCtx?.tenantId) {
+        try {
+          // Dedup by tenant + phone, upgrading a fallback name if a real one
+          // is now available — same contract as the in-try booking path.
+          await upsertAppointmentLead({
+            tenantId: persistCtx.tenantId,
+            clientName: booking.firstName,
+            clientPhone: booking.phone,
+            initialIntent: booking.notes ?? booking.treatment,
+          });
+        } catch (leadErr) {
+          // Non-blocking for the command response, but a silent swallow would
+          // leave the widget's "BOOKING SECURED" banner with no row behind it.
+          console.error('[API_CLIENT_PROCESS_COMMAND_BOOKING_FALLBACK_ERROR]:', leadErr);
+        }
+        const bookingData: ClientCommandResponse = {
+          success: true,
+          actionType: 'SYSTEM_BOOKING_CAPTURE',
+          targetIds: [],
+          payload: {
+            firstName: booking.firstName,
+            phone: booking.phone,
+            treatment: booking.treatment,
+            preferredDate: booking.preferredDate,
+            preferredTime: booking.preferredTime,
+            notes: booking.notes,
+          },
+          summary: humanizeSummary(
+            booking.firstName
+              ? `Perfect ${booking.firstName} — you're booked in! We've got your number and we'll confirm shortly.`
+              : "Perfect — you're booked in! We've got your number and we'll confirm shortly.",
+            "Perfect — you're booked in! We'll confirm shortly.",
+          ),
+        };
+        if (persistCtx) {
+          await tryPersistCommandInCtx(
+            persistCtx,
+            text,
+            bookingData,
+            'SYSTEM_BOOKING_CAPTURE',
+            bookingData.payload as Record<string, unknown>,
+          );
+        }
+        // Learn the visitor identity for anon callers, mirroring the success path.
+        if (isAnon && booking.phone) {
+          const normalizedPhone = normalizeVisitorPhone(booking.phone);
+          if (normalizedPhone) {
+            void extractAndStoreVisitorMemories(persistCtx?.tenantId ?? null, 'phone', normalizedPhone, text);
+            void touchVisitorMemory(persistCtx?.tenantId ?? null, 'phone', normalizedPhone);
+          }
+        }
+        return NextResponse.json(bookingData);
+      }
+    }
+
     // Resilient fallback: if the LLM is unreachable we still answer
     // informational add-on questions from the static catalog so the user
     // never hears a generic snag for "What is smart booking?".

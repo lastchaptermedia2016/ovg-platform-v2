@@ -19,6 +19,10 @@ process.env.GROQ_API_KEY = process.env.GROQ_API_KEY || 'test-groq-key';
 
 let cannedGroqResponse: unknown = null;
 let lastGroqSystemPrompt: string | null = null;
+// When set, the Groq mock rejects on the next create() call — used to simulate
+// a server-side `json_validate_failed` (thrown from create() itself, before any
+// local JSON.parse runs), which is the BOOK-as-LEAD failure mode under test.
+let groqShouldThrow: Error | null = null;
 
 function createMockChain(): Record<string, unknown> {
   const chain: Record<string, unknown> = {};
@@ -73,6 +77,9 @@ vi.mock('groq-sdk', () => {
         create: vi.fn().mockImplementation((args: { messages?: Array<{ role: string; content: unknown }> }) => {
           const system = args?.messages?.find((m) => m.role === 'system')?.content;
           lastGroqSystemPrompt = typeof system === 'string' ? system : null;
+          if (groqShouldThrow) {
+            return Promise.reject(groqShouldThrow);
+          }
           return Promise.resolve({
             choices: [{ message: { content: JSON.stringify(cannedGroqResponse) } }],
           });
@@ -148,6 +155,7 @@ const _mockLogPlatformAction = vi.mocked(logPlatformAction);
 beforeEach(() => {
   cannedGroqResponse = null;
   lastGroqSystemPrompt = null;
+  groqShouldThrow = null;
   vi.clearAllMocks();
   mockAuth.mockResolvedValue({
     user: null,
@@ -452,6 +460,30 @@ describe('POST /api/client/process-command', () => {
     expect(body.actionType).toBe('SYSTEM_BOOKING_CAPTURE');
     expect(body.payload.firstName).toBe('Sarah');
     expect(body.payload.phone).toBe('0825551212');
+  });
+
+  it('recovers the booking lead when Groq throws json_validate_failed (defense-in-depth)', async () => {
+    mockAuth.mockResolvedValue({
+      user: null,
+      userId: null,
+      email: null,
+      error: new Error('Unauthorized'),
+    });
+
+    // Groq rejects from create() itself — the server-side json_object validator
+    // failed, so NO local JSON.parse ever runs. Before the fallback this landed
+    // in the outer catch and degraded to CLIENT_NOP, dropping the phone number.
+    groqShouldThrow = new Error('400 {"error":{"message":"json_validate_failed: ...","type":"invalid_request_error"}}');
+
+    const response = await post('book a massage, I am Jill, 0821234567', {
+      tenantId: 'public-tenant-key',
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    // Must NOT dead-end at CLIENT_NOP — the phone is recovered from raw text.
+    expect(body.actionType).toBe('SYSTEM_BOOKING_CAPTURE');
+    expect(body.payload.firstName).toBe('Jill');
+    expect(body.payload.phone).toBe('0821234567');
   });
 
   it('should correctly explain system concepts like the widget body using the glossary', async () => {
