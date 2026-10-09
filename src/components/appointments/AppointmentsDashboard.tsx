@@ -8,10 +8,14 @@
  *
  * Displays a scannable list of LEAD rows with:
  *   - Visitor name, phone, captured date/time, and status badge
- *   - "Mark as Contacted" and "Archive" quick-actions per row
+ *   - "Mark as Contacted", "Archive", and "Delete" quick-actions per row
  *   - "View in Chat" deep-link to the Live Chat Inbox on the main dashboard
  *   - Status filter tabs (All / New / Contacted / Archived)
  *   - Periodic auto-refresh (every 30s) + manual refresh
+ *
+ * Delete issues a hard DELETE /api/appointments (no soft-delete flag exists on
+ * tenant_appointments) and is gated behind AppointmentDeleteDialog so an
+ * accidental click can never purge a lead.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -27,7 +31,9 @@ import {
   Inbox,
   ChevronDown,
   ChevronUp,
+  Trash2,
 } from 'lucide-react';
+import { AppointmentDeleteDialog } from '@/components/appointments/AppointmentDeleteDialog';
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -122,7 +128,7 @@ interface ActionButtonProps {
   disabled?: boolean;
   icon: React.ReactNode;
   label: string;
-  variant?: 'primary' | 'ghost';
+  variant?: 'primary' | 'ghost' | 'danger';
 }
 
 function ActionButton({ onClick, disabled, icon, label, variant = 'ghost' }: ActionButtonProps) {
@@ -133,7 +139,9 @@ function ActionButton({ onClick, disabled, icon, label, variant = 'ghost' }: Act
       'bg-cyan-500/15 text-cyan-300 border border-cyan-500/25 hover:bg-cyan-500/25 hover:border-cyan-400/40',
     ghost:
       'bg-white/5 text-zinc-300 border border-white/8 hover:bg-white/10 hover:text-white',
-  };
+    danger:
+      'bg-red-500/10 text-red-300 border border-red-500/25 hover:bg-red-500/20 hover:border-red-400/40',
+  } as const;
   return (
     <button
       type="button"
@@ -235,6 +243,49 @@ export function AppointmentsDashboard({ tenantId, accessToken }: AppointmentsDas
     },
     [tenantId, accessToken],
   );
+
+  // ── Delete (hard, confirmation-gated) ────────────────────────────────
+  const [deleteTarget, setDeleteTarget] = useState<AppointmentRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const openDeleteDialog = useCallback((row: AppointmentRow) => {
+    setDeleteTarget(row);
+  }, []);
+
+  const closeDeleteDialog = useCallback(() => {
+    // Guard against closing mid-flight — the in-flight request owns the row
+    // until it resolves (success removes it; failure re-enables the dialog).
+    if (deleting) return;
+    setDeleteTarget(null);
+  }, [deleting]);
+
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+
+      const res = await fetch('/api/appointments', {
+        method: 'DELETE',
+        headers,
+        body: JSON.stringify({ id: deleteTarget.id, tenantId }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: 'Delete failed' }));
+        throw new Error((body as { error?: string }).error ?? 'Delete failed');
+      }
+
+      // Remove the row locally — it no longer exists server-side.
+      setAppointments((prev) => prev.filter((a) => a.id !== deleteTarget.id));
+      setDeleteTarget(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Delete failed');
+    } finally {
+      setDeleting(false);
+    }
+  }, [deleteTarget, tenantId, accessToken]);
 
   // ── Filter + derived state ───────────────────────────────────────────
 
@@ -456,6 +507,15 @@ export function AppointmentsDashboard({ tenantId, accessToken }: AppointmentsDas
                       />
                     )}
 
+                    {/* Delete — hard remove, confirmation-gated */}
+                    <ActionButton
+                      onClick={() => openDeleteDialog(appt)}
+                      disabled={isUpdating || deleting}
+                      icon={<Trash2 className="h-3 w-3" aria-hidden />}
+                      label="Delete"
+                      variant="danger"
+                    />
+
                     {/* Expand toggle */}
                     <button
                       type="button"
@@ -501,6 +561,18 @@ export function AppointmentsDashboard({ tenantId, accessToken }: AppointmentsDas
           Showing {filtered.length} of {appointments.length} total lead
           {appointments.length !== 1 ? 's' : ''}
         </p>
+      )}
+
+      {/* Delete confirmation ─────────────────────────────────────────── */}
+      {deleteTarget && (
+        <AppointmentDeleteDialog
+          title={deleteTarget.client_name ?? 'this lead'}
+          busy={deleting}
+          onConfirm={() => {
+            void confirmDelete();
+          }}
+          onClose={closeDeleteDialog}
+        />
       )}
     </div>
   );

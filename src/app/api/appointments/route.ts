@@ -10,6 +10,7 @@
  *
  * GET  /api/appointments?tenantId=...   — paginated list of appointment rows
  * PATCH /api/appointments               — update status of a single row
+ * DELETE /api/appointments              — permanently delete a single row
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -58,6 +59,15 @@ const PatchSchema = z.object({
       }
     })
     .optional(),
+});
+
+// DELETE removes the row outright (no soft-delete flag exists on this table —
+// ARCHIVED is the soft state of the CRM workflow, so a true housekeeping purge
+// is a hard delete). Safe from FK violations: no table in supabase/migrations
+// REFERENCES tenant_appointments; its only FK is tenant_id -> tenants(id).
+const DeleteSchema = z.object({
+  id: z.string().uuid('id must be a valid UUID'),
+  tenantId: z.string().min(1, 'tenantId is required'),
 });
 
 export interface AppointmentRow {
@@ -196,6 +206,71 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ success: true, appointment: updated });
   } catch (err) {
     console.error('[API_APPOINTMENTS_PATCH_UNEXPECTED]:', err);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
+
+// ── DELETE — permanently remove a single appointment/lead row ──────────────
+// Hard delete, gated behind the dashboard's confirmation dialog. Ownership is
+// verified exactly as in PATCH (auth → tenant slug → user_resellers reseller
+// match) and the mutation itself is double-scoped by id AND tenant_id so a
+// forged id can never touch another tenant's row.
+export async function DELETE(request: NextRequest) {
+  try {
+    const { user } = await getUserFromRequest(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const body: unknown = await request.json();
+    const parsed = DeleteSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: 'Invalid request', details: parsed.error.flatten() },
+        { status: 400 },
+      );
+    }
+
+    const { id, tenantId } = parsed.data;
+
+    const tenant = await getTenantBySlug(tenantId, supabaseAdmin);
+    if (!tenant) {
+      return NextResponse.json({ error: 'Unknown tenant' }, { status: 404 });
+    }
+
+    // Verify ownership before mutating
+    const { data: membership } = await supabaseAdmin
+      .from('user_resellers')
+      .select('reseller_id')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (!membership || membership.reseller_id !== tenant.reseller_id) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    // Scoped hard delete: id + tenant_id together. `.select('id')` returns the
+    // deleted row so an empty result cleanly maps to 404 (nothing to delete).
+    const { data: deleted, error } = await supabaseAdmin
+      .from('tenant_appointments')
+      .delete()
+      .eq('id', id)
+      .eq('tenant_id', tenant.id)
+      .select('id')
+      .maybeSingle();
+
+    if (error) {
+      console.error('[API_APPOINTMENTS_DELETE_ERROR]:', error);
+      return NextResponse.json({ error: 'Failed to delete appointment' }, { status: 500 });
+    }
+
+    if (!deleted) {
+      return NextResponse.json({ error: 'Appointment not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({ success: true, id: deleted.id });
+  } catch (err) {
+    console.error('[API_APPOINTMENTS_DELETE_UNEXPECTED]:', err);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

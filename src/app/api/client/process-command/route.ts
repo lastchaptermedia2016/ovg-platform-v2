@@ -109,6 +109,14 @@ const CommandRequestSchema = z.object({
       activeView: z.string().optional(),
       clientMemories: z.record(z.string()).optional(),
       surface: z.string().optional(),
+      // Echoed offer token from the previous turn (see PendingNavOffer).
+      // Symbolic only — the server never trusts a client-supplied href.
+      pendingNav: z
+        .object({
+          offerId: z.string().max(64),
+          expiresAt: z.number(),
+        })
+        .optional(),
     })
     .optional(),
 });
@@ -315,50 +323,125 @@ function buildClientCapabilities(): string[] {
 }
 
 /**
- * Count unhandled inbound leads on the tenant_appointments table for the
- * resolved tenant. Used by the appointment-lead-query intent so the agent can
- * answer "how many new leads do I have?" deterministically without an LLM
- * round-trip.
+ * Grouped CRM lifecycle counts for the tenant_appointments table.
  *
- * Matches the LEAD status (the canonical "unhandled inbound capture" value
- * per the CHECK constraint in `20261007000001_tenant_appointments_crm_statuses.sql`).
- * Also matches 'NEW' defensively: some legacy rows or alternate capture paths
- * may have written that value, and `.in()` is a no-op for values that do not
- * exist in the table. Failures degrade to 0 with a warning so the pipeline
- * never blocks on a transient DB error — the caller still gets a briefing.
+ * Three buckets mirror the CRM statuses the dashboard exposes as filter tabs:
+ * `new` covers LEAD (canonical) + the defensive NEW legacy value, `contacted`
+ * and `archived` are terminal CRM states per
+ * `20261007000001_tenant_appointments_crm_statuses.sql`. `total` is the sum of
+ * the three (CRM rows only — AVAILABLE/RESERVED/CONFIRMED are booking-slot
+ * rows, not leads).
  */
-async function countNewLeads(tenantId: string | null): Promise<number> {
-  if (!tenantId) return 0;
+export interface AppointmentStatusCounts {
+  new: number;
+  contacted: number;
+  archived: number;
+  total: number;
+}
+
+/** Zero-valued counts, used as the degrade-to state on any query failure. */
+const ZERO_COUNTS: AppointmentStatusCounts = { new: 0, contacted: 0, archived: 0, total: 0 };
+
+/**
+ * Count tenant_appointments rows grouped by CRM status for the resolved tenant.
+ *
+ * Runs three exact head-counts in parallel (`head: true` transfers no rows).
+ * Each degrades to 0 with a warning so a transient DB error never blocks the
+ * conversational pipeline — the caller still gets a (possibly understated)
+ * briefing rather than an exception.
+ */
+async function countAppointmentStatuses(
+  tenantId: string | null,
+): Promise<AppointmentStatusCounts> {
+  if (!tenantId) return { ...ZERO_COUNTS };
   try {
-    const { count, error } = await supabaseAdmin
-      .from('tenant_appointments')
-      .select('id', { count: 'exact', head: true })
-      .eq('tenant_id', tenantId)
-      .in('status', ['LEAD', 'NEW']);
-    if (error) {
-      console.warn('[process-command] countNewLeads query error:', error.message);
-      return 0;
-    }
-    return count ?? 0;
+    const headCount = () =>
+      supabaseAdmin
+        .from('tenant_appointments')
+        .select('id', { count: 'exact', head: true })
+        .eq('tenant_id', tenantId);
+
+    const [newRes, contactedRes, archivedRes] = await Promise.all([
+      headCount().in('status', ['LEAD', 'NEW']),
+      headCount().eq('status', 'CONTACTED'),
+      headCount().eq('status', 'ARCHIVED'),
+    ]);
+
+    const newCount = newRes.error ? 0 : (newRes.count ?? 0);
+    const contacted = contactedRes.error ? 0 : (contactedRes.count ?? 0);
+    const archived = archivedRes.error ? 0 : (archivedRes.count ?? 0);
+
+    if (newRes.error) console.warn('[process-command] count new leads error:', newRes.error.message);
+    if (contactedRes.error) console.warn('[process-command] count contacted error:', contactedRes.error.message);
+    if (archivedRes.error) console.warn('[process-command] count archived error:', archivedRes.error.message);
+
+    return {
+      new: newCount,
+      contacted,
+      archived,
+      total: newCount + contacted + archived,
+    };
   } catch (err) {
-    console.warn('[process-command] countNewLeads unexpected error:', err);
-    return 0;
+    console.warn('[process-command] countAppointmentStatuses unexpected error:', err);
+    return { ...ZERO_COUNTS };
   }
 }
 
 /**
- * Build the executive briefing for an appointment-lead-count query.
+ * Build the executive briefing for an appointment-count query.
  *
  * Speaks to the business owner as their admin assistant: a crisp status line
- * with the exact count, no customer-facing "book an appointment" prompt, and
- * an offer to navigate to the queue for review.
+ * with the exact grouped counts, no customer-facing "book an appointment"
+ * prompt, and — when there is something to review — an offer to navigate to
+ * the dashboard. The offer is tokenized (see `pendingNav`) so a follow-up
+ * "yes please" can be resolved deterministically on the next turn.
  */
-function buildLeadCountSummary(count: number): string {
-  if (count > 0) {
-    return `You have ${count} new appointment request${count === 1 ? '' : 's'} waiting in your queue. Would you like me to take you there to review them?`;
+function buildAppointmentCountSummary(counts: AppointmentStatusCounts): string {
+  if (counts.total > 0) {
+    const plural = counts.total === 1 ? '' : 's';
+    return (
+      `Sure, you have ${counts.total} appointment${plural}: ` +
+      `${counts.new} new, ${counts.contacted} contacted, ${counts.archived} archived. ` +
+      'Would you like me to take you there to review them?'
+    );
   }
-  return 'You have zero new appointment requests right now—your queue is completely clear.';
+  return "Sure, you don't have any appointments yet — your queue is empty.";
 }
+
+/**
+ * Symbolic, expiring "offer token" attached to an appointment-count response.
+ *
+ * The server issues `offerId` (a symbolic key, NEVER a URL) plus `expiresAt`
+ * on its own clock. The client hook relays the token back inside
+ * `context.pendingNav` on the next turn; the confirmation branch then rebuilds
+ * the href from a server-side constant, so a forged token can at worst
+ * navigate to a page the user could request directly.
+ */
+interface PendingNavOffer {
+  offerId: string;
+  expiresAt: number;
+}
+
+/** Offer TTL: one conversational beat — a stale "yes" cannot fire much later. */
+const PENDING_NAV_TTL_MS = 120_000;
+
+/** Allowlisted offer ids → their server-owned navigation target. */
+const PENDING_NAV_TARGETS: Record<string, { tab: string; href: string }> = {
+  appointments: { tab: 'appointments', href: '/client/dashboard/appointments' },
+};
+
+function buildPendingNavOffer(): PendingNavOffer {
+  return { offerId: 'appointments', expiresAt: Date.now() + PENDING_NAV_TTL_MS };
+}
+
+/**
+ * Anchored affirmative set for confirming a pending offer ("yes please",
+ * "sure", "go ahead" …). Deliberately a FULL match so compound utterances
+ * ("yes and also change my branding") fall through to the normal pipeline
+ * instead of being hijacked by the confirmation branch.
+ */
+const CLIENT_AFFIRM_INTENT_REGEX =
+  /^(?:yes(?:\s+please|\s+yeah|\s+ya)?|yeah|yep|yup|sure|ok(?:ay)?|absolutely|definitely|please do|go ahead|do it|sure thing)[.!?]*\s*$/i;
 
 /**
  * Render the active integration tools as an injection-safe "available
@@ -904,6 +987,39 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
     return response;
   }
 
+  // ── Pending-offer confirmation → deterministic SYSTEM_NAVIGATE ──────────
+  // Resolves a follow-up affirmative ("yes please") against the expiring
+  // offer token issued by the appointment-count branch on the previous turn.
+  // Runs BEFORE the navigation branches so a bare "yes" can never be swept up
+  // by a verb regex. The href is rebuilt from the server-side allowlist —
+  // the client-supplied token is symbolic only (offerId + server-issued
+  // expiresAt), never a URL, so a forged token can at worst navigate to a
+  // page the user could already request directly.
+  //
+  // Expired / unknown / anon tokens do NOT error: they fall through to the
+  // normal pipeline so the user just gets a regular conversational reply.
+  const pendingNavOffer = parsed.context?.pendingNav;
+  if (
+    !isAnon &&
+    pendingNavOffer &&
+    CLIENT_AFFIRM_INTENT_REGEX.test(text.trim()) &&
+    Date.now() < pendingNavOffer.expiresAt
+  ) {
+    const navTarget = PENDING_NAV_TARGETS[pendingNavOffer.offerId];
+    if (navTarget) {
+      const data: ClientCommandResponse = {
+        success: true,
+        actionType: 'SYSTEM_NAVIGATE',
+        targetIds: [],
+        payload: { ...payloadOverrides, tab: navTarget.tab, href: navTarget.href },
+        summary: buildNavigationSummary(navTarget.href),
+      };
+      const response = NextResponse.json(data);
+      await tryPersistCommand(data, 'SYSTEM_NAVIGATE', data.payload);
+      return response;
+    }
+  }
+
   // ── Studio viewport navigation → deterministic SYSTEM_NAVIGATE ─────────
   // Runs BEFORE the booking, definition, and informational checks so that a
   // plain "open my FAQ" / "where is my CRM" navigates deterministically
@@ -952,7 +1068,17 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
   // Runs BEFORE the booking-intent check: "open my appointments" contains
   // the word "appointment", which would otherwise be captured by the booking
   // path and routed to the LLM as a booking capture. Deterministic here.
-  if (!isAnon && hasNavigationIntent(text.trim()) && hasAppointmentTarget(text.trim()) && !hasBookingVerb(text.trim())) {
+  //
+  // The query-intent guard mirrors the CLIENT_HOWTO skip above: without it,
+  // "show me how many appointments I have" matches the /\bshow\b/ nav verb
+  // and NAVIGATES instead of counting. Count phrasings must win.
+  if (
+    !isAnon &&
+    hasNavigationIntent(text.trim()) &&
+    hasAppointmentTarget(text.trim()) &&
+    !hasBookingVerb(text.trim()) &&
+    !CLIENT_APPOINTMENT_QUERY_INTENT_REGEX.test(text.trim())
+  ) {
     const data: ClientCommandResponse = {
       success: true,
       actionType: 'SYSTEM_NAVIGATE',
@@ -965,19 +1091,25 @@ export async function POST(request: NextRequest): Promise<NextResponse<ClientCom
     return response;
   }
 
-  // ── Appointment lead count query ────────────────────────────────────────
+  // ── Appointment count query ────────────────────────────────────────────
   // "do I have any new appointments?", "how many new leads do I have?".
   // Deterministic: queries the tenant_appointments table directly and folds
-  // the count into a conversational summary. Blocked for anonymous visitors
-  // (no session => no tenant-scoped read).
+  // the grouped counts into a conversational summary. When there is something
+  // to review, the response carries an expiring offer token (pendingNav) so a
+  // follow-up "yes please" resolves to SYSTEM_NAVIGATE on the next turn.
+  // Blocked for anonymous visitors (no session => no tenant-scoped read).
   if (!isAnon && CLIENT_APPOINTMENT_QUERY_INTENT_REGEX.test(text.trim())) {
-    const count = await countNewLeads(tenantId);
+    const counts = await countAppointmentStatuses(tenantId);
     const data: ClientCommandResponse = {
       success: true,
       actionType: 'CLIENT_NOP',
       targetIds: [],
-      payload: { leadCount: count },
-      summary: buildLeadCountSummary(count),
+      payload: {
+        counts,
+        leadCount: counts.new,
+        ...(counts.total > 0 ? { pendingNav: buildPendingNavOffer() } : {}),
+      },
+      summary: buildAppointmentCountSummary(counts),
     };
     const response = NextResponse.json(data);
     await tryPersistCommand(data, 'CLIENT_NOP', data.payload);

@@ -288,6 +288,15 @@ export function useZeederVoice({ tenantId, resellerSlug }: { tenantId?: string; 
   // Guard against concurrent invocations
   const processingRef = useRef(false);
 
+  // ── Pending navigation offer (server-issued token relay) ────────────
+  // The appointment-count response carries an expiring `pendingNav` offer;
+  // we echo it back on the NEXT request so the server can resolve a bare
+  // "yes please" deterministically. Cleared automatically: after every
+  // response, `pendingNav := response.payload.pendingNav ?? null` — any
+  // non-offering response (or a consumed confirmation) drops the token.
+  // Symbolic only (offerId + server-issued expiresAt) — never a URL.
+  const pendingNavRef = useRef<{ offerId: string; expiresAt: number } | null>(null);
+
   // Ref bridge so recording callbacks can invoke the latest handleVoiceCommand
   // without capturing it in their dependency arrays (avoids ordering/TDZ issues).
   const handleVoiceCommandRef = useRef<(text: string) => Promise<void>>(
@@ -664,6 +673,7 @@ export function useZeederVoice({ tenantId, resellerSlug }: { tenantId?: string; 
             context: {
               clientProfileId: clientProfile?.id,
               activeView: 'client-dashboard',
+              ...(pendingNavRef.current ? { pendingNav: pendingNavRef.current } : {}),
             },
           }),
         });
@@ -685,6 +695,19 @@ export function useZeederVoice({ tenantId, resellerSlug }: { tenantId?: string; 
           summary?: string;
           error?: string;
         } = await response.json();
+
+        // ── Pending-offer token relay ─────────────────────────────────
+        // Self-clearing: keep the token only if THIS response issued a new
+        // one. A consumed confirmation or any non-offering response drops it,
+        // so a stale "yes" can never fire an offer from turns ago.
+        const nextPendingNav = (data.payload as { pendingNav?: unknown } | undefined)?.pendingNav;
+        pendingNavRef.current =
+          nextPendingNav &&
+          typeof nextPendingNav === 'object' &&
+          typeof (nextPendingNav as { offerId?: unknown }).offerId === 'string' &&
+          typeof (nextPendingNav as { expiresAt?: unknown }).expiresAt === 'number'
+            ? (nextPendingNav as { offerId: string; expiresAt: number })
+            : null;
 
         // ── Step 2: Map client actionType to ZEEDER action ID ──────
         const mappedActionId = ACTION_TYPE_TO_ZEEDER_ID[data.actionType] ?? null;

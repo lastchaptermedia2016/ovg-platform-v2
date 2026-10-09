@@ -38,6 +38,34 @@ function createMockChain(): Record<string, unknown> {
   return chain;
 }
 
+/**
+ * Override `supabaseAdmin.from` so the appointment count branch receives a
+ * QUEUE of thenable head-count results — one per status bucket in call order
+ * (new → contacted → archived). Extra calls replay the last bucket.
+ * Pass `{ error: true }` to simulate a DB failure on every bucket.
+ */
+function mockStatusCounts(
+  counts: { new: number; contacted: number; archived: number },
+  options: { error?: boolean } = {},
+): void {
+  const queue: Array<{ count: number | null; error: Error | null }> = [
+    { count: counts.new, error: null },
+    { count: counts.contacted, error: null },
+    { count: counts.archived, error: null },
+  ].map((entry) =>
+    options.error ? { count: null, error: new Error('connection refused') } : entry,
+  );
+  let call = 0;
+  vi.mocked(supabaseAdmin).from = vi.fn().mockImplementation(() => {
+    const chain = createMockChain();
+    const result = queue[Math.min(call, queue.length - 1)] ?? { count: 0, error: null };
+    call += 1;
+    chain.then = (onFulfilled: (v: { count: number | null; error: Error | null }) => unknown) =>
+      Promise.resolve(result).then(onFulfilled);
+    return chain;
+  });
+}
+
 vi.mock('groq-sdk', () => {
   class Groq {
     chat = {
@@ -734,6 +762,16 @@ describe('POST /api/client/process-command - Studio viewport navigation', () => 
   });
 });
 
+/**
+ * A fresh, non-expired pending-offer token for the appointments offer.
+ * Callers get a new expiry each time, so "expiresAt > Date.now()" checks
+ * stay deterministic.
+ */
+const VALID_OFFER = (): { offerId: string; expiresAt: number } => ({
+  offerId: 'appointments',
+  expiresAt: Date.now() + 60_000,
+});
+
 describe('POST /api/client/process-command - Appointment Requests Dashboard', () => {
   let savedFrom: unknown;
 
@@ -792,71 +830,113 @@ describe('POST /api/client/process-command - Appointment Requests Dashboard', ()
   });
 
   it('answers lead-count queries deterministically without an LLM round-trip', async () => {
-    // Override the admin client so the LEAD-count query returns a known value.
-    // The count query destructures `{ count, error }` off the awaited chain,
-    // which is distinct from the `{ data, error }` shape used elsewhere.
-    const leadChain = createMockChain();
-    leadChain.then = (onFulfilled: (v: { count: number; error: null }) => unknown) =>
-      Promise.resolve({ count: 3, error: null }).then(onFulfilled);
-    vi.mocked(supabaseAdmin).from = vi.fn().mockReturnValue(leadChain);
+    // The count branch fires THREE parallel head-counts (new/contacted/archived),
+    // so the mocked admin client must return a QUEUE of thenable chains — one
+    // per status bucket, in call order.
+    mockStatusCounts({ new: 3, contacted: 0, archived: 0 });
 
     const res = await post('how many new leads do I have?');
     const body = await res.json();
 
     expect(res.status).toBe(200);
     expect(body.actionType).toBe('CLIENT_NOP');
+    // Back-compat alias kept alongside the grouped counts.
     expect(body.payload.leadCount).toBe(3);
-    // Executive admin briefing: exact count, queue framing, no "book an appointment" prompt.
-    expect(body.summary).toMatch(/3 new appointment requests/);
-    expect(body.summary).toMatch(/waiting in your queue/);
-    expect(body.summary).toMatch(/take you there to review them/);
+    expect(body.payload.counts).toEqual({ new: 3, contacted: 0, archived: 0, total: 3 });
+    // Executive admin briefing: grouped counts + navigation offer, no
+    // customer-facing "book an appointment" prompt.
+    expect(body.summary).toMatch(/Sure, you have 3 appointments:/);
+    expect(body.summary).toMatch(/3 new, 0 contacted, 0 archived/);
+    expect(body.summary).toMatch(/Would you like me to take you there/);
     expect(body.summary).not.toMatch(/book an appointment/i);
+    // Total > 0 ⇒ the response carries the expiring offer token.
+    expect(body.payload.pendingNav.offerId).toBe('appointments');
+    expect(body.payload.pendingNav.expiresAt).toBeGreaterThan(Date.now());
   });
 
   it('answers "do I have any new appointments?" with the same deterministic path', async () => {
-    const leadChain = createMockChain();
-    leadChain.then = (onFulfilled: (v: { count: number; error: null }) => unknown) =>
-      Promise.resolve({ count: 1, error: null }).then(onFulfilled);
-    vi.mocked(supabaseAdmin).from = vi.fn().mockReturnValue(leadChain);
+    mockStatusCounts({ new: 1, contacted: 0, archived: 0 });
 
     const res = await post('do I have any new appointments?');
     const body = await res.json();
 
     expect(res.status).toBe(200);
     expect(body.payload.leadCount).toBe(1);
-    // Singular form: "1 new appointment request" (no trailing s).
-    expect(body.summary).toMatch(/1 new appointment request\b/);
-    expect(body.summary).not.toMatch(/1 new appointment requests/);
+    expect(body.payload.counts.total).toBe(1);
+    // Singular form: "1 appointment:" (no trailing s).
+    expect(body.summary).toMatch(/Sure, you have 1 appointment:/);
+    expect(body.summary).not.toMatch(/1 appointments/);
+    expect(body.payload.pendingNav.offerId).toBe('appointments');
+  });
+
+  it('surfaces grouped lifecycle counts and skips the offer token when the queue is empty', async () => {
+    mockStatusCounts({ new: 0, contacted: 2, archived: 4 });
+
+    const res = await post('how many appointments do I have?');
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.actionType).toBe('CLIENT_NOP');
+    expect(body.payload.counts).toEqual({ new: 0, contacted: 2, archived: 4, total: 6 });
+    expect(body.summary).toMatch(/Sure, you have 6 appointments/);
+    expect(body.summary).toMatch(/0 new, 2 contacted, 4 archived/);
+    expect(body.payload.pendingNav).toBeDefined();
+  });
+
+  it('emits no offer token when there is nothing to review (all buckets zero)', async () => {
+    mockStatusCounts({ new: 0, contacted: 0, archived: 0 });
+
+    const res = await post('how many appointments do I have?');
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.payload.counts.total).toBe(0);
+    expect(body.payload.pendingNav).toBeUndefined();
+    expect(body.summary).toMatch(/don't have any appointments yet/);
+  });
+
+  it('counts instead of navigating for "show me how many appointments I have"', async () => {
+    // Regression: /\bshow\b/ is a navigation verb and the appointment-nav
+    // branch runs BEFORE the count branch — without the query-intent guard
+    // this utterance navigated instead of counting.
+    mockStatusCounts({ new: 2, contacted: 1, archived: 0 });
+
+    const res = await post('show me how many appointments I have');
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.actionType).toBe('CLIENT_NOP');
+    expect(body.actionType).not.toBe('SYSTEM_NAVIGATE');
+    expect(body.payload.counts.total).toBe(3);
+    expect(body.payload.href).toBeUndefined();
   });
 
   it('reports a clear queue with zero leads (no customer-facing booking prompt)', async () => {
-    const leadChain = createMockChain();
-    leadChain.then = (onFulfilled: (v: { count: number; error: null }) => unknown) =>
-      Promise.resolve({ count: 0, error: null }).then(onFulfilled);
-    vi.mocked(supabaseAdmin).from = vi.fn().mockReturnValue(leadChain);
+    mockStatusCounts({ new: 0, contacted: 0, archived: 0 });
 
     const res = await post('how many new appointment requests do I have?');
     const body = await res.json();
 
     expect(res.status).toBe(200);
     expect(body.payload.leadCount).toBe(0);
-    // Executive briefing: "zero new appointment requests right now—your queue is completely clear."
-    expect(body.summary).toMatch(/zero new appointment requests/);
-    expect(body.summary).toMatch(/queue is completely clear/);
+    expect(body.payload.counts.total).toBe(0);
+    // Executive briefing: empty queue, no offer token, no booking prompt.
+    expect(body.summary).toMatch(/don't have any appointments yet/);
+    expect(body.payload.pendingNav).toBeUndefined();
     expect(body.summary).not.toMatch(/book an appointment/i);
   });
 
   it('degrades to 0 leads when the count query errors (non-blocking)', async () => {
-    const leadChain = createMockChain();
-    leadChain.then = (onFulfilled: (v: { count: null; error: Error }) => unknown) =>
-      Promise.resolve({ count: null, error: new Error('connection refused') }).then(onFulfilled);
-    vi.mocked(supabaseAdmin).from = vi.fn().mockReturnValue(leadChain);
+    mockStatusCounts({ new: 0, contacted: 0, archived: 0 }, { error: true });
 
     const res = await post('how many new leads do I have?');
     const body = await res.json();
 
     expect(res.status).toBe(200);
     expect(body.payload.leadCount).toBe(0);
+    expect(body.payload.counts).toEqual({ new: 0, contacted: 0, archived: 0, total: 0 });
+    // A total of 0 (even a false-zero from a failed query) never issues an offer.
+    expect(body.payload.pendingNav).toBeUndefined();
   });
 
   it('blocks appointment queries for anonymous visitors (no session)', async () => {
@@ -875,13 +955,117 @@ describe('POST /api/client/process-command - Appointment Requests Dashboard', ()
     expect(body.payload.leadCount).toBeUndefined();
   });
 
-  it('does not match generic chatter as an appointment query', async () => {
-    cannedGroqResponse = { actionType: 'CLIENT_NOP', summary: 'Sure, how can I help?' };
-
-    const res = await post('how are you doing?');
+  // ── Pending-offer confirmation (token-echo): "yes please" resolves to navigate ──
+  it('resolves "yes please" + a valid pendingNav token to SYSTEM_NAVIGATE', async () => {
+    const res = await post('yes please', { context: { pendingNav: VALID_OFFER() } });
     const body = await res.json();
 
-    expect(body.payload.leadCount).toBeUndefined();
+    expect(res.status).toBe(200);
+    expect(body.actionType).toBe('SYSTEM_NAVIGATE');
+    expect(body.payload.tab).toBe('appointments');
+    expect(body.payload.href).toBe('/client/dashboard/appointments');
+    // Conversational confirmation; the raw app path must never reach the client.
+    expect(body.summary).not.toMatch(/\/client\//);
+  });
+
+  it('resolves common affirmative phrasings to SYSTEM_NAVIGATE with a valid token', async () => {
+    for (const affirm of ['yes', 'yeah', 'sure', 'go ahead', 'okay', 'yes please']) {
+      const res = await post(affirm, { context: { pendingNav: VALID_OFFER() } });
+      const body = await res.json();
+
+      expect(body.actionType, affirm).toBe('SYSTEM_NAVIGATE');
+      expect(body.payload.href, affirm).toBe('/client/dashboard/appointments');
+    }
+  });
+
+  it('does not navigate for a compound utterance ("yes please thanks")', async () => {
+    // "thanks" is not part of the affirmative lexicon, so the whole utterance
+    // falls through to the ordinary generative path — no hijack.
+    cannedGroqResponse = { actionType: 'CLIENT_NOP', summary: 'Sure, how can I help?' };
+    const res = await post('yes please thanks', { context: { pendingNav: VALID_OFFER() } });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.actionType).not.toBe('SYSTEM_NAVIGATE');
+    expect(body.payload.pendingNav).toBeUndefined();
+  });
+
+  it('does not navigate for expired or unknown offer tokens', async () => {
+    const expiredRes = await post('yes please', {
+      context: { pendingNav: { offerId: 'appointments', expiresAt: Date.now() - 1_000 } },
+    });
+    const expired = await expiredRes.json();
+
+    const unknownRes = await post('yes please', {
+      context: { pendingNav: { offerId: 'bogus-offer', expiresAt: Date.now() + 60_000 } },
+    });
+    const unknown = await unknownRes.json();
+
+    expect(expired.actionType).not.toBe('SYSTEM_NAVIGATE');
+    expect(expired.payload.href).toBeUndefined();
+    expect(unknown.actionType).not.toBe('SYSTEM_NAVIGATE');
+    expect(unknown.payload.href).toBeUndefined();
+  });
+
+  it('does not hijack the flow for non-affirmative text (token self-clears)', async () => {
+    cannedGroqResponse = { actionType: 'CLIENT_NOP', summary: 'Sure, how can I help?' };
+    const res = await post('tell me about the weather', {
+      context: { pendingNav: VALID_OFFER() },
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.actionType).not.toBe('SYSTEM_NAVIGATE');
+    // Conversational fallback, and the client drops the stale token: no
+    // pendingNav in the response means the UI should clear it.
+    expect(body.payload.pendingNav).toBeUndefined();
+  });
+
+  it('blocks pending-offer confirmation for anonymous callers', async () => {
+    mockAuth.mockResolvedValue({
+      user: null,
+      userId: null,
+      email: null,
+      error: new Error('Unauthorized'),
+    });
+
+    const res = await post('yes please', {
+      tenantId: 'public-tenant-key',
+      context: { pendingNav: VALID_OFFER() },
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.actionType).not.toBe('SYSTEM_NAVIGATE');
+    expect(body.payload.href).toBeUndefined();
+  });
+
+  it('absorbs the token if the LLM reasserts a non-navigate payload', async () => {
+    // When the generative path wins, the response carries no pendingNav — the
+    // client must drop the stale offer token.
+    cannedGroqResponse = { actionType: 'CLIENT_NOP', summary: 'Sure, how can I help?' };
+    const res = await post('what is zeeder', { context: { pendingNav: VALID_OFFER() } });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.actionType).not.toBe('SYSTEM_NAVIGATE');
+    expect(body.payload.pendingNav).toBeUndefined();
+  });
+
+  it('absorbs the token when the studio-navigation branch consumes the utterance', async () => {
+    // "head to appointments" is unambiguous studio navigation: the branch
+    // resolves it to SYSTEM_NAVIGATE with the real href, and the response
+    // carries no pendingNav — the client drops the stale offer token.
+    cannedGroqResponse = { actionType: 'SYSTEM_STUDIO_NAV', summary: 'On it.' };
+    const res = await post('head to appointments', {
+      context: { pendingNav: VALID_OFFER() },
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(body.actionType).toBe('SYSTEM_NAVIGATE');
+    expect(body.payload.href).toBe('/client/dashboard/appointments');
+    expect(body.payload.pendingNav).toBeUndefined();
   });
 });
 
@@ -1465,3 +1649,4 @@ describe('POST /api/client/process-command - Anonymous Security Boundary', () =>
     expect(body.summary).toMatch(/book, reschedule, or answer questions/);
   });
 });
+
