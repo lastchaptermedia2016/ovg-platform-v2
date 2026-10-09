@@ -3,6 +3,46 @@ import { resolveVoiceConfig } from '@/lib/ai/voice-config-resolver';
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * Whisper vocabulary priming for the shared STT path (`/api/ai/stt`).
+ *
+ * Groq's Whisper exposes the `prompt` field as its sole decoder-biasing surface
+ * (there is no `language` or `keywords` parameter). Whisper seeds its decoder
+ * with the prompt as an in-context prior, so listing our real brand spellings
+ * and product vocabulary here shifts next-token attention away from generic
+ * en-US dictionary defaults that would otherwise warp "Zeeder" → "Zeta"/"Cedar"
+ * and "Supabase" → "super base".
+ *
+ * Two vocabularies are merged because this endpoint is shared:
+ *   - Platform + chat-widget surface (public embed via `useAnonVoice`).
+ *   - Reseller / voice-driven client-creation fields (via `use-voice-command`
+ *     and `UniversalCommandModal`).
+ *
+ * Kept well under Groq's ~224-token prompt ceiling so the bias is never silently
+ * truncated.
+ */
+const STT_VOCABULARY_PROMPT = [
+  // Platform + product brand anchors (chat-widget surface).
+  'Zeeder',
+  'Zeeder Engage',
+  'Omniverge Global',
+  'OVG',
+  'OVG platform',
+  'chat widget',
+  'AI assistant',
+  'push-to-talk',
+  'PTT',
+  'Supabase',
+  'Next.js',
+  // Reseller / voice-driven client-creation field vocabulary (shared endpoint).
+  'LCM',
+  'Last Chapter Media',
+  'client name',
+  'industry',
+  'email',
+  'website',
+].join(', ');
+
 interface GroqError {
   status?: number;
   message?: string;
@@ -135,7 +175,7 @@ export async function POST(req: Request) {
     const transcription = await groq.audio.transcriptions.create({
       file: uploadable,
       model: "whisper-large-v3-turbo",
-      prompt: 'LCM, LCM Test, Last Chapter Media, OVG, OVG platform, client name, industry, email, website',
+      prompt: STT_VOCABULARY_PROMPT,
       response_format: "json",
       temperature: 0,
     });

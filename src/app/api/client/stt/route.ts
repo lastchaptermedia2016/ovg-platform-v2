@@ -46,8 +46,15 @@ const ALLOWED_MIME = new Set<string>([
 /** Static platform anchors — Whisper prompt bias toward the real ecosystem. */
 const STATIC_ANCHORS = [
   'Zeeder',
+  'Zeeder Engage',
   'Omniverge Global',
   'OVG',
+  'chat widget',
+  'AI assistant',
+  'push-to-talk',
+  'PTT',
+  'Supabase',
+  'Next.js',
   'concierge',
   'client',
   'reseller',
