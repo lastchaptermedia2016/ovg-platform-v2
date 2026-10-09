@@ -604,7 +604,7 @@ function parseIntent(text: string): ZeederActionId | null {
   }
 
   // ── toggleAgent ──────────────────────────────────────────────────────
-  if (/(enable|disable|toggle|activate|deactivate)\s+(agent|ai)/i.test(lower)) {
+  if (/(enable|disable|toggle|activate|deactivate)\s+(?:the\s+)?(agent|ai)/i.test(lower)) {
     return 'toggleAgent';
   }
 
