@@ -441,7 +441,7 @@ function buildPendingNavOffer(): PendingNavOffer {
  * instead of being hijacked by the confirmation branch.
  */
 const CLIENT_AFFIRM_INTENT_REGEX =
-  /^(?:yes(?:\s+please|\s+yeah|\s+ya)?|yeah|yep|yup|sure|ok(?:ay)?|absolutely|definitely|please do|go ahead|do it|sure thing)[.!?]*\s*$/i;
+  /^(?:yes(?:\s+please|\s+yeah|\s+ya)?|yeah|yep|yup|sure|ok(?:ay)?|absolutely|definitely|please do|go ahead|do it|sure thing|take\s+me\s+there|take\s+me\s+to\s+it)[.!?]*\s*$/i;
 
 /**
  * Render the active integration tools as an injection-safe "available

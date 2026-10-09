@@ -1001,7 +1001,7 @@ describe('POST /api/client/process-command - Appointment Requests Dashboard', ()
   });
 
   it('resolves common affirmative phrasings to SYSTEM_NAVIGATE with a valid token', async () => {
-    for (const affirm of ['yes', 'yeah', 'sure', 'go ahead', 'okay', 'yes please']) {
+    for (const affirm of ['yes', 'yeah', 'sure', 'go ahead', 'okay', 'yes please', 'take me there', 'take me to it']) {
       const res = await post(affirm, { context: { pendingNav: VALID_OFFER() } });
       const body = await res.json();
 
