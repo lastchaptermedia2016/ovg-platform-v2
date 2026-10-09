@@ -11,6 +11,7 @@ import { generateBrandingCSS } from "@/lib/branding/css-generator";
 import { cornerStyle } from "@/lib/branding/widget-position";
 import type { CanonicalBranding, CanonicalFeatures, SuggestedAction } from "@/lib/schemas/tenant-config.canonical";
 import { getSpeechRecognition, type SpeechRecognitionInstance, type SpeechRecognitionResultEvent } from "@/types/voice-parser";
+import { formatPhoneForSpeech } from "@/lib/voice/phone-speech";
 import "./widget.css";
 
 interface WidgetConfig {
@@ -312,14 +313,19 @@ const ChatWidget = ({
     }
     const generation = ++ttsGenerationRef.current;
     await teardownTtsAudio();
+    // Phone numbers are reformatted for the TTS engine ONLY — e.g. "27760330046"
+    // → "277 603 300 46" so the engine reads it digit-block-by-digit-block instead
+    // of one huge number. The on-screen chat bubble keeps the clean, canonical
+    // format the AI produced; this spacing is never rendered visually.
+    const speechText = formatPhoneForSpeech(text.trim());
     try {
-      console.log('[ChatWidget-TTS] Fetching speech for:', text.trim().substring(0, 60));
+      console.log('[ChatWidget-TTS] Fetching speech for:', speechText.substring(0, 60));
       const controller = new AbortController();
       ttsAbortRef.current = controller;
       const ttsResponse = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text.trim(), voice: 'hannah' }),
+        body: JSON.stringify({ text: speechText, voice: 'hannah' }),
         signal: controller.signal,
       });
       if (generation !== ttsGenerationRef.current) {
@@ -575,14 +581,18 @@ const ChatWidget = ({
     if (!text.trim()) return;
     const generation = ++ttsGenerationRef.current;
     await teardownTtsAudio();
+    // Phone numbers are reformatted for the TTS engine ONLY (mirrors playTts) so
+    // the preview test-drive reads digit runs block-by-block. The rendered chat
+    // bubble keeps the clean format; this spacing is never shown visually.
+    const speechText = formatPhoneForSpeech(text.trim());
     try {
-      console.log('[ChatWidget-TTS] Fetching speech for (preview):', text.trim().substring(0, 60));
+      console.log('[ChatWidget-TTS] Fetching speech for (preview):', speechText.substring(0, 60));
       const controller = new AbortController();
       ttsAbortRef.current = controller;
       const ttsResponse = await fetch('/api/ai/speech', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice: 'hannah' }),
+        body: JSON.stringify({ text: speechText, voice: 'hannah' }),
         signal: controller.signal,
       });
       if (generation !== ttsGenerationRef.current) {
