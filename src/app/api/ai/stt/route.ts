@@ -6,8 +6,8 @@ export const dynamic = 'force-dynamic';
 /**
  * Whisper vocabulary priming for the shared STT path (`/api/ai/stt`).
  *
- * Groq's Whisper exposes the `prompt` field as its sole decoder-biasing surface
- * (there is no `language` or `keywords` parameter). Whisper seeds its decoder
+ * Groq's Whisper exposes the `prompt` field as its decoder-biasing surface.
+ * Whisper seeds its decoder
  * with the prompt as an in-context prior, so listing our real brand spellings
  * and product vocabulary here shifts next-token attention away from generic
  * en-US dictionary defaults that would otherwise warp "Zeeder" → "Zeta"/"Cedar"
@@ -177,7 +177,13 @@ export async function POST(req: Request) {
       model: "whisper-large-v3-turbo",
       prompt: STT_VOCABULARY_PROMPT,
       response_format: "json",
-      temperature: 0,
+      // temperature 0.0 = greedy decoding: the single most-likely token each
+      // step. Any >0 introduces sampling randomness, which on quiet/trailing
+      // audio chunks makes Whisper hallucinate filler or foreign characters.
+      temperature: 0.0,
+      // Pin the decoder to English so it never drifts into another script
+      // (a common source of stray non-Latin glyphs in the transcript).
+      language: "en",
     });
 
     return jsonResponse(

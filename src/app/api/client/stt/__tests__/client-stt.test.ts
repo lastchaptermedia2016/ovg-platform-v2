@@ -13,14 +13,16 @@ import { logVoiceSession } from '@/lib/voice/voice-logger';
 
 process.env.GROQ_API_KEY = process.env.GROQ_API_KEY || 'test-groq-key';
 
-// ── Groq SDK mock (captures the prompt bias) ─────────────────────────────
+// ── Groq SDK mock (captures the prompt bias + decoding params) ───────────
 let lastGroqPrompt: string | null = null;
+let lastGroqArgs: { prompt?: string; temperature?: number; language?: string } = {};
 vi.mock('groq-sdk', () => {
   class Groq {
     audio = {
       transcriptions: {
-        create: vi.fn().mockImplementation((args: { prompt?: string }) => {
+        create: vi.fn().mockImplementation((args: { prompt?: string; temperature?: number; language?: string }) => {
           lastGroqPrompt = typeof args?.prompt === 'string' ? args.prompt : null;
+          lastGroqArgs = { prompt: args?.prompt, temperature: args?.temperature, language: args?.language };
           return Promise.resolve({ text: 'hello world' });
         }),
       },
@@ -107,6 +109,7 @@ const okBlob = () => new Blob([new Uint8Array(20_000)], { type: 'audio/wav' });
 
 beforeEach(() => {
   lastGroqPrompt = null;
+  lastGroqArgs = {};
   mockAuth.mockResolvedValue({
     user: null,
     userId: 'client-user',
@@ -177,6 +180,10 @@ describe('POST /api/client/stt', () => {
     expect(body.text).toBe('hello world');
     expect(lastGroqPrompt).toContain('Acme');
     expect(lastGroqPrompt).toContain('Zeeder');
+
+    // Anti-hallucination decoding params: greedy (temperature 0) + English-pinned.
+    expect(lastGroqArgs.temperature).toBe(0);
+    expect(lastGroqArgs.language).toBe('en');
 
     // Phase 5: the session is logged exactly once, scoped to the resolved
     // tenant, with the measured latency and server-generated session id.

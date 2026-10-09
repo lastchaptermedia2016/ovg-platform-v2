@@ -14,12 +14,14 @@ process.env.GROQ_API_KEY = process.env.GROQ_API_KEY || 'test-groq-key';
 
 // ── Groq SDK mock (captures the prompt bias) ─────────────────────────────
 let lastGroqPrompt: string | null = null;
+let lastGroqArgs: { prompt?: string; temperature?: number; language?: string } = {};
 vi.mock('groq-sdk', () => {
   class Groq {
     audio = {
       transcriptions: {
-        create: vi.fn().mockImplementation((args: { prompt?: string }) => {
+        create: vi.fn().mockImplementation((args: { prompt?: string; temperature?: number; language?: string }) => {
           lastGroqPrompt = typeof args?.prompt === 'string' ? args.prompt : null;
+          lastGroqArgs = { prompt: args?.prompt, temperature: args?.temperature, language: args?.language };
           return Promise.resolve({ text: 'open the chat widget' });
         }),
       },
@@ -53,6 +55,7 @@ const okBlob = () => new Blob([new Uint8Array(20_000)], { type: 'audio/wav' });
 
 beforeEach(() => {
   lastGroqPrompt = null;
+  lastGroqArgs = {};
   mockResolveVoiceConfig.mockResolvedValue({
     apiKey: 'test-groq-key',
     voiceId: 'hannah',
@@ -77,6 +80,10 @@ describe('POST /api/ai/stt — Whisper vocabulary priming', () => {
     expect(lastGroqPrompt).toContain('PTT');
     expect(lastGroqPrompt).toContain('Supabase');
     expect(lastGroqPrompt).toContain('Next.js');
+
+    // Anti-hallucination decoding params: greedy (temperature 0.0) + English-pinned.
+    expect(lastGroqArgs.temperature).toBe(0);
+    expect(lastGroqArgs.language).toBe('en');
   });
 
   it('preserves the reseller client-creation vocabulary on the shared endpoint', async () => {

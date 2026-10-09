@@ -299,7 +299,11 @@ export async function POST(req: NextRequest) {
       file: uploadable,
       model: 'whisper-large-v3-turbo',
       response_format: 'json',
+      // Greedy decoding (no sampling randomness) so quiet/trailing audio chunks
+      // don't trigger Whisper hallucinations.
       temperature: 0,
+      // Pin the decoder to English so it never drifts into another script.
+      language: 'en',
       prompt: vocabularyBoost,
     });
 
