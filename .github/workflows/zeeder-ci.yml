@@ -78,10 +78,15 @@ jobs:
       # container, `supabase status -o env` emits no anon key and the build
       # fails with "Invalid supabaseUrl".
       - name: Start Local Supabase Stack
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 12
+          max_attempts: 3
+          retry_wait_seconds: 20
+          on_retry_command: supabase stop --no-backup || true
+          command: supabase start --exclude storage-api,realtime,studio,edge-runtime,vector,logflare,supavisor,imgproxy,mailpit
         env:
           SUPABASE_INTERNAL_IMAGE_REGISTRY: docker.io
-        run: |
-          supabase start --exclude storage-api,realtime,studio,edge-runtime,vector,logflare,supavisor,imgproxy,mailpit
 
       # Pull local instance active keys straight from the CLI in machine-readable
       # env format. This acts as both the export mechanism and the health check:
