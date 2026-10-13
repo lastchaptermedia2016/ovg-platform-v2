@@ -4,6 +4,8 @@ import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
 
+const MODEL_ID = process.env.GROQ_EXTRACT_MODEL || 'openai/gpt-oss-20b';
+
 // Zod schema for request validation
 const ExtractClientInfoRequestSchema = z.object({
   transcript: z.string().min(1),
@@ -119,7 +121,7 @@ ${prompt}`;
     let parsedResponse: Record<string, unknown>;
     try {
       const response = await groq.chat.completions.create({
-        model: 'llama-3.3-70b-versatile',
+        model: MODEL_ID,
         messages: [
           {
             role: 'system',
@@ -181,16 +183,25 @@ Return ONLY this JSON structure with no additional text:
           }
         ],
         temperature: 0.1,
-        max_tokens: 500,
+        max_tokens: 2048,
         response_format: { type: 'json_object' },
       });
 
       const content = response.choices[0]?.message?.content;
       if (!content) {
-        throw new Error('No response from Groq');
+        console.warn('Empty response from Groq, returning fallback');
+        parsedResponse = {
+          name: null,
+          industry: null,
+          category: null,
+          email: null,
+          mobile: null,
+          website: null,
+          vibe: null,
+        };
+      } else {
+        parsedResponse = JSON.parse(content);
       }
-
-      parsedResponse = JSON.parse(content);
     } catch (error) {
       // If JSON generation fails, return partial extraction with nulls
       console.warn('JSON generation failed, returning partial:', error instanceof Error ? error.message : String(error));
@@ -233,14 +244,12 @@ Return ONLY this JSON structure with no additional text:
     return NextResponse.json(sanitizedPayload);
 
   } catch (error) {
-    console.error('Error extracting client info:', error);
-
     // Handle Groq JSON validation failure (400/json_validate_failed) - return fallback with 200
     if (error && typeof error === 'object' && 'status' in error) {
       const status = (error as { status: number }).status;
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (status === 400 && errorMessage.includes('json_validate_failed')) {
-        console.log('[EXTRACT-CLIENT-INFO-TRACE] JSON validation failed in outer catch, returning fallback:', errorMessage);
+        console.warn(`Groq JSON validation failed (${status}): ${errorMessage}`);
         return NextResponse.json({
           name: null,
           industry: null,
@@ -254,11 +263,18 @@ Return ONLY this JSON structure with no additional text:
       
       // Surface Groq API permission/model access errors (403/404)
       if (status === 403 || status === 404) {
+        console.warn(`Groq API error (${status}): ${errorMessage}`);
         return NextResponse.json(
           { error: `Groq API error (${status}): ${errorMessage}` },
           { status: 502 }
         );
       }
+      
+      // Log other Groq errors with status and message only
+      console.warn(`Groq API error (${status}): ${errorMessage}`);
+    } else {
+      // Non-Groq errors (network, etc.)
+      console.warn('Error extracting client info:', error instanceof Error ? error.message : String(error));
     }
 
     return NextResponse.json(
