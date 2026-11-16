@@ -33,7 +33,7 @@ export default function ClientAuthCard() {
       });
 
       if (oauthError) {
-        setError(oauthError.message);
+        setError(oauthError?.message || "Unable to sign in with OAuth");
         setIsSubmitting(false);
       }
     } catch {
@@ -67,10 +67,7 @@ export default function ClientAuthCard() {
             });
 
           if (signUpError) {
-            setError(
-              signUpError.message ??
-                "Account creation failed. Please try again.",
-            );
+            setError(signUpError?.message || "Unable to create account");
             setIsSubmitting(false);
             return;
           }
@@ -105,7 +102,7 @@ export default function ClientAuthCard() {
         router.replace("/client/dashboard");
         router.refresh();
       } catch (err) {
-        setError(classifyAuthError(err).message);
+        setError(classifyAuthError(err).message || "Unable to create account");
         setIsSubmitting(false);
       }
     },
