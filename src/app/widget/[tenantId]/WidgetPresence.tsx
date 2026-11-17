@@ -43,6 +43,7 @@ export default function WidgetPresence({
 
   return (
     <div
+      data-ovg-presence=""
       style={{
         ...cornerStyle(widgetPosition as Parameters<typeof cornerStyle>[0]),
         zIndex: 9998,

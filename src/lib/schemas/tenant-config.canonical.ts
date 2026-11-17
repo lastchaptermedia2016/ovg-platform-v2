@@ -271,6 +271,11 @@ export const CanonicalWidgetConfigSchema = z.object({
   suggestedActions: z.array(SuggestedActionSchema).optional(),
   // Widget opening greeting message, configurable from the Persona Settings page.
   greeting: z.string().optional(),
+  // Teaser copy shown in the minimized widget's peek popup. Falls back to a
+  // neutral default in the widget when unset.
+  peekMessage: z.string().optional(),
+  // Call-to-action label on the peek popup; the widget defaults to "Chat with us →".
+  peekCta: z.string().optional(),
   // Legacy compatibility: aiPersona path (maps to ai_settings fields)
   aiPersona: CanonicalAIPersonaSchema.optional(),
   // Legacy compatibility: flat header/footer fields (deprecated, use nested)

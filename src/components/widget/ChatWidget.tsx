@@ -14,6 +14,26 @@ import { getSpeechRecognition, type SpeechRecognitionInstance, type SpeechRecogn
 import { formatPhoneForSpeech } from "@/lib/voice/phone-speech";
 import "./widget.css";
 
+/**
+ * Generates a UUID v4 without relying on crypto.randomUUID, which only
+ * exists in secure contexts (HTTPS / localhost). The widget renders inside
+ * iframes on customer sites that may be served over plain HTTP (local WP
+ * installs like *.local, staging origins), so fall back to
+ * crypto.getRandomValues, which every browser provides.
+ */
+function generateUuid(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  // RFC 4122: set version 4 (0100) and variant 10xx.
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 interface WidgetConfig {
   logo?: string;
   logoUrl?: string;
@@ -35,7 +55,7 @@ const defaultConfig: WidgetConfig = {
   primaryColor: "#0097b2",
   aiName: "Assistant",
   greeting: "Hi there! How can I help you today?",
-  peekText: "Ready to see the future of AI-powered business?",
+  peekText: "Have a question? We're here to help.",
   syncBadgeText: "VIP BOOKING SECURED • SYNCED TO SANCTUARY",
   phone: "27760330046",
   whatsappMessageTemplate: "Hello {title} {lastName}, your bespoke {treatment} ({price}) at {brandName} is confirmed for {time}. We have your {refreshment} ready for your arrival. See you in the sanctuary!",
@@ -66,6 +86,18 @@ interface ChatWidgetProps {
    * conversation is reset. Falls back to the built-in default when empty.
    */
   greeting?: string;
+  /**
+   * Tenant-configured teaser copy shown in the minimized widget's peek popup.
+   * Sourced from tenants.widget_config.peekMessage. Falls back to the built-in
+   * neutral default when unset or blank.
+   */
+  peekMessage?: string;
+  /**
+   * Tenant-configured call-to-action label on the peek popup. Sourced from
+   * tenants.widget_config.peekCta. Falls back to "Chat with us →" when unset
+   * or blank.
+   */
+  peekCta?: string;
   /**
    * Studio preview mode. Renders the chat window as a contained, always-open
    * surface (no consent gate, no floating bubble), suppresses realtime
@@ -104,6 +136,8 @@ const ChatWidget = ({
   voiceFeaturesEnabled = true,
   suggestedActions = [],
   greeting,
+  peekMessage,
+  peekCta,
   features,
 }: ChatWidgetProps) => {
   const effectiveVoiceFeaturesEnabled = features?.voiceFeaturesEnabled ?? voiceFeaturesEnabled;
@@ -147,7 +181,7 @@ const ChatWidget = ({
     } catch {
       /* no-op */
     }
-    const generated = crypto.randomUUID();
+    const generated = generateUuid();
     try {
       sessionStorage.setItem(conversationStorageKey, generated);
     } catch {
@@ -428,7 +462,7 @@ const ChatWidget = ({
     lastSubmitRef.current = { text: cleanText, time: now };
 
     const userMsg: WidgetMessage = {
-      id: crypto.randomUUID(),
+      id: generateUuid(),
       role: 'user',
       text: cleanText,
       timestamp: Date.now(),
@@ -444,7 +478,7 @@ const ChatWidget = ({
   const handleVoiceAIResponse = useCallback((text: string) => {
     if (!text.trim()) return;
     const aiMsg: WidgetMessage = {
-      id: crypto.randomUUID(),
+      id: generateUuid(),
       role: "assistant",
       text: text.trim(),
       timestamp: Date.now(),
@@ -499,7 +533,7 @@ const ChatWidget = ({
     localStorage.setItem(chatHistoryKey, JSON.stringify([initialGreeting]));
     // Sever link to old server-side conversation so refresh cannot
     // resynchronize stale history back into the UI.
-    const newConversationId = crypto.randomUUID();
+    const newConversationId = generateUuid();
     try {
       sessionStorage.setItem(conversationStorageKey, newConversationId);
     } catch {
@@ -948,6 +982,29 @@ const ChatWidget = ({
     return () => clearTimeout(timer);
   }, [isOpen, showConsent]);
 
+  // Embed sizing: tell the host loader how much space the widget needs so the
+  // transparent iframe never blocks more of the host page than necessary.
+  // The /widget/embed loader listens for 'ovg-widget-resize' messages.
+  // Sizes: open chat or consent gate → full 450x700 frame; teaser/confirm
+  // popups (fixed bottom-24 right-6 max-w-[280px]) → 320x320; launcher
+  // bubble only (56px + 24px margins) → 80x80. Skipped in studio preview
+  // (contained canvas) and when the widget is not actually framed.
+  useEffect(() => {
+    if (preview) return;
+    if (typeof window === "undefined" || window.parent === window) return;
+
+    const size = isOpen || showConsent
+      ? { width: "450px", height: "700px" }
+      : showPeek || showResetConfirm
+        ? { width: "320px", height: "320px" }
+        : { width: "80px", height: "80px" };
+
+    window.parent.postMessage(
+      { type: "ovg-widget-resize", ...size },
+      "*"
+    );
+  }, [isOpen, showConsent, showPeek, showResetConfirm, preview]);
+
   // Inject branding CSS variables into the document.
   // If this widget ever moves into a Shadow DOM root, update the
   // appendChild target from document.head to that shadow root.
@@ -1190,13 +1247,15 @@ const ChatWidget = ({
             >
               <X className="h-3.5 w-3.5" />
             </button>
-            <p className="text-sm text-white/90 leading-relaxed">{config.peekText}</p>
+            <p className="text-sm text-white/90 leading-relaxed">
+              {peekMessage?.trim() || config.peekText}
+            </p>
             <button
               onClick={handleOpenChat}
               className="mt-3 text-sm font-semibold hover:opacity-80 transition-opacity"
               style={{ color: "var(--w-primary, #0097b2)" }}
             >
-              Chat with us →
+              {peekCta?.trim() || "Chat with us →"}
             </button>
           </motion.div>
         )}

@@ -52,6 +52,12 @@ export default async function WidgetPage({
 
   const greeting = canonicalConfig?.greeting ?? "";
 
+  // Teaser popup copy for the minimized widget; undefined → widget falls back
+  // to its neutral default message and "Chat with us →" CTA.
+  const peekMessage = canonicalConfig?.peekMessage ?? undefined;
+
+  const peekCta = canonicalConfig?.peekCta ?? undefined;
+
   const features = canonicalConfig?.features ?? undefined;
 
   // Live verification logging
@@ -61,7 +67,7 @@ export default async function WidgetPage({
   return (
     <TenantProvider>
       <WidgetPresence tenantId={tenantId} widgetPosition={canonicalBranding?.widgetPosition} />
-      <ChatWidget tenantId={tenantId} branding={canonicalBranding} widgetPosition={canonicalBranding?.widgetPosition} suggestedActions={suggestedActions} greeting={greeting} features={features} />
+      <ChatWidget tenantId={tenantId} branding={canonicalBranding} widgetPosition={canonicalBranding?.widgetPosition} suggestedActions={suggestedActions} greeting={greeting} peekMessage={peekMessage} peekCta={peekCta} features={features} />
     </TenantProvider>
   );
 }

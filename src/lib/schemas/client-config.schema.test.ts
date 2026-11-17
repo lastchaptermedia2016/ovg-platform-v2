@@ -107,6 +107,58 @@ describe('ClientWidgetStudioSchema — features block (AI add-ons)', () => {
   });
 });
 
+describe('ClientWidgetStudioSchema — peek teaser fields', () => {
+  it('accepts peekMessage and peekCta alongside sibling blocks (multi-block payload)', () => {
+    const config = {
+      branding: { primaryColor: '#008080' },
+      greeting: 'Hello there!',
+      peekMessage: 'Looking for hardware? Ask our concierge.',
+      peekCta: 'Ask us →',
+      suggestedActions: [{ label: 'Quote', actionType: 'message', payload: 'Get a quote' }],
+      features: { aiInsightBadge: true },
+    };
+    const result = safeParseClientWidgetStudio(config);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.peekMessage).toBe('Looking for hardware? Ask our concierge.');
+      expect(result.data.peekCta).toBe('Ask us →');
+      // Sibling keys survive the parse untouched.
+      expect(result.data.greeting).toBe('Hello there!');
+      expect(result.data.branding?.primaryColor).toBe('#008080');
+      expect(result.data.suggestedActions).toHaveLength(1);
+      expect(result.data.features?.aiInsightBadge).toBe(true);
+    }
+  });
+
+  it('accepts empty strings so blank inputs cleanly clear stored values', () => {
+    const result = safeParseClientWidgetStudio({ peekMessage: '', peekCta: '' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.peekMessage).toBe('');
+      expect(result.data.peekCta).toBe('');
+    }
+  });
+
+  it('defaults both fields to undefined when omitted (legacy payloads)', () => {
+    const result = ClientWidgetStudioSchema.safeParse({ greeting: 'Hi' });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.peekMessage).toBeUndefined();
+      expect(result.data.peekCta).toBeUndefined();
+    }
+  });
+
+  it('enforces the 140-char teaser limit (compact popup)', () => {
+    const result = safeParseClientWidgetStudio({ peekMessage: 'x'.repeat(141) });
+    expect(result.success).toBe(false);
+  });
+
+  it('enforces the 60-char CTA limit', () => {
+    const result = safeParseClientWidgetStudio({ peekCta: 'x'.repeat(61) });
+    expect(result.success).toBe(false);
+  });
+});
+
 describe('ClientLayerConfigSchema — opacity regression', () => {
   it('accepts opacity of 0 for voice/theme pipeline compatibility', () => {
     const result = ClientLayerConfigSchema.safeParse({

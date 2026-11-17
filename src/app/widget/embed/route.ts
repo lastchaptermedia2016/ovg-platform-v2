@@ -27,8 +27,10 @@ export async function GET(request: Request) {
         iframe.style.position = 'fixed';
         iframe.style.bottom = '20px';
         iframe.style.right = '20px';
-        iframe.style.width = '450px';
-        iframe.style.height = '700px';
+        // Boot at the minimized footprint (56px bubble + 24px margins); the
+        // widget posts 'ovg-widget-resize' when it opens or shows a teaser.
+        iframe.style.width = '80px';
+        iframe.style.height = '80px';
         iframe.style.border = 'none';
         iframe.style.zIndex = '999999';
         iframe.style.colorScheme = 'none';
@@ -37,10 +39,14 @@ export async function GET(request: Request) {
         container.appendChild(iframe);
 
         window.addEventListener('message', (event) => {
-          if (event.data && event.data.type === 'ovg-widget-resize') {
-            iframe.style.width = event.data.width;
-            iframe.style.height = event.data.height;
-          }
+          const d = event.data;
+          if (!d || d.type !== 'ovg-widget-resize') return;
+          // Only accept dimension strings; never interpolate anything else
+          // into style properties.
+          if (typeof d.width !== 'string' || typeof d.height !== 'string') return;
+          if (!/^\\d+px$/.test(d.width) || !/^\\d+px$/.test(d.height)) return;
+          iframe.style.width = d.width;
+          iframe.style.height = d.height;
         });
       }
 
