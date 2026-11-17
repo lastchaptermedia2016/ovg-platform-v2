@@ -217,6 +217,10 @@ export const ClientWidgetStudioSchema = z.object({
   branding: ClientBrandingSchema.optional(),
   integrations: ClientIntegrationsSchema,
   suggestedActions: z.array(ClientSuggestedActionSchema).optional(),
+  // Teaser popup copy shown on the minimized widget. Empty string → widget
+  // falls back to its built-in defaults ("Chat with us →" for the CTA).
+  peekMessage: z.string().max(140).optional(),
+  peekCta: z.string().max(60).optional(),
   features: z
     .object({
       aiInsightBadge: z.boolean().optional(),

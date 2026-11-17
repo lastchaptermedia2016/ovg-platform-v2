@@ -30,3 +30,18 @@
 .widget-bubble {
   background: var(--w-primary, #0097b2);
 }
+
+/*
+ * Presence pill vs. dynamic embed sizing:
+ * The /widget/embed loader resizes the host iframe to match widget state
+ * (80x80 minimized, 320x320 with teaser popups, 450x700 open/consent — see
+ * the 'ovg-widget-resize' effect in ChatWidget). Media queries inside an
+ * iframe evaluate against the iframe's own viewport, so hide the pill
+ * whenever the frame is too small to show it un-clipped. It reappears
+ * automatically when the chat opens (450px frame).
+ */
+@media (max-width: 399px) {
+  [data-ovg-presence] {
+    display: none !important;
+  }
+}
