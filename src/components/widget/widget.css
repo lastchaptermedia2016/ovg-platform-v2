@@ -52,3 +52,43 @@ html[data-ovg-chat-open] [data-ovg-presence] {
     display: none !important;
   }
 }
+
+/*
+ * Brand colour: every accent below follows the tenant's branding
+ * (--w-primary / --w-accent, set in the Branding studio). Never hardcode a
+ * colour in the widget markup: it would ignore that setting for every tenant.
+ */
+.widget-teaser {
+  border-color: color-mix(in srgb, var(--w-primary, #0097b2) 40%, transparent);
+}
+
+.widget-msg-user {
+  background-image: linear-gradient(
+    to bottom right,
+    color-mix(in srgb, var(--w-primary, #0097b2) 16%, white),
+    color-mix(in srgb, var(--w-primary, #0097b2) 6%, white)
+  );
+  border-bottom-color: var(--w-primary, #0097b2);
+  box-shadow: 0 10px 15px -3px color-mix(in srgb, var(--w-primary, #0097b2) 15%, transparent);
+}
+
+.widget-msg-assistant {
+  border-bottom-color: var(--w-primary, #0097b2);
+}
+
+.widget-thinking-bar {
+  background-image: linear-gradient(
+    to right,
+    var(--w-primary, #0097b2),
+    var(--w-accent, #D4AF37),
+    var(--w-primary, #0097b2)
+  );
+}
+
+.widget-mic {
+  color: var(--w-primary, #0097b2);
+}
+
+.widget-mic:hover {
+  color: color-mix(in srgb, var(--w-primary, #0097b2) 80%, black);
+}
