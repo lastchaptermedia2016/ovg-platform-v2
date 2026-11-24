@@ -117,6 +117,8 @@ export function WidgetPreview() {
               systemPrompt: draft.systemPrompt,
             }}
             greeting={draft.greeting}
+            peekMessage={draft.peekMessage}
+            peekCta={draft.peekCta}
             suggestedActions={draft.suggestedActions}
             features={draft.features}
           />
