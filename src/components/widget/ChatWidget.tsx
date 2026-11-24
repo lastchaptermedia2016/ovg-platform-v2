@@ -242,6 +242,15 @@ const ChatWidget = ({
     branding?.brandName ??
     (branding ? "AI Assistant" : "Omniverge Global");
   const displayLogoUrl = branding?.logoUrl ?? (!branding ? "/images/omnivergeglobal.svg" : null);
+  // Launcher orb logo fallback: when the tenant logo cannot load inside the
+  // 56px bubble, fall back to the default concierge icon. The failed flag is
+  // stored together with the URL it applies to and reset during render when
+  // the resolved URL changes (React's derived-state reset pattern — no effect,
+  // no cascading render), so a fixed logo URL recovers without a remount.
+  const [bubbleLogo, setBubbleLogo] = useState({ url: displayLogoUrl, failed: false });
+  if (bubbleLogo.url !== displayLogoUrl) {
+    setBubbleLogo({ url: displayLogoUrl, failed: false });
+  }
   const chatHistoryKey = `ovgweb_chat_messages_${tenantId}`;
   const previewRef = useRef(preview);
 
@@ -1005,6 +1014,23 @@ const ChatWidget = ({
     );
   }, [isOpen, showConsent, showPeek, showResetConfirm, preview]);
 
+  // Presence pill visibility: WidgetPresence is a sibling component sharing the
+  // launcher corner. It belongs ONLY to the open chat window — while the
+  // widget is minimized (orb / teaser / consent) it would peek out from behind
+  // the bubble. ChatWidget owns the open state, so it stamps
+  // data-ovg-chat-open on <html> and widget.css gates [data-ovg-presence] on
+  // that attribute (DOM-attribute sync only, no state changes).
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const root = document.documentElement;
+    if (!preview && isOpen) {
+      root.setAttribute("data-ovg-chat-open", "");
+    } else {
+      root.removeAttribute("data-ovg-chat-open");
+    }
+    return () => root.removeAttribute("data-ovg-chat-open");
+  }, [isOpen, preview]);
+
   // Inject branding CSS variables into the document.
   // If this widget ever moves into a Shadow DOM root, update the
   // appendChild target from document.head to that shadow root.
@@ -1239,7 +1265,7 @@ const ChatWidget = ({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 10, scale: 0.95 }}
             transition={{ type: "spring", stiffness: 300, damping: 24 }}
-            className="fixed bottom-24 left-4 right-4 sm:left-auto sm:right-6 z-[9998] max-w-[calc(100vw-2rem)] sm:max-w-[280px] rounded-2xl border border-pink-300/40 bg-gradient-to-br from-gray-900/90 to-gray-800/90 backdrop-blur-xl p-5 shadow-2xl"
+            className="fixed bottom-24 left-4 right-4 sm:left-auto sm:right-6 z-[9998] max-w-[calc(100vw-2rem)] sm:max-w-[280px] widget-teaser rounded-2xl border bg-gradient-to-br from-gray-900/90 to-gray-800/90 backdrop-blur-xl p-5 shadow-2xl"
           >
             <button
               onClick={() => setShowPeek(false)}
@@ -1269,7 +1295,7 @@ const ChatWidget = ({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 10, scale: 0.95 }}
             transition={{ type: "spring", stiffness: 300, damping: 24 }}
-            className="fixed bottom-24 left-4 right-4 sm:left-auto sm:right-6 z-[10002] max-w-[calc(100vw-2rem)] sm:max-w-[280px] rounded-2xl border border-pink-300/40 bg-gradient-to-br from-gray-900/90 to-gray-800/90 backdrop-blur-xl p-5 shadow-2xl"
+            className="fixed bottom-24 left-4 right-4 sm:left-auto sm:right-6 z-[10002] max-w-[calc(100vw-2rem)] sm:max-w-[280px] widget-teaser rounded-2xl border bg-gradient-to-br from-gray-900/90 to-gray-800/90 backdrop-blur-xl p-5 shadow-2xl"
           >
             <button
               onClick={() => setShowResetConfirm(false)}
@@ -1509,8 +1535,8 @@ const ChatWidget = ({
                   <div
                     className={`relative max-w-[75%] px-4 py-2.5 rounded-2xl text-sm leading-relaxed backdrop-blur-md border-b-2 ${
                       isUser
-                        ? "bg-gradient-to-br from-pink-100/95 to-pink-50/95 text-amber-800 rounded-tr-sm border-b-pink-400 shadow-lg shadow-pink-100/30"
-                        : "bg-gradient-to-br from-white/95 to-gray-50/95 text-amber-800 rounded-tl-sm border-b-pink-400 shadow-lg shadow-gray-100/30"
+                        ? "widget-msg-user text-amber-800 rounded-tr-sm shadow-lg"
+                        : "widget-msg-assistant bg-gradient-to-br from-white/95 to-gray-50/95 text-amber-800 rounded-tl-sm shadow-lg shadow-gray-100/30"
                     }`}
                   >
                     <span className="font-light whitespace-pre-wrap">{msg.text}</span>
@@ -1548,7 +1574,7 @@ const ChatWidget = ({
                   <span className="animate-bounce delay-300">.</span>
                 </div>
                 <div className="mt-2 h-1 rounded-full overflow-hidden">
-                  <div className="h-full w-full animate-pulse bg-gradient-to-r from-pink-400 via-amber-400 to-pink-400 bg-[length:200%_100%]"></div>
+                  <div className="widget-thinking-bar h-full w-full animate-pulse bg-[length:200%_100%]"></div>
                 </div>
               </div>
             )}
@@ -1640,7 +1666,7 @@ const ChatWidget = ({
                     else abortRecording();
                   }}
                   aria-label={isRecording ? "Release to stop listening" : "Hold to talk"}
-                  className={`shrink-0 h-11 w-11 flex items-center justify-center rounded-full ${isRecording ? "text-blue-500 animate-pulse scale-110" : "text-pink-500 hover:text-pink-600"}`}
+                  className={`shrink-0 h-11 w-11 flex items-center justify-center rounded-full ${isRecording ? "text-blue-500 animate-pulse scale-110" : "widget-mic"}`}
                 >
                    {isRecording ? <MicOff className="h-5 w-5 flex-shrink-0" /> : <Mic className="h-5 w-5 flex-shrink-0" />}
                 </Button>
@@ -1671,13 +1697,33 @@ const ChatWidget = ({
       )}
 
       {/* ===== FLOATING BUBBLE ===== */}
+      {/* Geometry contract: the bubble MUST stay bottom-6/right-6 (24px margins
+          + 56px circle = the 80x80 minimized iframe footprint the /widget/embed
+          loader boots at). cornerStyle(widgetPosition) is deliberately NOT
+          applied here: the embed loader never repositions the iframe for other
+          corners, so following widgetPosition would clip the orb or strand it
+          outside the frame. */}
       {!preview && !isOpen && !showConsent && (
         <button
           onClick={handleOpenChat}
-          className="fixed bottom-6 right-6 z-[10000] h-14 w-14 rounded-full shadow-2xl hover:scale-110 transition-all flex items-center justify-center widget-bubble"
-          style={{ background: `linear-gradient(to bottom right, var(--w-primary, #0097b2), #ff69b4)` }}
+          aria-label="Open chat"
+          className="fixed bottom-6 right-6 z-[10000] h-14 w-14 rounded-full shadow-2xl hover:scale-110 transition-all flex items-center justify-center widget-bubble ring-1 ring-white/20 overflow-hidden"
+          style={{
+            background: `linear-gradient(135deg, color-mix(in srgb, var(--w-primary, #0097b2) 82%, white) 0%, var(--w-primary, #0097b2) 50%, color-mix(in srgb, var(--w-primary, #0097b2) 78%, black) 100%)`,
+            boxShadow: `0 6px 24px color-mix(in srgb, var(--w-primary, #0097b2) 45%, transparent)`,
+          }}
         >
-          <MessageCircle className="h-6 w-6 text-white" />
+          {displayLogoUrl && !bubbleLogo.failed ? (
+            // eslint-disable-next-line @next/next/no-img-element -- Dynamic third-party logo URL; next/image remotePatterns cannot be configured for arbitrary user-provided domains in embed mode.
+            <img
+              src={displayLogoUrl}
+              alt=""
+              className="h-9 w-9 rounded-full object-contain bg-white shadow-sm"
+              onError={() => setBubbleLogo({ url: displayLogoUrl, failed: true })}
+            />
+          ) : (
+            <MessageCircle className="h-6 w-6 text-white" />
+          )}
         </button>
       )}
     </>

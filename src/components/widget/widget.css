@@ -27,21 +27,68 @@
   backdrop-filter: blur(var(--w-footer-backdrop-blur, 0px));
 }
 
-.widget-bubble {
-  background: var(--w-primary, #0097b2);
+/*
+ * Presence pill visibility:
+ * WidgetPresence renders unconditionally at the launcher corner, so without a
+ * gate its grey pill peeks out from behind the 56px minimized orb. The pill
+ * belongs ONLY to the open chat window: ChatWidget stamps
+ * `data-ovg-chat-open` on <html> while the window is open, and the pill is
+ * hidden in every other state (minimized orb, teaser, consent gate).
+ * The frame-width rule below is a second belt: media queries inside an
+ * iframe evaluate against the iframe's own viewport, so the pill also hides
+ * whenever the frame is too small to show it un-clipped (80x80 minimized,
+ * 320x320 teaser — see the 'ovg-widget-resize' effect in ChatWidget).
+ */
+[data-ovg-presence] {
+  display: none !important;
+}
+
+html[data-ovg-chat-open] [data-ovg-presence] {
+  display: inline-flex !important;
+}
+
+@media (max-width: 399px) {
+  html[data-ovg-chat-open] [data-ovg-presence] {
+    display: none !important;
+  }
 }
 
 /*
- * Presence pill vs. dynamic embed sizing:
- * The /widget/embed loader resizes the host iframe to match widget state
- * (80x80 minimized, 320x320 with teaser popups, 450x700 open/consent — see
- * the 'ovg-widget-resize' effect in ChatWidget). Media queries inside an
- * iframe evaluate against the iframe's own viewport, so hide the pill
- * whenever the frame is too small to show it un-clipped. It reappears
- * automatically when the chat opens (450px frame).
+ * Brand colour: every accent below follows the tenant's branding
+ * (--w-primary / --w-accent, set in the Branding studio). Never hardcode a
+ * colour in the widget markup: it would ignore that setting for every tenant.
  */
-@media (max-width: 399px) {
-  [data-ovg-presence] {
-    display: none !important;
-  }
+.widget-teaser {
+  border-color: color-mix(in srgb, var(--w-primary, #0097b2) 40%, transparent);
+}
+
+.widget-msg-user {
+  background-image: linear-gradient(
+    to bottom right,
+    color-mix(in srgb, var(--w-primary, #0097b2) 16%, white),
+    color-mix(in srgb, var(--w-primary, #0097b2) 6%, white)
+  );
+  border-bottom-color: var(--w-primary, #0097b2);
+  box-shadow: 0 10px 15px -3px color-mix(in srgb, var(--w-primary, #0097b2) 15%, transparent);
+}
+
+.widget-msg-assistant {
+  border-bottom-color: var(--w-primary, #0097b2);
+}
+
+.widget-thinking-bar {
+  background-image: linear-gradient(
+    to right,
+    var(--w-primary, #0097b2),
+    var(--w-accent, #D4AF37),
+    var(--w-primary, #0097b2)
+  );
+}
+
+.widget-mic {
+  color: var(--w-primary, #0097b2);
+}
+
+.widget-mic:hover {
+  color: color-mix(in srgb, var(--w-primary, #0097b2) 80%, black);
 }

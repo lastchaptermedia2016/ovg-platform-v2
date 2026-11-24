@@ -30,6 +30,10 @@ export type StudioDraft = {
   temperature: number;
   voiceId: string;
   greeting: string;
+  /** Teaser popup copy on the minimized widget; '' → widget built-in default. */
+  peekMessage: string;
+  /** Teaser popup CTA label; '' → widget built-in "Chat with us →". */
+  peekCta: string;
   features?: {
     aiInsightBadge?: boolean;
     aiDesignMirror?: boolean;
@@ -64,6 +68,8 @@ const defaultDraft: StudioDraft = {
   temperature: 0.3,
   voiceId: '',
   greeting: '',
+  peekMessage: '',
+  peekCta: '',
   features: {},
   suggestedActions: [],
 };
@@ -283,6 +289,8 @@ function canonicalConfigToDraft(
     temperature: persona?.temperature ?? 0.3,
     voiceId: persona?.voiceId ?? '',
     greeting: (config.greeting as string | undefined) ?? '',
+    peekMessage: (config.peekMessage as string | undefined) ?? '',
+    peekCta: (config.peekCta as string | undefined) ?? '',
     features: {
       ...defaultDraft.features,
       ...(config?.features ?? {}),
@@ -393,6 +401,8 @@ export function StudioDraftProvider({ children }: { children: ReactNode }) {
           footer: remote.footer,
           widgetBody: remote.widgetBody,
           greeting: remote.greeting,
+          peekMessage: remote.peekMessage,
+          peekCta: remote.peekCta,
           features: remote.features,
           suggestedActions: remote.suggestedActions,
         };
